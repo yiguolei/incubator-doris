@@ -97,14 +97,14 @@ public:
     
     OLAPStatus commit_txn(OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
                           TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid, 
-                          const PUniqueId& load_id, const RowsetSharedPtr& rowset_ptr, 
+                          const PUniqueId& load_id, const RowsetSharedPtr& rowset_ptr, bool sync_to_remote,
                           bool is_recovery);
     
     // remove a txn from txn manager
     // not persist rowset meta because 
     OLAPStatus publish_txn(OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
                            TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid, 
-                           const Version& version, VersionHash version_hash);
+                           const Version& version, VersionHash version_hash, bool sync_to_remote);
 
     // delete the txn from manager if it is not committed(not have a valid rowset)
     OLAPStatus rollback_txn(TPartitionId partition_id, TTransactionId transaction_id,
@@ -114,7 +114,7 @@ public:
     // delete the related rowset if it is not null
     // delete rowset related data if it is not null
     OLAPStatus delete_txn(OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
-                          TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid);
+                          TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid, bool sync_to_remote);
 
     void get_tablet_related_txns(TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid, int64_t* partition_id,
                                 std::set<int64_t>* transaction_ids);

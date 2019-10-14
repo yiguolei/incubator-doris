@@ -56,8 +56,8 @@ struct TCreateTabletReq {
     // used to find the primary replica among tablet's replicas
     // replica with the largest term is primary replica
     11: optional i64 allocation_term
-    // indicate whether this tablet is a compute storage split mode, we call it "eco mode"
-    12: optional bool is_eco_mode
+    // indicate whether this tablet is a compute storage split mode, we call it "econ mode"
+    12: optional bool econ_mode = false
 }
 
 struct TDropTabletReq {
@@ -224,6 +224,7 @@ struct TTabletMetaInfo {
     1: optional Types.TTabletId tablet_id
     2: optional Types.TSchemaHash schema_hash
     3: optional Types.TPartitionId partition_id
+    4: optional bool primary_replica
 }
 
 struct TUpdateTabletMetaInfoReq {

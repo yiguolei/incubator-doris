@@ -57,4 +57,48 @@ OLAPStatus RowsetFactory::create_rowset_writer(const RowsetWriterContext& contex
     return OLAP_ERR_ROWSET_TYPE_NOT_FOUND;
 }
 
+OLAPStatus RowsetFactory::load_rowset(const TabletSchema& schema,
+                                      const std::string& rowset_path,
+                                      DataDir* data_dir,
+                                      const RowsetMetaPB& rowset_meta_pb,
+                                      RowsetSharedPtr* rowset) {
+    if (!rowset_meta_pb.has_rowset_type()) {
+        LOG(FATAL) << "could not find rowset type info";
+        return OLAP_ERR_ROWSET_INVALID;
+    }
+    if (rowset_meta_pb.rowset_type() == RowsetTypePB::ALPHA_ROWSET) {
+        RowsetMetaSharedPtr rowset_meta(new AlphaRowsetMeta());
+        bool parsed = rowset_meta->init_from_pb(rowset_meta_pb);
+        if (!parsed) {
+            LOG(WARNING) << "parse rowset from pb failed";
+            // return false will break meta iterator, return true to skip this error
+            return OLAP_ERR_ROWSET_INVALID;
+        }
+        rowset->reset(new AlphaRowset(&schema, rowset_path, data_dir, rowset_meta));
+        return (*rowset)->init();
+    } else {
+        return OLAP_ERR_ROWSET_TYPE_NOT_FOUND;
+    }                       
+}
+
+OLAPStatus RowsetFactory::create_rowset_meta(const RowsetMetaPB& rowset_meta_pb, RowsetMetaSharedPtr* rowset_meta) {
+    if (!rowset_meta_pb.has_rowset_type()) {
+        LOG(FATAL) << "could not find rowset type info";
+        return OLAP_ERR_ROWSET_INVALID;
+    }
+    if (rowset_meta_pb.rowset_type() == RowsetTypePB::ALPHA_ROWSET) {
+        rowset_meta->reset(new AlphaRowsetMeta());
+        bool parsed = (*rowset_meta)->init_from_pb(rowset_meta_pb);
+        if (!parsed) {
+            LOG(WARNING) << "parse rowset from pb failed";
+            // return false will break meta iterator, return true to skip this error
+            return OLAP_ERR_ROWSET_INVALID;
+        }
+        return OLAP_SUCCESS;
+    } else {
+        LOG(FATAL) << "unsupported rowset type:" << rowset_meta_pb.rowset_type();
+        return OLAP_ERR_ROWSET_TYPE_NOT_FOUND;
+    }     
+}
+
 } // namespace doris

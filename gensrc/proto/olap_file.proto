@@ -112,6 +112,8 @@ message RowsetMetaPB {
     optional int64 num_segments = 22;
     // rowset id definition, it will replace required rowset id 
     optional string rowset_id_v2 = 23;
+    // time that the rowset is set version or changed to visible state
+    optional int64 visible_time = 24;
     // spare field id for future use
     optional AlphaRowsetExtraMetaPB alpha_rowset_extra_meta_pb = 50;
 }
@@ -296,6 +298,10 @@ message TabletMetaPB {
     // a uniqued id to identified tablet with same tablet_id and schema hash
     optional PUniqueId tablet_uid = 14;
     optional int64 end_rowset_id = 15;
+    optional bool econ_mode = 16;
+    optional int64 allocate_term = 17;
+    optional int64 modify_version = 18;
+
 }
 
 message OLAPIndexHeaderMessage {

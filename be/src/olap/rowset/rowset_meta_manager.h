@@ -37,9 +37,11 @@ public:
 
     static OLAPStatus get_json_rowset_meta(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, std::string* json_rowset_meta);
 
-    static OLAPStatus save(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, const RowsetMetaPB& rowset_meta_pb);
+    static OLAPStatus save(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, const RowsetMetaPB& rowset_meta_pb, 
+                           int64_t expected_version, int64_t new_version, bool sync_to_remote = false);
 
-    static OLAPStatus remove(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id);
+    static OLAPStatus remove(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, 
+                             int64_t expected_version, int64_t new_version, bool sync_to_remote);
 
     static OLAPStatus traverse_rowset_metas(OlapMeta* meta,
             std::function<bool(const TabletUid&, const RowsetId&, const std::string&)> const& func);

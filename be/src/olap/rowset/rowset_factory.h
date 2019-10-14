@@ -43,6 +43,15 @@ public:
     // return others if failed
     static OLAPStatus create_rowset_writer(const RowsetWriterContext& context,
                                            std::unique_ptr<RowsetWriter>* output);
+    
+    static OLAPStatus load_rowset(const TabletSchema& schema,
+                                  const std::string& rowset_path,
+                                  DataDir* data_dir,
+                                  const RowsetMetaPB& rowset_meta_pb,
+                                  RowsetSharedPtr* rowset);
+    
+    static OLAPStatus create_rowset_meta(const RowsetMetaPB& rowset_meta_pb, 
+        RowsetMetaSharedPtr* rowset_meta);
 };
 
 } // namespace doris

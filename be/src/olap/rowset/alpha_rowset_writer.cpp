@@ -206,6 +206,7 @@ RowsetSharedPtr AlphaRowsetWriter::build() {
     _current_rowset_meta->set_empty(_num_rows_written == 0);
     _current_rowset_meta->set_num_rows(_num_rows_written);
     _current_rowset_meta->set_creation_time(time(nullptr));
+    _current_rowset_meta->set_visible_time(time(nullptr));
 
     // validate rowset arguments before create rowset
     bool ret = _validate_rowset();

@@ -515,6 +515,7 @@ void StorageEngine::clear_transaction_task(const TTransactionId transaction_id,
             if (tablet == nullptr) {
                 return;
             }
+            // when delete txn, should sync to remote meta store because the txn is unused in FE
             StorageEngine::instance()->txn_manager()->delete_txn(partition_id, tablet, transaction_id);
         }
     }
@@ -686,7 +687,7 @@ void StorageEngine::_clean_unused_rowset_metas() {
     for (auto data_dir : data_dirs) {
         RowsetMetaManager::traverse_rowset_metas(data_dir->get_meta(), clean_rowset_func);
         for (auto& rowset_meta : invalid_rowset_metas) {
-            RowsetMetaManager::remove(data_dir->get_meta(), rowset_meta->tablet_uid(), rowset_meta->rowset_id()); 
+            RowsetMetaManager::remove(data_dir->get_meta(), rowset_meta->tablet_uid(), rowset_meta->rowset_id(), 0, 0, false); 
         }
         invalid_rowset_metas.clear();
     }

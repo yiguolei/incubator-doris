@@ -102,7 +102,7 @@ OLAPStatus EnginePublishVersionTask::finish() {
                 continue;
             }
             // add visible rowset to tablet
-            publish_status = tablet->add_inc_rowset(rowset);
+            publish_status = tablet->add_rowset(rowset, false);
             if (publish_status != OLAP_SUCCESS && publish_status != OLAP_ERR_PUSH_VERSION_ALREADY_EXIST) {
                 LOG(WARNING) << "add visible rowset to tablet failed rowset_id:" << rowset->rowset_id()
                              << "tablet id: " << tablet_info.tablet_id
@@ -135,15 +135,65 @@ OLAPStatus EnginePublishVersionTask::finish() {
                     // generate a pull rowset meta task to pull rowset from remote meta store and storage
                     // pull rowset meta using tablet_id + txn_id
                     // it depends on the tablet type to download file or only meta
-                    if (tablet->in_eco_mode()) {
-                        if (tablet->is_primary_replica()) {
-                            // primary replica should fetch the meta using txn id
-                            // it will fetch the rowset to meta store, and will be published in next publish version task
-                            StorageEngine::instance()->tablet_sync_service()->fetch_rowset(tablet, transaction_id, FETCH_DATA);
-                        } else {
-                            // shadow replica should fetch the meta using version
-                            StorageEngine::instance()->tablet_sync_service()->fetch_rowset(tablet, version, NOT_FETCH_DATA);
-                        }
+                    if (tablet->in_econ_mode()) {
+                        // both primary and shadow replica should fetch the meta using txn id
+                        // it will fetch the rowset to meta store
+                        // will be published in next publish version task using callback method
+                        auto fetch_rowset_callback = [tablet, transaction_id, version, version_hash](const RowsetMetaPB& rowset_meta_pb) -> void {
+                            // this function not own any lock
+                            // check if rowset meta alreay with version
+                            RowsetSharedPtr rowset;
+                            OLAPStatus create_status = RowsetFactory::load_rowset(tablet->tablet_schema(), 
+                                                             tablet->tablet_path(), 
+                                                             tablet->data_dir(), 
+                                                             rowset_meta_pb, &rowset);
+                            if (create_status != OLAP_SUCCESS) {
+                                LOG(WARNING) << "could not create rowset from rowsetmetapb"
+                                             << "tablet:" << tablet->full_name();
+                                return;
+                            }
+                            if (rowset_meta->tablet_uid() != tablet->tablet_uid()) {
+                                // it is just a check, it should not happen
+                                LOG(WARNING) << "rowset's tablet uid is not equal to tablet's uid"
+                                             << "rowset's uid:" << rowset_meta->tablet_uid().to_string()
+                                             << "tablet:" << tablet->full_name();
+                                return;
+                            }   
+                            RowsetMetaSharedPtr rowset_meta = rowset->rowset_meta();
+                            // if the rowset is not visible, then publish version
+                            bool sync_to_remote = false;
+                            if (rowset_meta->rowset_state() == RowsetStatePB::COMMITTED) {
+                                // the remote rowset is not visible, then should publish it
+                                rowset->make_visible(version, version_hash);
+                                sync_to_remote = true;
+                            }
+                            // not check local or remote, just override, because it is visible operation
+                            OLAPStatus save_status = RowsetMetaManager::save(tablet, tablet->data_dir()->get_meta(), tablet_uid, 
+                                    rowset_ptr->rowset_meta(), 0, 0, sync_to_remote);
+                            if (save_status != OLAP_SUCCESS) {
+                                LOG(WARNING) << "save visible rowset failed. after fetch from remote:"
+                                             << rowset_ptr->rowset_id()
+                                             << ", tablet: " << tablet->full_name()
+                                             << ", txn id:" << transaction_id;
+                                return;
+                            }
+                            OLAPStatus publish_status = tablet->add_rowset(rowset, false);
+                            if (publish_status != OLAP_SUCCESS && publish_status != OLAP_ERR_PUSH_VERSION_ALREADY_EXIST) {
+                                LOG(WARNING) << "add visilbe rowset to tablet failed rowset_id:" << rowset->rowset_id()
+                                             << " tablet id: " << rowset_meta->tablet_id()
+                                             << " txn id:" << rowset_meta->txn_id()
+                                             << " start_version: " << rowset_meta->version().first
+                                             << " end_version: " << rowset_meta->version().second;
+                            } else {
+                                LOG(INFO) << "successfully to add visible rowset: " << rowset_meta->rowset_id()
+                                          << " to tablet: " << rowset_meta->tablet_id()
+                                          << " txn id:" << rowset_meta->txn_id()
+                                          << " start_version: " << rowset_meta->version().first
+                                          << " end_version: " << rowset_meta->version().second;
+                            }
+                            return;
+                        };
+                        StorageEngine::instance()->tablet_sync_service()->fetch_rowset(tablet, transaction_id, fetch_rowset_callback);
                     }
                 }
             }

@@ -81,7 +81,7 @@ TEST_F(TabletMetaManagerTest, TestSaveAndGetAndRemove) {
     OLAPStatus s = tablet_meta->deserialize(meta_binary);
     ASSERT_EQ(OLAP_SUCCESS, s);
 
-    s = TabletMetaManager::save(_data_dir, tablet_id, schema_hash, tablet_meta);
+    s = TabletMetaManager::save(_data_dir, tablet_id, schema_hash, tablet_meta_pb);
     ASSERT_EQ(OLAP_SUCCESS, s);
     std::string json_meta_read;
     s = TabletMetaManager::get_json_meta(_data_dir, tablet_id, schema_hash, &json_meta_read);

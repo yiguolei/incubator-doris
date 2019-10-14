@@ -105,14 +105,15 @@ public:
                              uint64_t shard_id, const TTabletSchema& tablet_schema,
                              uint32_t next_unique_id,
                              const std::unordered_map<uint32_t, uint32_t>& col_ordinal_to_unique_id,
-                             TabletMetaSharedPtr* tablet_meta, TabletUid& tablet_uid);
+                             TabletMetaSharedPtr* tablet_meta, TabletUid& tablet_uid, 
+                             bool in_econ_mode);
     TabletMeta();
     TabletMeta(int64_t table_id, int64_t partition_id,
                int64_t tablet_id, int32_t schema_hash,
                uint64_t shard_id, const TTabletSchema& tablet_schema,
                uint32_t next_unique_id,
                const std::unordered_map<uint32_t, uint32_t>& col_ordinal_to_unique_id, 
-               TabletUid tablet_uid);
+               TabletUid tablet_uid, bool in_econ_mode);
 
     // Function create_from_file is used to be compatible with previous tablet_meta.
     // Previous tablet_meta is a physical file in tablet dir, which is not stored in rocksdb.
@@ -157,6 +158,7 @@ public:
     inline const TabletSchema& tablet_schema() const;
 
     inline const vector<RowsetMetaSharedPtr>& all_rs_metas() const;
+    inline const bool in_econ_mode() const;
     OLAPStatus add_rs_meta(const RowsetMetaSharedPtr& rs_meta);
     RowsetMetaSharedPtr acquire_rs_meta_by_version(const Version& version) const;
     OLAPStatus delete_rs_meta_by_version(const Version& version, vector<RowsetMetaSharedPtr>* deleted_rs_metas);
@@ -203,6 +205,8 @@ private:
     DelPredicateArray _del_pred_array;
     AlterTabletTaskSharedPtr _alter_task;
     bool _in_restore_mode = false;
+    // this property is set during create tablet process, it could not be modified
+    bool _in_econ_mode = false;
 
     RWMutex _meta_lock;
 };

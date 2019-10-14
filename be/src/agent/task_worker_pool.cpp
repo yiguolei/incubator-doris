@@ -511,6 +511,7 @@ void* TaskWorkerPool::_drop_tablet_worker_thread_callback(void* arg_this) {
                 status_code = TStatusCode::RUNTIME_ERROR;
             }
             // if tablet is dropped by fe, then the related txn should also be removed
+            // drop tablet should not drop rowset meta in remote meta store, only remove local meta store
             StorageEngine::instance()->txn_manager()->force_rollback_tablet_related_txns(dropped_tablet->data_dir()->get_meta(), 
                 drop_tablet_req.tablet_id, drop_tablet_req.schema_hash, dropped_tablet->tablet_uid());
         }
@@ -1024,8 +1025,17 @@ void* TaskWorkerPool::_update_tablet_meta_worker_thread_callback(void* arg_this)
                 continue;
             }
             WriteLock wrlock(tablet->get_header_lock_ptr());
-            tablet->set_partition_id(tablet_meta_info.partition_id);
-            tablet->save_meta();
+            bool need_persist_meta = false;
+            if (tablet_meta_info.__isset.partition_id) {
+                tablet->set_partition_id(tablet_meta_info.partition_id);
+                need_persist_meta = true;
+            }
+            if (tablet_meta_info.__isset.primary_replica) {
+                tablet->set_primary_replica(tablet_meta_info.primary_replica);
+            }
+            if (need_persist_meta) {
+                tablet->save_meta();
+            }
         }
 
         LOG(INFO) << "finish update tablet meta task. signature:" << agent_task_req.signature;

@@ -61,6 +61,12 @@ OLAPStatus EngineCloneTask::execute() {
     bool is_new_tablet = tablet == nullptr;
     // try to repair a tablet with missing version
     if (tablet != nullptr) {
+        if (tablet->in_econ_mode()) {
+            LOG(WARNING) << "tablet is in econ mode, it could not perform replica repairing on it"
+                         << ", tablet=" << tablet->full_name();
+            _error_msgs->push_back("tablet is in econ mode, it could not perform replica repairing.");
+            return OLAP_ERR_INVALID_REQUEST;
+        }
         ReadLock migration_rlock(tablet->get_migration_lock_ptr(), TRY_LOCK);
         if (!migration_rlock.own_lock()) {
             return OLAP_ERR_RWLOCK_ERROR;

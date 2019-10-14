@@ -428,7 +428,7 @@ TEST_F(TestDeltaWriter, write) {
                 << ", version:" << rowset->version().first << "-" << rowset->version().second
                 << ", version_hash:" << rowset->version_hash()
                  << std::endl;
-        res = tablet->add_inc_rowset(rowset);
+        res = tablet->add_rowset(rowset, false);
         ASSERT_EQ(OLAP_SUCCESS, res);
     }
     ASSERT_EQ(1, tablet->num_rows());

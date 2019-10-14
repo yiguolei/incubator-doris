@@ -34,18 +34,36 @@ include "Types.thrift"
 // since batch is more efficient.
 //
 // Every response has a status field to indicate whether the request is successful or failed
+struct SaveRowsetMetaReq {
+    1: optional string rowset_id
+    // rowset's start version
+    2: optional Types.TVersion start_version
+    // rowset's end version
+    3: optional Types.TVersion end_version
+    // rowset's version hash
+    4: optional Types.TVersionHash version_hash
+    // the txn that the rowset belongs to, it maybe 0 because the rowset maybe generated during compaction
+    5: optional i64 txn_id
+    6: optional binary meta_binary
+}
 
 struct SaveTabletMetaReq {
     // the tablet id that the rowset belongs to
     1: optional Types.TTabletId tablet_id
     // tablet's schema hash
     2: optional Types.TSchemaHash schema_hash
-    3: optional binary meta_binary
+    // tablet_meta_binary maybe not set if tablet meta need not updated
+    3: optional binary tablet_meta_binary
+    4: optional list<SaveRowsetMetaReq> rowsets_to_save
+    // contains rowsetids that to delete
+    5: optional list<string> rowsets_to_delete 
+    // if is_delete_req = true, it means user want to delete the tablet
+    6: optional bool is_delete_req = false
     // if expected modify version is set then the service should check
     // if current version == exp version. it indicates the service should use
     // CAS mechanism
-    4: optional i64 expected_modify_version
-    5: optional i64 new_modify_version
+    7: optional i64 expected_modify_version
+    8: optional i64 new_modify_version
 }
 
 struct BatchSaveTabletMetaReq {
@@ -63,31 +81,6 @@ struct GetTabletMetaReq {
 
 struct BatchGetTabletMetaReq {
     1: list<GetTabletMetaReq> reqs
-}
-
-struct SaveRowsetMetaReq {
-    // the tablet id that the rowset belongs to
-    1: optional Types.TTabletId tablet_id
-    // tablet's schema hash
-    2: optional Types.TSchemaHash schema_hash
-    // rowset's start version
-    3: optional Types.TVersion start_version
-    // rowset's end version
-    4: optional Types.TVersion end_version
-    // rowset's version hash
-    5: optional Types.TVersionHash version_hash
-    6: optional i64 rowset_id
-    // the txn that the rowset belongs to, it maybe 0 because the rowset maybe generated during compaction
-    7: optional i64 txn_id
-    8: optional binary meta_binary
-    // if expected modify version is set, then the service should check tablet meta's current version == expected version
-    // if the expected version is not set, then the service will not check it
-    9: optional i64 expected_modify_version 
-    10: optional i64 new_modify_version
-}
-
-struct BatchSaveRowsetMetaReq {
-    1: optional list<SaveRowsetMetaReq> reqs
 }
 
 // could use txn id to query rowset or using version to query rowset
@@ -128,14 +121,6 @@ struct BatchGetTabletMetaResponse {
     1: optional list<GetTabletMetaResponse> resps
 }
 
-struct SaveRowsetMetaResponse {
-    1: optional Status.TStatus status
-}
-
-struct BatchSaveRowsetMetaResponse {
-    1: optional list<SaveRowsetMetaResponse> resps
-}
-
 struct GetRowsetMetaResponse {
     1: optional Status.TStatus status
     2: optional list<binary> rowset_metas
@@ -147,11 +132,8 @@ struct BatchGetRowsetMetaResponse {
 
 // currently there are only batch interfaces
 service MetaStoreService {
+    // for rowset meta, if tablet_id, txn_id, start_version, end_version should unique
     BatchSaveTabletMetaResponse save_tablet_meta(1: BatchSaveTabletMetaReq save_tablet_meta_req)
-    
     BatchGetTabletMetaResponse get_tablet_meta(1: BatchGetTabletMetaReq get_tablet_meta_req)
-    
-    BatchSaveRowsetMetaResponse save_rowset_meta(1: BatchSaveRowsetMetaReq save_rowset_meta_req)
-    
     BatchGetRowsetMetaResponse get_rowset_meta(1: BatchGetRowsetMetaReq get_rowset_meta_req)
 }

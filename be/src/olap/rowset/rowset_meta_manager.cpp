@@ -79,7 +79,8 @@ OLAPStatus RowsetMetaManager::get_json_rowset_meta(OlapMeta* meta, TabletUid tab
     return OLAP_SUCCESS;
 }
 
-OLAPStatus RowsetMetaManager::save(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, const RowsetMetaPB& rowset_meta_pb) {
+OLAPStatus RowsetMetaManager::save(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, const RowsetMetaPB& rowset_meta_pb, 
+    int64_t expected_version, int64_t new_version, bool sync_to_remote) {
     std::string key = ROWSET_PREFIX + tablet_uid.to_string() + "_" + rowset_id.to_string();
     std::string value;
     bool ret = rowset_meta_pb.SerializeToString(&value);;
@@ -104,10 +105,15 @@ OLAPStatus RowsetMetaManager::save(OlapMeta* meta, TabletUid tablet_uid, const R
         }
     }
     OLAPStatus status = meta->put(META_COLUMN_FAMILY_INDEX, key, value);
+    if (status != OLAP_SUCCESS) {
+        // if save to local meta store failed, just core
+        LOG(FATAL) << "failed to save rowset meta to local store, key=" << key;
+    }
     return status;
 }
 
-OLAPStatus RowsetMetaManager::remove(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id) {
+OLAPStatus RowsetMetaManager::remove(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id, 
+    int64_t expected_version, int64_t new_version, bool sync_to_remote) {
     std::string key = ROWSET_PREFIX + tablet_uid.to_string() + "_" + rowset_id.to_string();
     LOG(INFO) << "start to remove rowset, key:" << key;
     if (sync_to_remote) {

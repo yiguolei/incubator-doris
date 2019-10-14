@@ -94,14 +94,14 @@ TEST_F(RowsetMetaManagerTest, TestSaveAndGetAndRemove) {
     ASSERT_EQ(rowset_meta.rowset_id(), rowset_id);
     RowsetMetaPB rowset_meta_pb;
     rowset_meta.to_rowset_pb(&rowset_meta_pb);
-    OLAPStatus status = RowsetMetaManager::save(_meta, _tablet_uid, rowset_id, rowset_meta_pb);
+    OLAPStatus status = RowsetMetaManager::save(_meta, _tablet_uid, rowset_id, rowset_meta_pb, 0, 0, false);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     ASSERT_TRUE(RowsetMetaManager::check_rowset_meta(_meta, _tablet_uid, rowset_id));
     std::string json_rowset_meta_read;
     status = RowsetMetaManager::get_json_rowset_meta(_meta, _tablet_uid, rowset_id, &json_rowset_meta_read);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     ASSERT_EQ(_json_rowset_meta, json_rowset_meta_read);
-    status = RowsetMetaManager::remove(_meta, _tablet_uid, rowset_id);
+    status = RowsetMetaManager::remove(_meta, _tablet_uid, rowset_id, 0, 0, false);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     ASSERT_FALSE(RowsetMetaManager::check_rowset_meta(_meta, _tablet_uid, rowset_id));
     RowsetMetaSharedPtr rowset_meta_read(new RowsetMeta());

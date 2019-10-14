@@ -60,11 +60,13 @@ OLAPStatus TabletMeta::create(int64_t table_id, int64_t partition_id,
                               uint64_t shard_id, const TTabletSchema& tablet_schema,
                               uint32_t next_unique_id,
                               const std::unordered_map<uint32_t, uint32_t>& col_ordinal_to_unique_id,
-                              TabletMetaSharedPtr* tablet_meta, TabletUid& tablet_uid) {
+                              TabletMetaSharedPtr* tablet_meta, TabletUid& tablet_uid, 
+                              bool in_econ_mode) {
     tablet_meta->reset(new TabletMeta(table_id, partition_id,
                                 tablet_id, schema_hash,
                                 shard_id, tablet_schema,
-                                next_unique_id, col_ordinal_to_unique_id, tablet_uid));
+                                next_unique_id, col_ordinal_to_unique_id, tablet_uid, 
+                                in_econ_mode));
     return OLAP_SUCCESS;
 }
 
@@ -75,7 +77,7 @@ TabletMeta::TabletMeta(int64_t table_id, int64_t partition_id,
                        uint64_t shard_id, const TTabletSchema& tablet_schema,
                        uint32_t next_unique_id,
                        const std::unordered_map<uint32_t, uint32_t>& col_ordinal_to_unique_id, 
-                       TabletUid tablet_uid) : _tablet_uid(0, 0) {
+                       TabletUid tablet_uid, bool in_econ_mode) : _tablet_uid(0, 0) {
     TabletMetaPB tablet_meta_pb;
     tablet_meta_pb.set_table_id(table_id);
     tablet_meta_pb.set_partition_id(partition_id);
@@ -85,6 +87,7 @@ TabletMeta::TabletMeta(int64_t table_id, int64_t partition_id,
     tablet_meta_pb.set_creation_time(time(NULL));
     tablet_meta_pb.set_cumulative_layer_point(-1);
     tablet_meta_pb.set_tablet_state(PB_RUNNING);
+    tablet_meta_pb.set_eco_mode(in_econ_mode);
     *(tablet_meta_pb.mutable_tablet_uid()) = tablet_uid.to_proto();
     TabletSchemaPB* schema = tablet_meta_pb.mutable_schema();
     schema->set_num_short_key_columns(tablet_schema.short_key_column_count);
@@ -268,13 +271,13 @@ OLAPStatus TabletMeta::_save_meta(DataDir* data_dir) {
                    << " tablet=" << full_name() 
                    << " _tablet_uid=" << _tablet_uid.to_string(); 
     }
-    string meta_binary;
-    RETURN_NOT_OK(serialize(&meta_binary));
-    OLAPStatus status = TabletMetaManager::save(data_dir, tablet_id(), schema_hash(), meta_binary);
+    TabletMetaPB tablet_meta_pb;
+    RETURN_NOT_OK(to_meta_pb(&tablet_meta_pb));
+    OLAPStatus status = TabletMetaManager::save(data_dir, tablet_id(), schema_hash(), tablet_meta_pb);
     if (status != OLAP_SUCCESS) {
-       LOG(FATAL) << "fail to save tablet_meta. status=" << status
-                  << ", tablet_id=" << tablet_id()
-                  << ", schema_hash=" << schema_hash();
+        LOG(FATAL) << "fail to save tablet_meta. status=" << status
+                   << ", tablet_id=" << tablet_id()
+                   << ", schema_hash=" << schema_hash();
     }
     return status;
 }
@@ -365,6 +368,9 @@ OLAPStatus TabletMeta::init_from_pb(const TabletMetaPB& tablet_meta_pb) {
     if (tablet_meta_pb.has_in_restore_mode()) {
         _in_restore_mode = tablet_meta_pb.in_restore_mode();
     }
+    if (tablet_meta_pb.has_econ_mode()) {
+        _in_econ_mode = tablet_meta_pb.econ_mode();
+    }
     return OLAP_SUCCESS;
 }
 
@@ -407,6 +413,7 @@ OLAPStatus TabletMeta::to_meta_pb(TabletMetaPB* tablet_meta_pb) {
     }
 
     tablet_meta_pb->set_in_restore_mode(in_restore_mode());
+    tablet_meta_pb->set_econ_mode(in_econ_mode());
     return OLAP_SUCCESS;
 }
 

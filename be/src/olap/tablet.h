@@ -45,6 +45,25 @@ class TabletMeta;
 
 using TabletSharedPtr = std::shared_ptr<Tablet>;
 
+// about locks(yiguolei)
+// there are 2 locks in tablet 
+// remote_meta_lock protect storage concurrency
+// _local_meta_lock protect memory concurrency
+// Should acqurire remote_meta_lock before any write, and then acquire local meta lock to update in-memory structure
+// Should only acquire _local_meta_lock when read
+// {
+//      acquire_remote_lock();
+//      {
+//          acquire_local_lock();
+//          modify_in_memory_data();
+//          release_local_lock();
+//      } 
+//      update_remote_meta_store();
+//      update_local_meta_store();
+//      release_remote_lock();
+// }
+//
+//
 class Tablet : public std::enable_shared_from_this<Tablet> {
 public:
     static TabletSharedPtr create_tablet_from_meta(
@@ -121,7 +140,6 @@ public:
     const RowsetSharedPtr rowset_with_max_version() const;
     RowsetSharedPtr rowset_with_largest_size();
 
-    OLAPStatus add_inc_rowset(const RowsetSharedPtr& rowset);
     bool has_expired_inc_rowset();
     void delete_inc_rowset_by_version(const Version& version,
                                       const VersionHash& version_hash);
@@ -231,29 +249,40 @@ public:
     void pick_candicate_rowsets_to_base_compaction(std::vector<RowsetSharedPtr>* candidate_rowsets);
 
     OLAPStatus calculate_cumulative_point();
-    // TODO(ygl): 
-    inline bool is_primary_replica() { return false; }
 
-    // TODO(ygl):
+    void set_primary_replica(bool primary_replica) { _is_primary_replica = primary_replica; }
+
     // eco mode means power saving in new energy car
     // eco mode also means save money in palo
-    inline bool in_eco_mode() { return false; }
+    inline bool in_econ_mode() { return _tablet_meta->in_econ_mode(); }
+
+    void acquire_primary_lock();
+    
+    OLAPStatus sync_tablet_meta_from_remote(int64_t max_version);
 
     OLAPStatus do_tablet_meta_checkpoint();
 
     bool rowset_meta_is_useful(RowsetMetaSharedPtr rowset_meta);
 
-    bool contains_rowset(const RowsetId rowset_id);
+    bool exist_rowset(const RowsetId& rowset_id);
+
+    bool exist_version(const Version& version);
 
     void build_tablet_report_info(TTabletInfo* tablet_info);
 
     OLAPStatus generate_tablet_meta_copy(TabletMetaSharedPtr new_tablet_meta);
 
 private:
+    OLAPStatus _apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta);
+    OLAPStatus _build_tablet_meta(const TabletMetaPB& tablet_meta_pb, 
+        const vector<RowsetMetaPB>& rowset_meta_pbs, TabletMetaSharedPtr* new_tablet_meta);
     OLAPStatus _init_once_action();
     void _print_missed_versions(const std::vector<Version>& missed_versions) const;
     OLAPStatus _check_added_rowset(const RowsetSharedPtr& rowset);
     OLAPStatus _max_continuous_version_from_begining(Version* version, VersionHash* v_hash);
+    void _handle_remote_meta_conflicted();
+    // save meta to remote meta store
+    OLAPStatus _save_meta_to_remote(const TabletMetaPB& tablet_meta);
 
 private:
     TabletState _state;
@@ -282,6 +311,18 @@ private:
     std::atomic<int32_t> _newly_created_rowset_num;
     std::atomic<int64_t> _last_checkpoint_time;
     DISALLOW_COPY_AND_ASSIGN(Tablet);
+
+    // member used for econ mode
+    // all operations related with remote meta store should own this lock
+    // add rowset delete rowset should own this lock
+    // all save tablet meta operation should own this lock
+    // all write operations should acquire this lock
+    RWMutex _meta_store_lock;
+    // this flag is set by fe to indicate this tablet is primary replica
+    // only primary replica could do compaction task
+    // only primary replica could do delete rowset task
+    bool _is_primary_replica = false;
+    int64_t _modify_version = 0;
 };
 
 inline bool Tablet::init_succeeded() {

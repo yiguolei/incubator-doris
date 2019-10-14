@@ -136,6 +136,7 @@ RowsetSharedPtr BetaRowsetWriter::build() {
     // TODO write zonemap to meta
     _rowset_meta->set_empty(_num_rows_written == 0);
     _rowset_meta->set_creation_time(time(nullptr));
+    _rowset_meta->set_visible_time(time(nullptr));
     _rowset_meta->set_num_segments(_num_segment);
     if (_is_pending) {
         _rowset_meta->set_rowset_state(COMMITTED);

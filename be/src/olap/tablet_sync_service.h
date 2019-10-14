@@ -40,9 +40,7 @@ enum MetaOpType {
 struct FetchRowsetMetaTask {
 public:
     int priority;
-    TabletSharedPtr tablet;
-    int64_t txn_id;
-    Version version;
+    GetRowsetMetaReq get_rowset_meta_req;
     bool load_data;
     std::shared_ptr<std::promise<OLAPStatus>> pro;
     bool operator< (const FetchRowsetMetaTask& o) const {
@@ -54,22 +52,6 @@ public:
         return *this;
     }
 }; // FetchRowsetMetaTask
-
-struct PushRowsetMetaTask {
-public:
-    int priority;
-    MetaOpType op_type;
-    RowsetMetaPB rowset_meta_pb;
-    std::shared_ptr<std::promise<OLAPStatus>> pro;
-    bool operator< (const PushRowsetMetaTask& o) const {
-        return priority < o.priority;
-    }
-
-    PushRowsetMetaTask& operator++() {
-        priority += 2;
-        return *this;
-    }
-}; // PushRowsetMetaTask
 
 struct FetchTabletMetaTask {
 public:
@@ -102,6 +84,14 @@ public:
     }
 }; // PushTabletMetaTask
 
+struct GetTabletMetaRespPB {
+public:
+    OLAPStatus status;
+    TabletMetaPB tablet_meta_pb;
+    vector<RowsetMetaPB> rowset_meta_pbs;
+    int64_t modify_version;
+};
+
 // sync meta and data from remote meta store to local meta store
 // all method should consider dedup duplicate calls
 // for example, thread1 call sync meta and thread2 call sync meta, if they are the same
@@ -118,31 +108,49 @@ public:
     // tablet_id + txn_id could find a unique rowset
     // return a future object, caller could using it to wait the task to finished
     // and check the status
-    std::future<OLAPStatus> fetch_rowset(TabletSharedPtr tablet, int64_t txn_id, bool load_data);
+    std::future<OLAPStatus> fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
+        std::function<void(const RowsetMetaPB&)> const& after_callback);
 
     // fetch rowset meta and data using version
-    std::future<OLAPStatus> fetch_rowset(TabletSharedPtr tablet, Version& version, bool load_data);
+    std::future<OLAPStatus> fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
+        std::function<void(const RowsetMetaPB&)> const& after_callback);
 
     // save the rowset meta pb to remote meta store
     // !!!! the caller should not own tablet map lock or tablet lock because 
     // this method will call tablet manager to get tablet info
-    std::future<OLAPStatus> push_rowset_meta(RowsetMetaPB& rowset_meta);
+    std::future<OLAPStatus> push_rowset_meta(const RowsetMetaPB& rowset_meta, int64_t expected_version, int64_t new_version);
 
-    std::future<OLAPStatus> delete_rowset_meta(RowsetMetaPB& rowset_meta);
+    // add a synchronized method full push 
+    OLAPStatus sync_push_rowset_meta(const RowsetMetaPB& rowset_meta, int64_t expected_version, int64_t new_version);
+
+    std::future<OLAPStatus> delete_rowset_meta(const RowsetId& rowset_id, int64_t expected_version, int64_t new_version);
+
+    // add a synchronized method full push 
+    OLAPStatus sync_delete_rowset_meta(const RowsetId& rowset_id, int64_t expected_version, int64_t new_version);
 
     // fetch both tablet meta and all rowset meta
     // when create a tablet, if it's eco_mode and term > 1 then should fetch
     // all rowset and tablet meta from remote meta store
     // Maybe, it's better to add a callback function here
-    std::future<OLAPStatus> fetch_tablet_meta(TabletSharedPtr tablet, bool load_data);
+    std::future<GetTabletMetaRespPB> fetch_tablet_meta(const TabletSharedPtr& tablet, bool load_data);
+
+    // a synchronized method to fetch tablet meta from meta store
+    void sync_fetch_tablet_meta(const TabletSharedPtr& tablet, bool load_data, GetTabletMetaRespPB* result);
 
     // save the tablet meta pb to remote meta store
-    std::future<OLAPStatus> push_tablet_meta(TabletMetaPB& tablet_meta);
+    std::future<OLAPStatus> push_tablet_meta(const TabletMetaPB& tablet_meta, int64_t expected_version, int64_t new_version);
+
+    // add a synchronized method full push 
+    OLAPStatus sync_push_tablet_meta(const TabletMetaPB& tablet_meta, int64_t expected_version, int64_t new_version);
 
 private:
     void _fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTask> tasks); 
     void _fetch_tablet_meta_thread(std::vector<FetchTabletMetaTask> tasks); 
     void _push_tablet_meta_thread(std::vector<PushTabletMetaTask> tasks); 
+    void _convert_to_save_rowset_req(const RowsetMetaPB& rowset_meta_pb, 
+        SaveRowsetMetaReq* save_rowset_meta_req);
+    void _convert_to_get_rowset_req(const TabletSharedPtr& tablet, int64_t txn_id, 
+        int64_t start_version, int64_t end_version, GetRowsetMetaReq* get_rowset_meta_req)
 
     void _convert_to_save_rowset_req(const RowsetMetaPB& rowset_meta_pb, 
         SaveRowsetMetaReq* save_rowset_meta_req);

@@ -292,7 +292,7 @@ public:
     void to_rowset_pb(RowsetMetaPB* rs_meta_pb) const {
         *rs_meta_pb = _rowset_meta_pb;
     }
-
+    
     bool is_singleton_delta() {
         return  has_version() && _rowset_meta_pb.start_version() == _rowset_meta_pb.end_version();
     }

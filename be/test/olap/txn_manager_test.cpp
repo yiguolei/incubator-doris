@@ -295,7 +295,7 @@ TEST_F(TxnManagerTest, DeletePreparedTxn) {
         tablet_id, schema_hash, _tablet_uid, load_id);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     status = _txn_mgr.delete_txn(_meta, partition_id, transaction_id, 
-        tablet_id, schema_hash, _tablet_uid);
+        tablet_id, schema_hash, _tablet_uid, false);
     ASSERT_TRUE(status == OLAP_SUCCESS);
 }
 
@@ -307,7 +307,7 @@ TEST_F(TxnManagerTest, DeleteCommittedTxn) {
     status = RowsetMetaManager::get_rowset_meta(_meta, _tablet_uid, _alpha_rowset->rowset_id(), rowset_meta);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     status = _txn_mgr.delete_txn(_meta, partition_id, transaction_id, 
-        tablet_id, schema_hash, _tablet_uid);
+        tablet_id, schema_hash, _tablet_uid, false);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     RowsetMetaSharedPtr rowset_meta2(new AlphaRowsetMeta());
     status = RowsetMetaManager::get_rowset_meta(_meta, _tablet_uid, _alpha_rowset->rowset_id(), rowset_meta2);

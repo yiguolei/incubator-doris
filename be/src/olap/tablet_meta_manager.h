@@ -40,9 +40,11 @@ public:
             TSchemaHash schema_hash, std::string* json_meta);
 
     static OLAPStatus save(DataDir* store, TTabletId tablet_id, TSchemaHash schema_hash, 
-                           TabletMetaSharedPtr tablet_meta, const string& header_prefix = "tabletmeta_");
+                           const TabletMetaPB& tablet_meta_pb, const string& header_prefix = "tabletmeta_");
+
     static OLAPStatus save(DataDir* store, TTabletId tablet_id, TSchemaHash schema_hash, 
-                           const std::string& meta_binary, const string& header_prefix = "tabletmeta_");
+                           const TabletMetaPB& tablet_meta_pb, bool sync_to_remote, const int64_t expected_version, 
+                           const int64_t new_version, const string& header_prefix = "tabletmeta_");
 
     static OLAPStatus remove(DataDir* store, TTabletId tablet_id, TSchemaHash schema_hash, 
                              const string& header_prefix = "tabletmeta_");

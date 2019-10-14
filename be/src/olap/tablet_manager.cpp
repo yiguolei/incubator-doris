@@ -349,6 +349,7 @@ TabletSharedPtr TabletManager::_internal_create_tablet(const AlterTabletType alt
     bool is_tablet_added = false;
     TabletSharedPtr tablet = _create_tablet_meta_and_dir(request, is_schema_change_tablet, 
         ref_tablet, data_dirs);
+    tablet->set_primary_replica(request.__isset.allocation_term && request.allocation_term > 0);
     if (tablet == nullptr) {
         return nullptr;
     }
@@ -1329,11 +1330,12 @@ OLAPStatus TabletManager::_create_tablet_meta(
     LOG(INFO) << "next_unique_id:" << next_unique_id;
     // it is a new tablet meta obviously, should generate a new tablet id
     TabletUid  tablet_uid = TabletUid::gen_uid();
+    bool econ_mode = request.__isset.econ_mode ? request.econ_mode : false;
     res = TabletMeta::create(request.table_id, request.partition_id,
                        request.tablet_id, request.tablet_schema.schema_hash,
                        shard_id, request.tablet_schema,
                        next_unique_id, col_ordinal_to_unique_id,
-                       tablet_meta, tablet_uid);
+                       tablet_meta, tablet_uid, econ_mode);
     return res;
 }
 

@@ -42,6 +42,7 @@ void Rowset::make_visible(Version version, VersionHash version_hash) {
     _rowset_meta->set_version(version);
     _rowset_meta->set_version_hash(version_hash);
     _rowset_meta->set_rowset_state(VISIBLE);
+    _rowset_meta->set_visible_time(time(nullptr));
 
     if (_rowset_meta->has_delete_predicate()) {
         _rowset_meta->mutable_delete_predicate()->set_version(version.first);

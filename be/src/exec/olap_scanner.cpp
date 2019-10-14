@@ -91,6 +91,24 @@ Status OlapScanner::_prepare(
             LOG(WARNING) << ss.str();
             return Status::InternalError(ss.str());
         }
+        // if max_version < _version, then should fetch meta from remote
+        if (_tablet->in_econ_mode()) {
+            Version max_version;
+            VersionHash max_version_hash;
+            _tablet->max_continuous_version_from_begining(&max_version, &max_version_hash);
+            if (max_version.second < _version) {
+                OLAPStatus sync_st = _tablet->sync_tablet_meta_from_remote(max_version.second);
+                if (sync_st != OLAP_SUCCESS) {
+                    LOG(WARNING) << "fail fetch tablet meta from remote reader.res=" << sync_st
+                                << ", tablet=" << _tablet->full_name();
+                    std::stringstream ss;
+                    ss << "failed to initialize storage reader during fetch tablet meta. tablet=" 
+                    << _tablet->full_name()
+                    << ", res=" << sync_st << ", backend=" << BackendOptions::get_localhost();
+                    return Status::InternalError(ss.str().c_str());
+                }
+            }
+        }
         {
             ReadLock rdlock(_tablet->get_header_lock_ptr());
             const RowsetSharedPtr rowset = _tablet->rowset_with_max_version();

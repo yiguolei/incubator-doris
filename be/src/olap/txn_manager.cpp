@@ -84,13 +84,13 @@ OLAPStatus TxnManager::prepare_txn(TPartitionId partition_id, const TabletShared
 OLAPStatus TxnManager::commit_txn(TPartitionId partition_id, const TabletSharedPtr& tablet, TTransactionId transaction_id,
                                   const PUniqueId& load_id, const RowsetSharedPtr& rowset_ptr, bool is_recovery) {
     return commit_txn(tablet->data_dir()->get_meta(), partition_id, transaction_id, tablet->tablet_id(), 
-        tablet->schema_hash(), tablet->tablet_uid(), load_id, rowset_ptr, is_recovery);
+        tablet->schema_hash(), tablet->tablet_uid(), load_id, rowset_ptr, tablet->in_econ_mode(), is_recovery);
 }
 
 OLAPStatus TxnManager::publish_txn(TPartitionId partition_id, const TabletSharedPtr& tablet, TTransactionId transaction_id,
                                    const Version& version, VersionHash version_hash) {
     return publish_txn(tablet->data_dir()->get_meta(), partition_id, transaction_id, tablet->tablet_id(), 
-        tablet->schema_hash(), tablet->tablet_uid(), version, version_hash);
+        tablet->schema_hash(), tablet->tablet_uid(), version, version_hash, tablet->in_econ_mode());
 }
 
 // delete the txn from manager if it is not committed(not have a valid rowset)
@@ -100,7 +100,7 @@ OLAPStatus TxnManager::rollback_txn(TPartitionId partition_id, const TabletShare
 
 OLAPStatus TxnManager::delete_txn(TPartitionId partition_id, const TabletSharedPtr& tablet, TTransactionId transaction_id) {
     return delete_txn(tablet->data_dir()->get_meta(), partition_id, transaction_id, tablet->tablet_id(), 
-        tablet->schema_hash(), tablet->tablet_uid());
+        tablet->schema_hash(), tablet->tablet_uid(), tablet->in_econ_mode());
 }
 
 // prepare txn should always be allowed because ingest task will be retried 
@@ -149,7 +149,8 @@ OLAPStatus TxnManager::prepare_txn(
 OLAPStatus TxnManager::commit_txn(
     OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
     TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid,
-    const PUniqueId& load_id, const RowsetSharedPtr& rowset_ptr, bool is_recovery) {
+    const PUniqueId& load_id, const RowsetSharedPtr& rowset_ptr, bool sync_to_remote, 
+    bool is_recovery) {
     if (partition_id < 1 || transaction_id < 1 || tablet_id < 1) {
         LOG(FATAL) << "invalid commit req "
                    << " partition_id=" << partition_id
@@ -211,7 +212,8 @@ OLAPStatus TxnManager::commit_txn(
     if (!is_recovery) {
         RowsetMetaPB rowset_meta_pb;
         rowset_ptr->rowset_meta()->to_rowset_pb(&rowset_meta_pb);
-        OLAPStatus save_status = RowsetMetaManager::save(meta, tablet_uid, rowset_ptr->rowset_id(), rowset_meta_pb);
+        OLAPStatus save_status = RowsetMetaManager::save(meta, tablet_uid, rowset_ptr->rowset_id(), 
+            rowset_meta_pb, 0, 0, sync_to_remote);
         if (save_status != OLAP_SUCCESS) {
             LOG(WARNING) << "save committed rowset failed. when commit txn rowset_id:"
                         << rowset_ptr->rowset_id()
@@ -238,7 +240,7 @@ OLAPStatus TxnManager::commit_txn(
 // remove a txn from txn manager
 OLAPStatus TxnManager::publish_txn(OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
                                    TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid,
-                                   const Version& version, VersionHash version_hash) {
+                                   const Version& version, VersionHash version_hash, bool sync_to_remote) {
     pair<int64_t, int64_t> key(partition_id, transaction_id);
     TabletInfo tablet_info(tablet_id, schema_hash, tablet_uid);
     RowsetSharedPtr rowset_ptr = nullptr;
@@ -264,7 +266,8 @@ OLAPStatus TxnManager::publish_txn(OlapMeta* meta, TPartitionId partition_id, TT
         rowset_ptr->make_visible(version, version_hash);
         RowsetMetaPB rowset_meta_pb;
         rowset_ptr->rowset_meta()->to_rowset_pb(&rowset_meta_pb);
-        OLAPStatus save_status = RowsetMetaManager::save(meta, tablet_uid, rowset_ptr->rowset_id(), rowset_meta_pb);
+        OLAPStatus save_status = RowsetMetaManager::save(meta, tablet_uid, rowset_ptr->rowset_id(), rowset_meta_pb, 
+            0, 0, sync_to_remote);
         if (save_status != OLAP_SUCCESS) {
             LOG(WARNING) << "save committed rowset failed. when publish txn rowset_id:"
                          << rowset_ptr->rowset_id()
@@ -332,7 +335,7 @@ OLAPStatus TxnManager::rollback_txn(TPartitionId partition_id, TTransactionId tr
 // fe call this api to clear unused rowsets in be
 // could not delete the rowset if it already has a valid version
 OLAPStatus TxnManager::delete_txn(OlapMeta* meta, TPartitionId partition_id, TTransactionId transaction_id,
-                                  TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid) {
+                                  TTabletId tablet_id, SchemaHash schema_hash, TabletUid tablet_uid, bool sync_to_remote) {
     pair<int64_t, int64_t> key(partition_id, transaction_id);
     TabletInfo tablet_info(tablet_id, schema_hash, tablet_uid);
     WriteLock wrlock(_get_txn_lock(transaction_id));
@@ -358,7 +361,13 @@ OLAPStatus TxnManager::delete_txn(OlapMeta* meta, TPartitionId partition_id, TTr
                                 << ", version: " << load_info.rowset->version().first;
                 return OLAP_ERR_TRANSACTION_ALREADY_VISIBLE;
             } else {
-                RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id());
+                // for delete_txn
+                OLAPStatus remove_st = RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id(), 0，0，sync_to_remote);
+                if (remove_st != OLAP_SUCCESS) {
+                    LOG(WARNING) << "failed to remove rowset from meta store, res=" << remove_st
+                                 << ", reset=" << load_info.rowset->rowset_id();
+                    return remove_st;
+                }
                 #ifndef BE_TEST
                 StorageEngine::instance()->add_unused_rowset(load_info.rowset);
                 #endif
@@ -411,7 +420,15 @@ void TxnManager::force_rollback_tablet_related_txns(OlapMeta* meta, TTabletId ta
                 LOG(INFO) << " delete transaction from engine "
                           << ", tablet: " << tablet_info.to_string()
                           << ", rowset id: " << load_info.rowset->rowset_id();
-                RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id());
+                // this method is useful when tablet is dropped but txn related with this tablet existing in meta store
+                // should only remove txn in local meta store not remote meta store because tablet on another backend may
+                // use this txn
+                OLAPStatus remove_st = RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id(), 0, 0, false);
+                if (remove_st != OLAP_SUCCESS) {
+                    LOG(WARNING) << "failed to remove rowset from meta store, res=" << remove_st
+                                 << ", reset=" << load_info.rowset->rowset_id();
+                    return remove_st;
+                }
             }
             LOG(INFO) << "remove tablet related txn."
                       << " partition_id: " << it.first.first

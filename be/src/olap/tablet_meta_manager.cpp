@@ -80,42 +80,52 @@ OLAPStatus TabletMetaManager::get_json_meta(DataDir* store,
     return OLAP_SUCCESS;
 }
 
-// TODO(ygl):
-// 1. if term > 0 then save to remote meta store first using term
-// 2. save to local meta store
-OLAPStatus TabletMetaManager::save(DataDir* store,
-        TTabletId tablet_id, TSchemaHash schema_hash,
-        TabletMetaSharedPtr tablet_meta, const string& header_prefix) {
-    std::stringstream key_stream;
-    key_stream << header_prefix << tablet_id << "_" << schema_hash;
-    std::string key = key_stream.str();
-    std::string value;
-    tablet_meta->serialize(&value);
-    OlapMeta* meta = store->get_meta();
-    LOG(INFO) << "save tablet meta"
-              << ", key:" << key
-              << ", meta length:" << value.length();
-    return meta->put(META_COLUMN_FAMILY_INDEX, key, value);
+
+OLAPStatus TabletMetaManager::save(DataDir* store, TTabletId tablet_id, TSchemaHash schema_hash, 
+    const TabletMetaPB& tablet_meta_pb, const string& header_prefix) {
+    return save(store, tablet_id, schema_hash, tablet_meta_pb, false, 0, 0, header_prefix);
 }
 
-OLAPStatus TabletMetaManager::save(DataDir* store,
-        TTabletId tablet_id, TSchemaHash schema_hash, const std::string& meta_binary, const string& header_prefix) {
+OLAPStatus TabletMetaManager::save(DataDir* store, TTabletId tablet_id, TSchemaHash schema_hash, 
+    const TabletMetaPB& tablet_meta_pb, bool sync_to_remote, const int64_t expected_version, const int64_t new_version, 
+    const string& header_prefix) {
     std::stringstream key_stream;
     key_stream << header_prefix << tablet_id << "_" << schema_hash;
     std::string key = key_stream.str();
-    VLOG(3) << "save tablet meta to meta store: key = " << key;
     OlapMeta* meta = store->get_meta();
-
+    std::string meta_binary;
+    bool serialize_res = tablet_meta_pb.SerializeToString(&meta_binary);
+    if (!serialize_res) {
+        LOG(FATAL) << "failed to serialize meta, tablet_id=" << tablet_id;
+    }
+    // deserialize the meta to check the result is correct
     TabletMetaPB de_tablet_meta_pb;
-    bool parsed = de_tablet_meta_pb.ParseFromString(meta_binary);
-    if (!parsed) {
-        LOG(FATAL) << "deserialize from previous serialize result failed";
+    bool deserialize_res = de_tablet_meta_pb.ParseFromString(meta_binary);
+    if (!deserialize_res) {
+        LOG(FATAL) << "deserialize from previous serialize result failed , tablet_id=" << tablet_id;
     }
 
+    if (sync_to_remote) {
+        OLAPStatus sync_status = StorageEngine::instance()->tablet_sync_service()->push_tablet_meta(
+            tablet_meta_pb, expected_version, new_version);
+        if (sync_status != OLAP_SUCCESS) {
+            LOG(WARNING) << "failed to save tablet meta to remote meta store, res=" << sync_status
+                         << ", tablet=" << tablet_id;
+            return sync_status;
+        }
+    }
     LOG(INFO) << "save tablet meta " 
-              << ", key:" << key
+              << ", key=" << key
               << " meta_size=" << meta_binary.length();
-    return meta->put(META_COLUMN_FAMILY_INDEX, key, meta_binary);
+    OLAPStatus res = meta->put(META_COLUMN_FAMILY_INDEX, key, meta_binary);
+    if (res != OLAP_SUCCESS) {
+        // if local meta store returns failure, the meta may be saved successful and may be failed
+        // and local meta store does not have CAS mechanism, just CORE.
+        LOG(FATAL) << "save meta to local meta store failed, key=" << key; 
+        return res;
+    } else {
+        return res;
+    }
 }
 
 // TODO(ygl): 

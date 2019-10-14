@@ -512,7 +512,7 @@ OLAPStatus DataDir::_clean_unfinished_converting_data() {
         LOG(INFO) << "successfully clean temp tablet meta from data dir=" << _path;
     }
     auto clean_unifinished_rowset_meta_func = [this](TabletUid tablet_uid, RowsetId rowset_id, const std::string& value) -> bool {
-        RowsetMetaManager::remove(_meta, tablet_uid, rowset_id);
+        RowsetMetaManager::remove(_meta, tablet_uid, rowset_id, 0, 0, false);
         LOG(INFO) << "successfully clean temp rowset meta for rowset_id="
                   << rowset_id << " from data dir=" << _path;
         return true;
@@ -557,7 +557,7 @@ OLAPStatus DataDir::_convert_old_tablet() {
         for (auto& rowset_pb : pending_rowsets) {
             RowsetId rowset_id;
             rowset_id.init(rowset_pb.rowset_id_v2());
-            status = RowsetMetaManager::save(_meta, rowset_pb.tablet_uid(), rowset_id, rowset_pb);
+            status = RowsetMetaManager::save(_meta, rowset_pb.tablet_uid(), rowset_id, rowset_pb, 0, 0, false);
             if (status != OLAP_SUCCESS) {
                 LOG(FATAL) << "convert olap header to tablet meta failed when save rowset meta tablet="
                              << tablet_id << "." << schema_hash;
@@ -566,9 +566,7 @@ OLAPStatus DataDir::_convert_old_tablet() {
         }
 
         // write converted tablet meta to olap meta
-        string meta_binary;
-        tablet_meta_pb.SerializeToString(&meta_binary);
-        status = TabletMetaManager::save(this, tablet_meta_pb.tablet_id(), tablet_meta_pb.schema_hash(), meta_binary);
+        status = TabletMetaManager::save(this, tablet_meta_pb.tablet_id(), tablet_meta_pb.schema_hash(), tablet_meta_pb);
         if (status != OLAP_SUCCESS) {
             LOG(FATAL) << "convert olap header to tablet meta failed when save tablet meta tablet="
                          << tablet_id << "." << schema_hash;
@@ -788,7 +786,7 @@ OLAPStatus DataDir::load() {
         }
         if (rowset_meta->rowset_state() == RowsetStatePB::COMMITTED
             && rowset_meta->tablet_uid() == tablet->tablet_uid()) {
-            OLAPStatus commit_txn_status = _txn_manager->commit_txn(
+            OLAPStatus commit_txn_status = _txn_manager->commit_txn(tablet, 
                 _meta,
                 rowset_meta->partition_id(), rowset_meta->txn_id(),
                 rowset_meta->tablet_id(), rowset_meta->tablet_schema_hash(),
