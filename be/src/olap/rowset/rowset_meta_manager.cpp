@@ -88,6 +88,21 @@ OLAPStatus RowsetMetaManager::save(OlapMeta* meta, TabletUid tablet_uid, const R
         LOG(WARNING) << error_msg;
         return OLAP_ERR_SERIALIZE_PROTOBUF_ERROR;
     }
+    // check if it is needed to save meta to RemoteMetaStore
+    // if current tablet is under eco mode and sync to remote = true, then sync to remote
+    // not care about whether current tablet is primary replica because BE will support this case
+    // when primary replica failed, FE could let shadow replica handle load task, then shadow replica
+    // should sync rowset meta to remote meta store
+    if (sync_to_remote) {
+        OLAPStatus sync_status = StorageEngine::instance()->tablet_sync_service()->sync_push_rowset_meta(rowset_meta_pb, 
+            expected_version, new_version);
+        if (sync_status != OLAP_SUCCESS) {
+            LOG(WARNING) << "failed to save rowset meta to remote meta store" 
+                         << ", res=" << sync_status
+                         << ", key=" << key;
+            return sync_status;
+        }
+    }
     OLAPStatus status = meta->put(META_COLUMN_FAMILY_INDEX, key, value);
     return status;
 }
@@ -95,7 +110,21 @@ OLAPStatus RowsetMetaManager::save(OlapMeta* meta, TabletUid tablet_uid, const R
 OLAPStatus RowsetMetaManager::remove(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id) {
     std::string key = ROWSET_PREFIX + tablet_uid.to_string() + "_" + rowset_id.to_string();
     LOG(INFO) << "start to remove rowset, key:" << key;
+    if (sync_to_remote) {
+        OLAPStatus sync_status = StorageEngine::instance()->tablet_sync_service()->sync_delete_rowset_meta(rowset_id, 
+            expected_version, new_version);
+        if (sync_status != OLAP_SUCCESS) {
+            LOG(WARNING) << "failed to remove rowset meta to remote meta store" 
+                         << ", res=" << sync_status
+                         << ", key=" << key;
+            return sync_status;
+        }
+    }
     OLAPStatus status = meta->remove(META_COLUMN_FAMILY_INDEX, key);
+    if (status != OLAP_SUCCESS) {
+        // if save to local meta store failed, just core
+        LOG(FATAL) << "failed to remove rowset meta from local store, key=" << key;
+    }
     LOG(INFO) << "remove rowset key:" << key << " finished";
     return status;
 }
@@ -121,7 +150,8 @@ OLAPStatus RowsetMetaManager::traverse_rowset_metas(OlapMeta* meta,
     return status;
 }
 
-OLAPStatus RowsetMetaManager::load_json_rowset_meta(OlapMeta* meta, const std::string& rowset_meta_path) {
+OLAPStatus RowsetMetaManager::load_json_rowset_meta(OlapMeta* meta, const std::string& rowset_meta_path, 
+    int64_t expected_version, int64_t new_version, bool sync_to_remote) {
     std::ifstream infile(rowset_meta_path);
     char buffer[1024];
     std::string json_rowset_meta;
@@ -141,7 +171,7 @@ OLAPStatus RowsetMetaManager::load_json_rowset_meta(OlapMeta* meta, const std::s
     TabletUid tablet_uid = rowset_meta.tablet_uid();
     RowsetMetaPB rowset_meta_pb;
     rowset_meta.to_rowset_pb(&rowset_meta_pb);
-    OLAPStatus status = save(meta, tablet_uid, rowset_id, rowset_meta_pb);
+    OLAPStatus status = save(meta, tablet_uid, rowset_id, rowset_meta_pb, expected_version, new_version, sync_to_remote);
     return status;
 }
 

@@ -268,7 +268,6 @@ private:
     RWMutex _meta_lock;
     // meta store lock is used for prevent 2 threads do checkpoint concurrently
     // it will be used in econ-mode in the future
-    RWMutex _meta_store_lock;
     Mutex _ingest_lock;
     Mutex _base_lock;
     Mutex _cumulative_lock;

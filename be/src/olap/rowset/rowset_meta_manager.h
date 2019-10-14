@@ -44,7 +44,8 @@ public:
     static OLAPStatus traverse_rowset_metas(OlapMeta* meta,
             std::function<bool(const TabletUid&, const RowsetId&, const std::string&)> const& func);
 
-    static OLAPStatus load_json_rowset_meta(OlapMeta* meta, const std::string& rowset_meta_path);
+    static OLAPStatus load_json_rowset_meta(OlapMeta* meta, const std::string& rowset_meta_path, 
+        int64_t expected_version, int64_t new_version, bool sync_to_remote);
 };
 
 }

@@ -19,6 +19,7 @@
 #include "olap/rowset/rowset_factory.h"
 #include "gen_cpp/olap_file.pb.h"
 #include "olap/rowset/alpha_rowset.h"
+#include "olap/rowset/alpha_rowset_meta.h"
 #include "olap/rowset/alpha_rowset_writer.h"
 #include "beta_rowset.h"
 #include "olap/rowset/beta_rowset_writer.h"

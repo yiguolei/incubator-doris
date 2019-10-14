@@ -297,6 +297,10 @@ inline const vector<RowsetMetaSharedPtr>& TabletMeta::all_inc_rs_metas() const {
     return _inc_rs_metas;
 }
 
+inline const bool TabletMeta::in_econ_mode() const {
+    return _in_econ_mode;
+}
+
 }  // namespace doris
 
 #endif // DORIS_BE_SRC_OLAP_OLAP_TABLET_META_H

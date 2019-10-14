@@ -20,6 +20,8 @@
 
 #include <future>
 
+#include "gen_cpp/MetaStoreService_types.h"
+
 #include "olap/olap_common.h"
 #include "olap/olap_define.h"
 #include "olap/tablet.h"
@@ -139,13 +141,16 @@ public:
 
 private:
     void _fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTask> tasks); 
-    void _push_rowset_meta_thread(std::vector<PushRowsetMetaTask> tasks); 
     void _fetch_tablet_meta_thread(std::vector<FetchTabletMetaTask> tasks); 
     void _push_tablet_meta_thread(std::vector<PushTabletMetaTask> tasks); 
 
+    void _convert_to_save_rowset_req(const RowsetMetaPB& rowset_meta_pb, 
+        SaveRowsetMetaReq* save_rowset_meta_req);
+    void _convert_to_get_rowset_req(const TabletSharedPtr& tablet, int64_t txn_id, 
+        int64_t start_version, int64_t end_version, GetRowsetMetaReq* get_rowset_meta_req);
+
 private:
     BatchProcessThreadPool<FetchRowsetMetaTask>* _fetch_rowset_pool = nullptr;
-    BatchProcessThreadPool<PushRowsetMetaTask>* _push_rowset_pool = nullptr;
     BatchProcessThreadPool<FetchTabletMetaTask>* _fetch_tablet_pool = nullptr;
     BatchProcessThreadPool<PushTabletMetaTask>* _push_tablet_pool = nullptr;
 }; // TabletSyncService

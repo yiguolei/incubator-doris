@@ -297,6 +297,22 @@ public:
         return  has_version() && _rowset_meta_pb.start_version() == _rowset_meta_pb.end_version();
     }
 
+    int64_t visible_time() const {
+        return _rowset_meta_pb.visible_time();
+    }
+
+    void set_visible_time(int64_t visible_time) {
+        return _rowset_meta_pb.set_visible_time(visible_time);
+    }
+
+    std::string to_string() const {
+        std::stringstream ss;
+        ss << "rowset_id=" << rowset_id().to_string() 
+           << " start_version=" << std::to_string(start_version())
+           << " end_version=" << std::to_string(end_version());
+        return ss.str();
+    }
+
 private:
     friend class AlphaRowsetMeta;
     bool _deserialize_from_pb(const std::string& value) {

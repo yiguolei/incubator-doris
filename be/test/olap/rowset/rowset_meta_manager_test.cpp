@@ -112,7 +112,7 @@ TEST_F(RowsetMetaManagerTest, TestSaveAndGetAndRemove) {
 TEST_F(RowsetMetaManagerTest, TestLoad) {
     RowsetId rowset_id;
     rowset_id.init(10000);
-    OLAPStatus status = RowsetMetaManager::load_json_rowset_meta(_meta, rowset_meta_path);
+    OLAPStatus status = RowsetMetaManager::load_json_rowset_meta(_meta, rowset_meta_path, 0, 0, false);
     ASSERT_TRUE(status == OLAP_SUCCESS);
     ASSERT_TRUE(RowsetMetaManager::check_rowset_meta(_meta, _tablet_uid, rowset_id));
     std::string json_rowset_meta_read;
