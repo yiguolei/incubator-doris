@@ -362,7 +362,7 @@ OLAPStatus TxnManager::delete_txn(OlapMeta* meta, TPartitionId partition_id, TTr
                 return OLAP_ERR_TRANSACTION_ALREADY_VISIBLE;
             } else {
                 // for delete_txn
-                OLAPStatus remove_st = RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id(), 0，0，sync_to_remote);
+                OLAPStatus remove_st = RowsetMetaManager::remove(meta, tablet_uid, load_info.rowset->rowset_id(), 0, 0, sync_to_remote);
                 if (remove_st != OLAP_SUCCESS) {
                     LOG(WARNING) << "failed to remove rowset from meta store, res=" << remove_st
                                  << ", reset=" << load_info.rowset->rowset_id();
@@ -427,7 +427,7 @@ void TxnManager::force_rollback_tablet_related_txns(OlapMeta* meta, TTabletId ta
                 if (remove_st != OLAP_SUCCESS) {
                     LOG(WARNING) << "failed to remove rowset from meta store, res=" << remove_st
                                  << ", reset=" << load_info.rowset->rowset_id();
-                    return remove_st;
+                    return;
                 }
             }
             LOG(INFO) << "remove tablet related txn."

@@ -255,8 +255,6 @@ public:
     // eco mode means power saving in new energy car
     // eco mode also means save money in palo
     inline bool in_econ_mode() { return _tablet_meta->in_econ_mode(); }
-
-    void acquire_primary_lock();
     
     OLAPStatus sync_tablet_meta_from_remote(int64_t max_version);
 
@@ -272,6 +270,8 @@ public:
 
     OLAPStatus generate_tablet_meta_copy(TabletMetaSharedPtr new_tablet_meta);
 
+    OLAPStatus acquire_primary_lock();
+
 private:
     OLAPStatus _apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta);
     OLAPStatus _build_tablet_meta(const TabletMetaPB& tablet_meta_pb, 
@@ -282,7 +282,7 @@ private:
     OLAPStatus _max_continuous_version_from_begining(Version* version, VersionHash* v_hash);
     void _handle_remote_meta_conflicted();
     // save meta to remote meta store
-    OLAPStatus _save_meta_to_remote(const TabletMetaPB& tablet_meta);
+    OLAPStatus _save_meta_to_remote(const TabletMetaPB& tablet_meta, int64_t expected_version, int64_t new_version);
 
 private:
     TabletState _state;

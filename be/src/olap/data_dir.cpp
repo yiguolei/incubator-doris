@@ -786,11 +786,8 @@ OLAPStatus DataDir::load() {
         }
         if (rowset_meta->rowset_state() == RowsetStatePB::COMMITTED
             && rowset_meta->tablet_uid() == tablet->tablet_uid()) {
-            OLAPStatus commit_txn_status = _txn_manager->commit_txn(tablet, 
-                _meta,
-                rowset_meta->partition_id(), rowset_meta->txn_id(),
-                rowset_meta->tablet_id(), rowset_meta->tablet_schema_hash(),
-                rowset_meta->tablet_uid(), rowset_meta->load_id(), rowset, true);
+            OLAPStatus commit_txn_status = _txn_manager->commit_txn(
+                rowset_meta->partition_id(), tablet, rowset_meta->txn_id(), rowset_meta->load_id(), rowset, true);
             if (commit_txn_status != OLAP_SUCCESS && commit_txn_status != OLAP_ERR_PUSH_TRANSACTION_ALREADY_EXIST) {
                 LOG(WARNING) << "failed to add committed rowset: " << rowset_meta->rowset_id()
                              << " to tablet: " << rowset_meta->tablet_id()

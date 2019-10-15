@@ -260,8 +260,8 @@ OLAPStatus Tablet::deregister_tablet_from_dir() {
 
 // only push and compaction thread call this method
 OLAPStatus Tablet::add_rowset(RowsetSharedPtr rowset, bool need_persist) {
-    WriteLock meta_store_wlock(_meta_store_lock);
-    if (rowset == nullptr || rowset->rowset_state() != RowsetStatePB::VISIBLE) {
+    WriteLock meta_store_wlock(&_meta_store_lock);
+    if (rowset == nullptr || rowset->rowset_meta()->rowset_state() != RowsetStatePB::VISIBLE) {
         LOG(FATAL) << "rowset is null or state is not visible, it should not happen";
     }
     if (!rowset->rowset_meta()->is_singleton_delta() && need_persist 
@@ -1186,10 +1186,10 @@ OLAPStatus Tablet::sync_tablet_meta_from_remote(int64_t max_version) {
     {
         // there maybe many thread call sync concurrently, should check if sync 
         // already meet the requirement
-        Version max_version;
-        VersionHash max_version_hash;
-        RETURN_NOT_OK(max_continuous_version_from_begining(&max_version, &max_version_hash));
-        if (max_version.second >= max_version) {
+        Version version;
+        VersionHash version_hash;
+        RETURN_NOT_OK(max_continuous_version_from_begining(&version, &version_hash));
+        if (version.second >= max_version) {
             return OLAP_SUCCESS;
         }
     }
@@ -1218,7 +1218,6 @@ OLAPStatus Tablet::acquire_primary_lock() {
     }
     WriteLock remote_wlock(&_meta_store_lock);
     
-    OLAPStatus res = OLAP_SUCCESS;
     // call tablet meta sync service to get all tablet meta
     GetTabletMetaRespPB new_tablet_meta_resp;
     StorageEngine::instance()->tablet_sync_service()->sync_fetch_tablet_meta(shared_from_this(), false, &new_tablet_meta_resp);
@@ -1241,10 +1240,11 @@ OLAPStatus Tablet::acquire_primary_lock() {
             _modify_version = remote_modify_version + 1;
         }
     }
+    return OLAP_SUCCESS;
 }
 
 OLAPStatus Tablet::_save_meta_to_remote(const TabletMetaPB& tablet_meta, int64_t expected_version, int64_t new_version) {
-    OLAPStatus res = StorageEngine::instance()->tablet_sync_service()->sync_push_tablet_meta(tablet_meta);
+    OLAPStatus res = StorageEngine::instance()->tablet_sync_service()->sync_push_tablet_meta(tablet_meta, expected_version, new_version);
     if (res != OLAP_SUCCESS) {
         LOG(WARNING) << "failed to save tablet meta to remote meta store, res=" << res
                      << " rollback local state, tablet=" << full_name();
@@ -1260,8 +1260,8 @@ OLAPStatus Tablet::_save_meta_to_remote(const TabletMetaPB& tablet_meta, int64_t
 OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) {
     OLAPStatus res = OLAP_SUCCESS;
     std::map<RowsetId, RowsetMetaSharedPtr> new_rowset_meta_map;
-    for (auto& rs_meta :  new_tablet_meta->all_rs_metas()) {
-        auto& insert_res = new_rowset_meta_map.insert(std::pair<RowsetId, RowsetMetaSharedPtr>(rs_meta->rowset_id(), rs_meta));
+    for (auto rs_meta :  new_tablet_meta->all_rs_metas()) {
+        auto insert_res = new_rowset_meta_map.insert(std::pair<RowsetId, RowsetMetaSharedPtr>(rs_meta->rowset_id(), rs_meta));
         if (!insert_res.second) {
             LOG(FATAL) << "failed to insert rs meta, because it already exist, it's a fatal error"
                        << ", rowset_id:" << rs_meta->rowset_id();
@@ -1269,7 +1269,7 @@ OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) 
     }
     std::map<RowsetId, RowsetMetaSharedPtr> intersect_rs_metas;
     std::vector<RowsetSharedPtr> rowsets_to_delete;
-    for (auto& rs_meta :  _tablet_meta->all_rs_metas()) {
+    for (auto rs_meta :  _tablet_meta->all_rs_metas()) {
         if (new_rowset_meta_map.find(rs_meta->rowset_id()) == new_rowset_meta_map.end()) {
             // remove rowset that exist in current tablet meta not in new tablet meta
             Version version = { rs_meta->start_version(), rs_meta->end_version() };
@@ -1277,7 +1277,7 @@ OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) 
             rowsets_to_delete.push_back(it->second);
             _rs_version_map.erase(it);
         } else {
-            auto& insert_res = intersect_rs_metas.insert(std::pair<RowsetId, RowsetMetaSharedPtr>(rs_meta->rowset_id(), rs_meta));
+            auto insert_res = intersect_rs_metas.insert(std::pair<RowsetId, RowsetMetaSharedPtr>(rs_meta->rowset_id(), rs_meta));
             if (!insert_res.second) {
                 LOG(FATAL) << "failed to insert rs meta, because it already exist, it's a fatal error"
                            << ", rowset_id:" << rs_meta->rowset_id();
@@ -1285,7 +1285,7 @@ OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) 
         }
     }
     // construct new_tablet_meta - tablet_meta
-    for (auto& rs_meta : new_tablet_meta->all_rs_metas()) {
+    for (auto rs_meta : new_tablet_meta->all_rs_metas()) {
         if (intersect_rs_metas.find(rs_meta->rowset_id()) == intersect_rs_metas.end()) {
             Version version = { rs_meta->start_version(), rs_meta->end_version() };
             RowsetSharedPtr rowset;
@@ -1295,7 +1295,7 @@ OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) 
                            << " res=" << res;
                 return res;
             }
-            auto& insert_res = _rs_version_map.insert(std::pair<Version, RowsetSharedPtr>(version, rowset));
+            auto insert_res = _rs_version_map.insert(std::pair<Version, RowsetSharedPtr>(version, rowset));
             if (!insert_res.second) {
                 LOG(FATAL) << "failed to insert rowset, because version already exist, it's a fatal error"
                            << ". version=" << version.first << "-" << version.second 
@@ -1304,10 +1304,10 @@ OLAPStatus Tablet::_apply_new_tablet_meta(TabletMetaSharedPtr& new_tablet_meta) 
         }
     }
     _rs_graph.reconstruct_rowset_graph(new_tablet_meta->all_rs_metas());
+    _tablet_meta = new_tablet_meta;
     for (auto& invalid_rowset : rowsets_to_delete) {
         StorageEngine::instance()->add_unused_rowset(invalid_rowset);
     }
-    _tablet_meta = new_tablet_meta;
     LOG(INFO) << "finish to apply new tablet meta. res=" << res << ", "
               << "table=" << full_name();
     return res;
@@ -1327,7 +1327,7 @@ OLAPStatus Tablet::_build_tablet_meta(const TabletMetaPB& tablet_meta_pb,
     new_tablet_meta->reset(new (nothrow) TabletMeta());
     // tablet uid is the identity for the tablet object in this backend
     // new tablet tablet meta should not change the uid
-    *(tmp_tablet_meta_pb.mutable_tablet_uid()) = tablet_uid();
+    *(tmp_tablet_meta_pb.mutable_tablet_uid()) = tablet_uid().to_proto();
     RETURN_NOT_OK((*new_tablet_meta)->init_from_pb(tmp_tablet_meta_pb));
     OLAPStatus res = OLAP_SUCCESS;
     // add remote rowset meta to new tablet meta
@@ -1346,6 +1346,7 @@ OLAPStatus Tablet::_build_tablet_meta(const TabletMetaPB& tablet_meta_pb,
             return res;
         }
     }
+    return res;
 }
 
 }  // namespace doris

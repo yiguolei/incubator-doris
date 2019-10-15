@@ -87,7 +87,7 @@ TabletMeta::TabletMeta(int64_t table_id, int64_t partition_id,
     tablet_meta_pb.set_creation_time(time(NULL));
     tablet_meta_pb.set_cumulative_layer_point(-1);
     tablet_meta_pb.set_tablet_state(PB_RUNNING);
-    tablet_meta_pb.set_eco_mode(in_econ_mode);
+    tablet_meta_pb.set_econ_mode(in_econ_mode);
     *(tablet_meta_pb.mutable_tablet_uid()) = tablet_uid.to_proto();
     TabletSchemaPB* schema = tablet_meta_pb.mutable_schema();
     schema->set_num_short_key_columns(tablet_schema.short_key_column_count);

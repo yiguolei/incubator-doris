@@ -106,7 +106,7 @@ OLAPStatus TabletMetaManager::save(DataDir* store, TTabletId tablet_id, TSchemaH
     }
 
     if (sync_to_remote) {
-        OLAPStatus sync_status = StorageEngine::instance()->tablet_sync_service()->push_tablet_meta(
+        OLAPStatus sync_status = StorageEngine::instance()->tablet_sync_service()->sync_push_tablet_meta(
             tablet_meta_pb, expected_version, new_version);
         if (sync_status != OLAP_SUCCESS) {
             LOG(WARNING) << "failed to save tablet meta to remote meta store, res=" << sync_status
@@ -175,12 +175,9 @@ OLAPStatus TabletMetaManager::load_json_meta(DataDir* store, const std::string& 
     if (!ret) {
         return OLAP_ERR_HEADER_LOAD_JSON_HEADER;
     }
-
-    std::string meta_binary;
-    tablet_meta_pb.SerializeToString(&meta_binary);
     TTabletId tablet_id = tablet_meta_pb.tablet_id();
     TSchemaHash schema_hash = tablet_meta_pb.schema_hash();
-    return save(store, tablet_id, schema_hash, meta_binary);
+    return save(store, tablet_id, schema_hash, tablet_meta_pb, false, 0, 0);
 }
 
 }

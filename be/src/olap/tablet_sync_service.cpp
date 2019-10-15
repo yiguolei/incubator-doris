@@ -29,11 +29,6 @@ TabletSyncService::TabletSyncService() {
         10, // batch size
         std::bind<void>(std::mem_fn(&TabletSyncService::_fetch_rowset_meta_thread), this, std::placeholders::_1));
 
-    _push_rowset_pool = new BatchProcessThreadPool<PushRowsetMetaTask>(
-        3,  // thread num
-        10000,  // queue size
-        10, // batch size
-        std::bind<void>(std::mem_fn(&TabletSyncService::_push_rowset_meta_thread), this, std::placeholders::_1));
     _fetch_tablet_pool = new BatchProcessThreadPool<FetchTabletMetaTask>(
         3,  // thread num
         10000,  // queue size
@@ -51,9 +46,6 @@ TabletSyncService::~TabletSyncService() {
     if (_fetch_rowset_pool != nullptr) {
         delete _fetch_rowset_pool;
     }
-    if (_push_rowset_pool != nullptr) {
-        delete _push_rowset_pool;
-    }
     if (_fetch_tablet_pool != nullptr) {
         delete _fetch_tablet_pool;
     }
@@ -70,7 +62,7 @@ TabletSyncService::~TabletSyncService() {
 // return a future object, caller could using it to wait the task to finished
 // and check the status
 std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
-    std::function<void(const RowsetMetaPB&)> const& after_callback) {
+    std::function<void(const RowsetMetaPB&)> after_callback) {
     GetRowsetMetaReq get_rowset_meta_req;
     _convert_to_get_rowset_req(tablet, txn_id, 0, 0, &get_rowset_meta_req);
     auto pro = make_shared<promise<OLAPStatus>>();
@@ -84,7 +76,7 @@ std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& t
 
 // fetch rowset meta and data using version
 std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
-    std::function<void(const RowsetMetaPB&)> const& after_callback) {
+    std::function<void(const RowsetMetaPB&)> after_callback) {
     GetRowsetMetaReq get_rowset_meta_req;
     _convert_to_get_rowset_req(tablet, 0, version.first, version.second, &get_rowset_meta_req);
     auto pro = make_shared<promise<OLAPStatus>>();
@@ -103,7 +95,7 @@ std::future<OLAPStatus> TabletSyncService::push_rowset_meta(const RowsetMetaPB& 
     SaveRowsetMetaReq save_rowset_meta_req;
     _convert_to_save_rowset_req(rowset_meta_pb, &save_rowset_meta_req);
     SaveTabletMetaReq save_tablet_meta_req;
-    vector<SaveTabletMetaReq> save_rowset_meta_reqs;
+    vector<SaveRowsetMetaReq> save_rowset_meta_reqs;
     save_rowset_meta_reqs.push_back(save_rowset_meta_req);
     save_tablet_meta_req.__set_rowsets_to_save(save_rowset_meta_reqs);
     if (expected_version > 0) {
@@ -161,9 +153,10 @@ std::future<GetTabletMetaRespPB> TabletSyncService::fetch_tablet_meta(const Tabl
     return pro->get_future();
 }
 
-GetTabletMetaRespPB TabletSyncService::sync_fetch_tablet_meta(const TabletSharedPtr& tablet, bool load_data) {
+OLAPStatus TabletSyncService::sync_fetch_tablet_meta(const TabletSharedPtr& tablet, bool load_data, GetTabletMetaRespPB* result) {
     std::future<GetTabletMetaRespPB> res_future = fetch_tablet_meta(tablet, load_data);
-    return res_future.get();
+    *result = res_future.get();
+    return OLAP_SUCCESS;
 }
 
 std::future<OLAPStatus> TabletSyncService::push_tablet_meta(const TabletMetaPB& tablet_meta, 
@@ -190,13 +183,7 @@ std::future<OLAPStatus> TabletSyncService::push_tablet_meta(const TabletMetaPB& 
 
 OLAPStatus TabletSyncService::sync_push_tablet_meta(const TabletMetaPB& tablet_meta, 
     int64_t expected_version, int64_t new_version) {
-    std::future<OLAPStatus> res_future = push_tablet_meta(tablet_meta);
-    return res_future.get();
-}
-
-// add a synchronized method full push 
-OLAPStatus TabletSyncService::sync_push_rowset_meta(const RowsetMetaPB& rowset_meta) {
-    std::future<OLAPStatus> res_future = push_rowset_meta(rowset_meta);
+    std::future<OLAPStatus> res_future = push_tablet_meta(tablet_meta, expected_version, new_version);
     return res_future.get();
 }
 
@@ -260,7 +247,7 @@ void TabletSyncService::_convert_to_save_rowset_req(const RowsetMetaPB& rowset_m
     if (!serialize_success) {
         LOG(FATAL) << "failed to serialize rowset meta";
     }
-    save_tablet_meta_req.__set_meta_binary(meta_binary);
+    save_rowset_meta_req->__set_meta_binary(meta_binary);
 }
 
 } // doris
