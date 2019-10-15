@@ -55,6 +55,8 @@ set(SRC_FILES
     ${GEN_CPP_DIR}/Exprs_types.cpp
     ${GEN_CPP_DIR}/MasterService_constants.cpp
     ${GEN_CPP_DIR}/MasterService_types.cpp
+    ${GEN_CPP_DIR}/MetaStoreService_constants.cpp
+    ${GEN_CPP_DIR}/MetaStoreService_types.cpp
     ${GEN_CPP_DIR}/MetricDefs_constants.cpp
     ${GEN_CPP_DIR}/MetricDefs_types.cpp
     ${GEN_CPP_DIR}/Metrics_constants.cpp

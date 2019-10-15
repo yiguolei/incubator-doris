@@ -17,6 +17,7 @@
 
 #include "olap/task/engine_publish_version_task.h"
 #include "olap/data_dir.h"
+#include "olap/rowset/rowset_factory.h"
 #include "olap/rowset/rowset_meta_manager.h"
 #include "olap/tablet_manager.h"
 #include <map>
@@ -152,27 +153,29 @@ OLAPStatus EnginePublishVersionTask::finish() {
                                              << "tablet:" << tablet->full_name();
                                 return;
                             }
-                            if (rowset_meta->tablet_uid() != tablet->tablet_uid()) {
+                            if (rowset->rowset_meta()->tablet_uid() != tablet->tablet_uid()) {
                                 // it is just a check, it should not happen
                                 LOG(WARNING) << "rowset's tablet uid is not equal to tablet's uid"
-                                             << "rowset's uid:" << rowset_meta->tablet_uid().to_string()
+                                             << "rowset's uid:" << rowset->rowset_meta()->tablet_uid().to_string()
                                              << "tablet:" << tablet->full_name();
                                 return;
                             }   
                             RowsetMetaSharedPtr rowset_meta = rowset->rowset_meta();
                             // if the rowset is not visible, then publish version
                             bool sync_to_remote = false;
-                            if (rowset_meta->rowset_state() == RowsetStatePB::COMMITTED) {
+                            if (rowset->rowset_meta()->rowset_state() == RowsetStatePB::COMMITTED) {
                                 // the remote rowset is not visible, then should publish it
                                 rowset->make_visible(version, version_hash);
                                 sync_to_remote = true;
                             }
+                            RowsetMetaPB new_rowset_meta_pb;
+                            rowset->rowset_meta()->to_rowset_pb(&new_rowset_meta_pb);
                             // not check local or remote, just override, because it is visible operation
-                            OLAPStatus save_status = RowsetMetaManager::save(tablet, tablet->data_dir()->get_meta(), tablet_uid, 
-                                    rowset_ptr->rowset_meta(), 0, 0, sync_to_remote);
+                            OLAPStatus save_status = RowsetMetaManager::save(tablet->data_dir()->get_meta(), tablet->tablet_uid(), 
+                                    rowset->rowset_id(), new_rowset_meta_pb, 0, 0, sync_to_remote);
                             if (save_status != OLAP_SUCCESS) {
                                 LOG(WARNING) << "save visible rowset failed. after fetch from remote:"
-                                             << rowset_ptr->rowset_id()
+                                             << rowset->rowset_id()
                                              << ", tablet: " << tablet->full_name()
                                              << ", txn id:" << transaction_id;
                                 return;
@@ -193,7 +196,7 @@ OLAPStatus EnginePublishVersionTask::finish() {
                             }
                             return;
                         };
-                        StorageEngine::instance()->tablet_sync_service()->fetch_rowset(tablet, transaction_id, fetch_rowset_callback);
+                        StorageEngine::instance()->tablet_sync_service()->fetch_rowset(tablet, transaction_id, false, fetch_rowset_callback);
                     }
                 }
             }
