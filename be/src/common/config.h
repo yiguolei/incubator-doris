@@ -481,6 +481,10 @@ namespace config {
     // config for tablet meta checkpoint
     CONF_Int32(tablet_meta_checkpoint_min_new_rowsets_num, "10");
     CONF_Int32(tablet_meta_checkpoint_min_interval_secs, "600");
+    CONF_Int32(meta_store_timeout_secs, "10");
+    CONF_Int32(meta_store_request_batch_size, "10");
+    CONF_Int32(meta_store_request_queue_size, "10000");
+    CONF_Int32(meta_store_request_thread_num, "10");
 } // namespace config
 
 } // namespace doris

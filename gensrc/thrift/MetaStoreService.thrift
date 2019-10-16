@@ -123,7 +123,7 @@ struct BatchGetTabletMetaResponse {
 
 struct GetRowsetMetaResponse {
     1: optional Status.TStatus status
-    2: optional list<binary> rowset_metas
+    2: optional binary rowset_meta
 }
 
 struct BatchGetRowsetMetaResponse {
@@ -131,7 +131,7 @@ struct BatchGetRowsetMetaResponse {
 }
 
 // currently there are only batch interfaces
-service MetaStoreService {
+service TMetaStoreService {
     // for rowset meta, if tablet_id, txn_id, start_version, end_version should unique
     BatchSaveTabletMetaResponse save_tablet_meta(1: BatchSaveTabletMetaReq save_tablet_meta_req)
     BatchGetTabletMetaResponse get_tablet_meta(1: BatchGetTabletMetaReq get_tablet_meta_req)

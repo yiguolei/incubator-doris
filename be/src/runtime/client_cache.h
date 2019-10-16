@@ -290,6 +290,9 @@ typedef ClientConnection<TPaloBrokerServiceClient> BrokerServiceConnection;
 class TExtDataSourceServiceClient;
 typedef ClientCache<TExtDataSourceServiceClient> ExtDataSourceServiceClientCache;
 typedef ClientConnection<TExtDataSourceServiceClient> ExtDataSourceServiceConnection;
+class TMetaStoreServiceClient;
+typedef ClientCache<TMetaStoreServiceClient> MetaStoreServiceClientCache;
+typedef ClientConnection<TMetaStoreServiceClient> MetaStoreServiceConnection;
 
 }
 

@@ -21,24 +21,26 @@ using namespace std;
 
 namespace doris {
 
-TabletSyncService::TabletSyncService() {
+TabletSyncService::TabletSyncService(ExecEnv* env) {
     // TODO(ygl): add new config
     _fetch_rowset_pool = new BatchProcessThreadPool<FetchRowsetMetaTask>(
-        3,  // thread num
-        10000,  // queue size
-        10, // batch size
+        config::meta_store_request_thread_num,  // thread num
+        config::meta_store_request_queue_size,  // queue size
+        config::meta_store_request_batch_size, // batch size
         std::bind<void>(std::mem_fn(&TabletSyncService::_fetch_rowset_meta_thread), this, std::placeholders::_1));
 
     _fetch_tablet_pool = new BatchProcessThreadPool<FetchTabletMetaTask>(
-        3,  // thread num
-        10000,  // queue size
-        10, // batch size
+        config::meta_store_request_thread_num,  // thread num
+        config::meta_store_request_queue_size,  // queue size
+        config::meta_store_request_batch_size, // batch size
         std::bind<void>(std::mem_fn(&TabletSyncService::_fetch_tablet_meta_thread), this, std::placeholders::_1));
     _push_tablet_pool = new BatchProcessThreadPool<PushTabletMetaTask>(
-        3,  // thread num
-        10000,  // queue size
-        10, // batch size
+        config::meta_store_request_thread_num,  // thread num
+        config::meta_store_request_queue_size,  // queue size
+        config::meta_store_request_batch_size, // batch size
         std::bind<void>(std::mem_fn(&TabletSyncService::_push_tablet_meta_thread), this, std::placeholders::_1));
+    
+    _env = env;
 }
 
 
@@ -61,11 +63,11 @@ TabletSyncService::~TabletSyncService() {
 // tablet_id + txn_id could find a unique rowset
 // return a future object, caller could using it to wait the task to finished
 // and check the status
-std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
+std::future<RowsetMetaPB> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
     std::function<void(const RowsetMetaPB&)> after_callback) {
     GetRowsetMetaReq get_rowset_meta_req;
     _convert_to_get_rowset_req(tablet, txn_id, 0, 0, &get_rowset_meta_req);
-    auto pro = make_shared<promise<OLAPStatus>>();
+    auto pro = make_shared<promise<RowsetMetaPB>>();
     FetchRowsetMetaTask fetch_task;
     fetch_task.get_rowset_meta_req = get_rowset_meta_req;
     fetch_task.load_data = load_data;
@@ -75,11 +77,11 @@ std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& t
 }
 
 // fetch rowset meta and data using version
-std::future<OLAPStatus> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
+std::future<RowsetMetaPB> TabletSyncService::fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
     std::function<void(const RowsetMetaPB&)> after_callback) {
     GetRowsetMetaReq get_rowset_meta_req;
     _convert_to_get_rowset_req(tablet, 0, version.first, version.second, &get_rowset_meta_req);
-    auto pro = make_shared<promise<OLAPStatus>>();
+    auto pro = make_shared<promise<RowsetMetaPB>>();
     FetchRowsetMetaTask fetch_task;
     fetch_task.get_rowset_meta_req = get_rowset_meta_req;
     fetch_task.load_data = load_data;
@@ -189,6 +191,50 @@ OLAPStatus TabletSyncService::sync_push_tablet_meta(const TabletMetaPB& tablet_m
 
 void TabletSyncService::_fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTask> tasks) {
     // should get tablet info from tablet mgr, it will not dead lock as far as i know
+    BatchGetRowsetMetaResponse b_response;
+    BatchGetRowsetMetaReq b_get_rowset_req;
+    vector<GetRowsetMetaReq> get_rowset_reqs;
+    for (auto fetch_rowset_task : tasks) {
+        get_rowset_reqs.push_back(fetch_rowset_task.get_rowset_meta_req);
+    }
+    b_get_rowset_req.__set_reqs(get_rowset_reqs);
+    TNetworkAddress meta_store_addr = _env->master_info()->network_address;
+    Status rpc_st = ThriftRpcHelper::rpc<TMetaStoreServiceClient>(
+        meta_store_addr.hostname, meta_store_addr.port,
+        [&b_get_rowset_req, &b_response] (MetaStoreServiceConnection& client) {
+            client->snapshotLoaderReport(b_response, b_get_rowset_req);
+        }, config::meta_store_timeout_secs);
+    if (!rpc_st.ok()) {
+        LOG(WARNING) << "failed to call meta store service, res=" << rpc_st.to_string();
+        for (auto fetch_rowset_task : tasks) {
+            fetch_rowset_task.pro->set_exception(std::make_exception_ptr(std::runtime_error(rpc_st.to_string())));
+        }
+        return;
+    }
+    if (b_response.__isset.resps) {
+        LOG(WARNING) << "response field not set, it's a bad response";
+        return;
+    }
+    if (tasks.size() != b_response.resps.size()) {
+        LOG(WARNING) << "response size=" << b_response.resps.size() 
+                     << ", while task num=" << tasks.size() << " not equal, it's a bad response";
+        return;
+    }
+    for (int i = 0; i < tasks.size(); ++i) {
+        auto& get_rowset_resp = b_response.resps[i];
+        if (get_rowset_resp.status.status_code != TStatusCode::OK) {
+            LOG(WARNING) << "failed to get rowset meta, res=" << get_rowset_resp.status.status_code;
+            tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error(std::to_string(get_rowset_resp.status.status_code))));
+        } else {
+            RowsetMetaPB rowset_meta_pb;
+            rowset_meta_pb.ParseFromString(get_rowset_resp.rowset_meta);
+            if (tasks[i].after_fetch_callback != nullptr) {
+                tasks[i].after_fetch_callback(rowset_meta_pb);
+            } else {
+                tasks[i].pro->set_value(OLAP_SUCCESS);
+            }
+        }
+    }
     return;
 }
 

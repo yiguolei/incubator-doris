@@ -153,6 +153,7 @@ private:
     ClientCache<FrontendServiceClient>* _frontend_client_cache = nullptr;
     ClientCache<TPaloBrokerServiceClient>* _broker_client_cache = nullptr;
     ClientCache<TExtDataSourceServiceClient>* _extdatasource_client_cache = nullptr;
+    ClientCache<TMetaStoreServiceClient>* _meta_store_client_cache = nullptr;
     MemTracker* _mem_tracker = nullptr;
     PoolMemTrackerRegistry* _pool_mem_trackers = nullptr;
     ThreadResourceMgr* _thread_mgr = nullptr;
@@ -192,6 +193,8 @@ template <>
 inline ClientCache<TPaloBrokerServiceClient>* ExecEnv::get_client_cache<TPaloBrokerServiceClient>() { return _broker_client_cache; }
 template <>
 inline ClientCache<TExtDataSourceServiceClient>* ExecEnv::get_client_cache<TExtDataSourceServiceClient>() { return _extdatasource_client_cache; }
+template <>
+inline ClientCache<TMetaStoreServiceClient>* ExecEnv::get_client_cache<TMetaStoreServiceClient>() { return _meta_store_client_cache; }
 
 }
 

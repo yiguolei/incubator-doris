@@ -51,7 +51,7 @@ public:
     GetRowsetMetaReq get_rowset_meta_req;
     std::function<void(const RowsetMetaPB&)> after_fetch_callback;
     bool load_data;
-    std::shared_ptr<std::promise<OLAPStatus>> pro;
+    std::shared_ptr<std::promise<RowsetMetaPB>> pro;
     bool operator< (const FetchRowsetMetaTask& o) const {
         return priority < o.priority;
     }
@@ -110,11 +110,11 @@ public:
     // tablet_id + txn_id could find a unique rowset
     // return a future object, caller could using it to wait the task to finished
     // and check the status
-    std::future<OLAPStatus> fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
+    std::future<RowsetMetaPB> fetch_rowset(const TabletSharedPtr& tablet, int64_t txn_id, bool load_data, 
         std::function<void(const RowsetMetaPB&)> after_callback);
 
     // fetch rowset meta and data using version
-    std::future<OLAPStatus> fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
+    std::future<RowsetMetaPB> fetch_rowset(const TabletSharedPtr& tablet, const Version& version, bool load_data, 
         std::function<void(const RowsetMetaPB&)> after_callback);
 
     // save the rowset meta pb to remote meta store
@@ -159,6 +159,7 @@ private:
     BatchProcessThreadPool<FetchRowsetMetaTask>* _fetch_rowset_pool = nullptr;
     BatchProcessThreadPool<FetchTabletMetaTask>* _fetch_tablet_pool = nullptr;
     BatchProcessThreadPool<PushTabletMetaTask>* _push_tablet_pool = nullptr;
+    ExecEnv* _env;
 }; // TabletSyncService
 
 

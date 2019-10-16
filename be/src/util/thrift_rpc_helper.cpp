@@ -116,5 +116,12 @@ Status ThriftRpcHelper::rpc<TExtDataSourceServiceClient>(
     std::function<void (ClientConnection<TExtDataSourceServiceClient>&)> callback,
     int timeout_ms);
 
+template
+Status ThriftRpcHelper::rpc<TMetaStoreServiceClient>(
+    const std::string& ip,
+    const int32_t port,
+    std::function<void (ClientConnection<TMetaStoreServiceClient>&)> callback,
+    int timeout_ms);
+
 }
 
