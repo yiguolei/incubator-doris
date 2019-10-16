@@ -25,11 +25,13 @@
 #include "olap/olap_common.h"
 #include "olap/olap_define.h"
 #include "olap/tablet.h"
+#include "runtime/exec_env.h"
 #include "util/batch_process_thread_pool.hpp"
 
 #define FETCH_DATA true
 #define NOT_FETCH_DATA false
 
+class ExecEnv;
 namespace doris {
 
 enum MetaOpType {
@@ -39,7 +41,6 @@ enum MetaOpType {
 
 struct GetTabletMetaRespPB {
 public:
-    OLAPStatus status;
     TabletMetaPB tablet_meta_pb;
     vector<RowsetMetaPB> rowset_meta_pbs;
     int64_t modify_version;
@@ -101,7 +102,7 @@ public:
 class TabletSyncService {
 
 public:
-    TabletSyncService();
+    TabletSyncService(ExecEnv* env);
     ~TabletSyncService();
     // fetch rowset meta and data to local metastore
     // when add a task, should check if the task already exist
@@ -154,6 +155,12 @@ private:
         SaveRowsetMetaReq* save_rowset_meta_req);
     void _convert_to_get_rowset_req(const TabletSharedPtr& tablet, int64_t txn_id, 
         int64_t start_version, int64_t end_version, GetRowsetMetaReq* get_rowset_meta_req);
+    
+    OLAPStatus _convert_to_get_tablet_meta_pb(const GetTabletMetaResponse& resp, GetTabletMetaRespPB* get_tablet_meta_resp_pb);
+    
+    OLAPStatus _parse_return_value(std::future<OLAPStatus>& res_future);
+    template<typename T1, typename T2, typename T3>
+    OLAPStatus _check_rpc_return_value(T1 rpc_st, T2 tasks, T3 b_response);
 
 private:
     BatchProcessThreadPool<FetchRowsetMetaTask>* _fetch_rowset_pool = nullptr;

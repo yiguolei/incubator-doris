@@ -1195,9 +1195,9 @@ OLAPStatus Tablet::sync_tablet_meta_from_remote(int64_t max_version) {
     }
     // fetch tablet meta from remote
     GetTabletMetaRespPB new_tablet_meta_resp;
-    StorageEngine::instance()->tablet_sync_service()->sync_fetch_tablet_meta(shared_from_this(), false, &new_tablet_meta_resp);
-    if (new_tablet_meta_resp.status != OLAP_SUCCESS) {
-        return new_tablet_meta_resp.status;
+    OLAPStatus res = StorageEngine::instance()->tablet_sync_service()->sync_fetch_tablet_meta(shared_from_this(), false, &new_tablet_meta_resp);
+    if (res != OLAP_SUCCESS) {
+        return res;
     }
     TabletMetaSharedPtr new_tablet_meta;
     RETURN_NOT_OK(_build_tablet_meta(new_tablet_meta_resp.tablet_meta_pb, 
@@ -1220,9 +1220,9 @@ OLAPStatus Tablet::acquire_primary_lock() {
     
     // call tablet meta sync service to get all tablet meta
     GetTabletMetaRespPB new_tablet_meta_resp;
-    StorageEngine::instance()->tablet_sync_service()->sync_fetch_tablet_meta(shared_from_this(), false, &new_tablet_meta_resp);
-    if (new_tablet_meta_resp.status != OLAP_SUCCESS) {
-        return new_tablet_meta_resp.status;
+    OLAPStatus res = StorageEngine::instance()->tablet_sync_service()->sync_fetch_tablet_meta(shared_from_this(), false, &new_tablet_meta_resp);
+    if (res != OLAP_SUCCESS) {
+        return res;
     }
     TabletMetaSharedPtr new_tablet_meta;
     RETURN_NOT_OK(_build_tablet_meta(new_tablet_meta_resp.tablet_meta_pb, 

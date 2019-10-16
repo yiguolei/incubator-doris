@@ -16,6 +16,9 @@
 // under the License.
 
 #include "olap/tablet_sync_service.h"
+#include "gen_cpp/HeartbeatService.h"
+#include "gen_cpp/TMetaStoreService.h"
+#include "util/thrift_rpc_helper.h"
 
 using namespace std;
 
@@ -115,7 +118,7 @@ std::future<OLAPStatus> TabletSyncService::push_rowset_meta(const RowsetMetaPB& 
  // add a synchronized method full push 
 OLAPStatus TabletSyncService::sync_push_rowset_meta(const RowsetMetaPB& rowset_meta, int64_t expected_version, int64_t new_version) {
     std::future<OLAPStatus> res_future = push_rowset_meta(rowset_meta, expected_version, new_version);
-    return res_future.get();
+    return _parse_return_value(res_future);
 }
 
 std::future<OLAPStatus> TabletSyncService::delete_rowset_meta(const RowsetId& rowset_id, int64_t expected_version, int64_t new_version) {
@@ -138,7 +141,7 @@ std::future<OLAPStatus> TabletSyncService::delete_rowset_meta(const RowsetId& ro
 // add a synchronized method full push 
 OLAPStatus TabletSyncService::sync_delete_rowset_meta(const RowsetId& rowset_id, int64_t expected_version, int64_t new_version) {
     std::future<OLAPStatus> res_future = delete_rowset_meta(rowset_id, expected_version, new_version);
-    return res_future.get();
+    return _parse_return_value(res_future);
 }
 
 // fetch both tablet meta and all rowset meta
@@ -157,8 +160,16 @@ std::future<GetTabletMetaRespPB> TabletSyncService::fetch_tablet_meta(const Tabl
 
 OLAPStatus TabletSyncService::sync_fetch_tablet_meta(const TabletSharedPtr& tablet, bool load_data, GetTabletMetaRespPB* result) {
     std::future<GetTabletMetaRespPB> res_future = fetch_tablet_meta(tablet, load_data);
-    *result = res_future.get();
-    return OLAP_SUCCESS;
+    std::future_status status = res_future.wait_for(std::chrono::seconds(config::meta_store_timeout_secs));
+    if (status == std::future_status::deferred) {
+        return OLAP_ERR_REMOTE_META_TIMEOUT;
+    } else if (status == std::future_status::timeout) {
+        return OLAP_ERR_REMOTE_META_TIMEOUT;
+    } else if (status == std::future_status::ready) {
+        *result = res_future.get();
+        return OLAP_SUCCESS;
+    }
+    return OLAP_ERR_REMOTE_META_TIMEOUT;
 }
 
 std::future<OLAPStatus> TabletSyncService::push_tablet_meta(const TabletMetaPB& tablet_meta, 
@@ -186,38 +197,26 @@ std::future<OLAPStatus> TabletSyncService::push_tablet_meta(const TabletMetaPB& 
 OLAPStatus TabletSyncService::sync_push_tablet_meta(const TabletMetaPB& tablet_meta, 
     int64_t expected_version, int64_t new_version) {
     std::future<OLAPStatus> res_future = push_tablet_meta(tablet_meta, expected_version, new_version);
-    return res_future.get();
+    return _parse_return_value(res_future);
 }
 
 void TabletSyncService::_fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTask> tasks) {
     // should get tablet info from tablet mgr, it will not dead lock as far as i know
     BatchGetRowsetMetaResponse b_response;
-    BatchGetRowsetMetaReq b_get_rowset_req;
+    BatchGetRowsetMetaReq b_req;
     vector<GetRowsetMetaReq> get_rowset_reqs;
-    for (auto fetch_rowset_task : tasks) {
-        get_rowset_reqs.push_back(fetch_rowset_task.get_rowset_meta_req);
+    for (auto task : tasks) {
+        get_rowset_reqs.push_back(task.get_rowset_meta_req);
     }
-    b_get_rowset_req.__set_reqs(get_rowset_reqs);
+    b_req.__set_reqs(get_rowset_reqs);
     TNetworkAddress meta_store_addr = _env->master_info()->network_address;
     Status rpc_st = ThriftRpcHelper::rpc<TMetaStoreServiceClient>(
         meta_store_addr.hostname, meta_store_addr.port,
-        [&b_get_rowset_req, &b_response] (MetaStoreServiceConnection& client) {
-            client->snapshotLoaderReport(b_response, b_get_rowset_req);
+        [&b_req, &b_response] (MetaStoreServiceConnection& client) {
+            client->get_rowset_meta(b_response, b_req);
         }, config::meta_store_timeout_secs);
-    if (!rpc_st.ok()) {
-        LOG(WARNING) << "failed to call meta store service, res=" << rpc_st.to_string();
-        for (auto fetch_rowset_task : tasks) {
-            fetch_rowset_task.pro->set_exception(std::make_exception_ptr(std::runtime_error(rpc_st.to_string())));
-        }
-        return;
-    }
-    if (b_response.__isset.resps) {
-        LOG(WARNING) << "response field not set, it's a bad response";
-        return;
-    }
-    if (tasks.size() != b_response.resps.size()) {
-        LOG(WARNING) << "response size=" << b_response.resps.size() 
-                     << ", while task num=" << tasks.size() << " not equal, it's a bad response";
+    OLAPStatus res = _check_rpc_return_value(rpc_st, tasks, b_response);
+    if (res != OLAP_SUCCESS) {
         return;
     }
     for (int i = 0; i < tasks.size(); ++i) {
@@ -227,11 +226,14 @@ void TabletSyncService::_fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTas
             tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error(std::to_string(get_rowset_resp.status.status_code))));
         } else {
             RowsetMetaPB rowset_meta_pb;
-            rowset_meta_pb.ParseFromString(get_rowset_resp.rowset_meta);
-            if (tasks[i].after_fetch_callback != nullptr) {
-                tasks[i].after_fetch_callback(rowset_meta_pb);
+            bool parsed = rowset_meta_pb.ParseFromString(get_rowset_resp.rowset_meta);
+            if (parsed) {
+                if (tasks[i].after_fetch_callback != nullptr) {
+                    tasks[i].after_fetch_callback(rowset_meta_pb);
+                }
+                tasks[i].pro->set_value(rowset_meta_pb);
             } else {
-                tasks[i].pro->set_value(OLAP_SUCCESS);
+                tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error("parse rowset meta pb error")));
             }
         }
     }
@@ -239,11 +241,72 @@ void TabletSyncService::_fetch_rowset_meta_thread(std::vector<FetchRowsetMetaTas
 }
 
 void TabletSyncService::_fetch_tablet_meta_thread(std::vector<FetchTabletMetaTask> tasks) {
+    BatchGetTabletMetaResponse b_response;
+    BatchGetTabletMetaReq b_req;
+    vector<GetTabletMetaReq> get_tablet_reqs;
+    for (auto task : tasks) {
+        GetTabletMetaReq get_tablet_req;
+        get_tablet_req.__set_tablet_id(task.tablet->tablet_id());
+        get_tablet_req.__set_schema_hash(task.tablet->schema_hash());
+        get_tablet_req.__set_include_rowsets(true);
+        get_tablet_reqs.push_back(get_tablet_req);
+    }
+    b_req.__set_reqs(get_tablet_reqs);
+    TNetworkAddress meta_store_addr = _env->master_info()->network_address;
+    Status rpc_st = ThriftRpcHelper::rpc<TMetaStoreServiceClient>(
+        meta_store_addr.hostname, meta_store_addr.port,
+        [&b_req, &b_response] (MetaStoreServiceConnection& client) {
+            client->get_tablet_meta(b_response, b_req);
+        }, config::meta_store_timeout_secs);
+    OLAPStatus res = _check_rpc_return_value(rpc_st, tasks, b_response);
+    if (res != OLAP_SUCCESS) {
+        return;
+    }
+    for (int i = 0; i < tasks.size(); ++i) {
+        auto& get_tablet_resp = b_response.resps[i];
+        if (get_tablet_resp.status.status_code != TStatusCode::OK) {
+            LOG(WARNING) << "failed to get rowset meta, res=" << get_tablet_resp.status.status_code;
+            tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error(std::to_string(get_tablet_resp.status.status_code))));
+        } else {
+            GetTabletMetaRespPB get_tablet_meta_pb;
+            OLAPStatus res = _convert_to_get_tablet_meta_pb(get_tablet_resp, &get_tablet_meta_pb);
+            if (res != OLAP_SUCCESS) {
+                tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error(std::to_string(res))));
+            } else {
+                tasks[i].pro->set_value(get_tablet_meta_pb);
+            }
+        }
+    }
     return;
 }
 
 void TabletSyncService::_push_tablet_meta_thread(std::vector<PushTabletMetaTask> tasks) {
-    
+    BatchSaveTabletMetaResponse b_response;
+    BatchSaveTabletMetaReq b_req;
+    vector<SaveTabletMetaReq> save_tablet_reqs;
+    for (auto task : tasks) {
+        save_tablet_reqs.push_back(task.save_tablet_meta_req);
+    }
+    b_req.__set_reqs(save_tablet_reqs);
+    TNetworkAddress meta_store_addr = _env->master_info()->network_address;
+    Status rpc_st = ThriftRpcHelper::rpc<TMetaStoreServiceClient>(
+        meta_store_addr.hostname, meta_store_addr.port,
+        [&b_req, &b_response] (MetaStoreServiceConnection& client) {
+            client->save_tablet_meta(b_response, b_req);
+        }, config::meta_store_timeout_secs);
+    OLAPStatus res = _check_rpc_return_value(rpc_st, tasks, b_response);
+    if (res != OLAP_SUCCESS) {
+        return;
+    }
+    for (int i = 0; i < tasks.size(); ++i) {
+        auto& save_tablet_resp = b_response.resps[i];
+        if (save_tablet_resp.status.status_code != TStatusCode::OK) {
+            LOG(WARNING) << "failed to get rowset meta, res=" << save_tablet_resp.status.status_code;
+            tasks[i].pro->set_exception(std::make_exception_ptr(std::runtime_error(std::to_string(save_tablet_resp.status.status_code))));
+        } else {
+            tasks[i].pro->set_value(OLAP_SUCCESS);
+        }
+    }
     return;
 }
 
@@ -294,6 +357,75 @@ void TabletSyncService::_convert_to_save_rowset_req(const RowsetMetaPB& rowset_m
         LOG(FATAL) << "failed to serialize rowset meta";
     }
     save_rowset_meta_req->__set_meta_binary(meta_binary);
+}
+
+OLAPStatus TabletSyncService::_convert_to_get_tablet_meta_pb(const GetTabletMetaResponse& resp, GetTabletMetaRespPB* get_tablet_meta_resp_pb) {
+    if (resp.status.status_code != TStatusCode::OK) {
+        LOG(WARNING) << "fetch tablet meta response is " << resp.status.status_code << "not parse the response";
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    if (!resp.__isset.tablet_meta || !resp.__isset.rowset_metas || !resp.__isset.modify_version) {
+        LOG(WARNING) << "some field in reponse not set, not parse the response";
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    TabletMetaPB tablet_meta_pb;
+    bool parsed = tablet_meta_pb.ParseFromString(resp.tablet_meta);
+    if (!parsed) {
+        LOG(WARNING) << "failed to parse tablet meta pb from string";
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    get_tablet_meta_resp_pb->tablet_meta_pb = tablet_meta_pb;
+    for (auto rowset_meta : resp.rowset_metas) {
+        RowsetMetaPB rowset_meta_pb;
+        parsed = rowset_meta_pb.ParseFromString(rowset_meta);
+        if (!parsed) {
+            LOG(WARNING) << "failed to parse rowset meta pb from string";
+            return OLAP_ERR_REMOTE_META_PARSE_RESP;
+        }
+        get_tablet_meta_resp_pb->rowset_meta_pbs.push_back(rowset_meta_pb);
+    }
+    return OLAP_SUCCESS;
+
+}
+
+OLAPStatus TabletSyncService::_parse_return_value(std::future<OLAPStatus>& res_future) {
+    std::future_status status = res_future.wait_for(std::chrono::seconds(config::meta_store_timeout_secs));
+    if (status == std::future_status::deferred) {
+        return OLAP_ERR_REMOTE_META_TIMEOUT;
+    } else if (status == std::future_status::timeout) {
+        return OLAP_ERR_REMOTE_META_TIMEOUT;
+    } else if (status == std::future_status::ready) {
+        return res_future.get();
+    }
+    return OLAP_ERR_REMOTE_META_TIMEOUT;
+}
+
+
+template<typename T1, typename T2, typename T3>
+OLAPStatus TabletSyncService::_check_rpc_return_value(T1 rpc_st, T2 tasks, T3 b_response) {
+    if (!rpc_st.ok()) {
+        LOG(WARNING) << "failed to call meta store service, res=" << rpc_st.to_string();
+        for (auto task : tasks) {
+            task.pro->set_exception(std::make_exception_ptr(std::runtime_error(rpc_st.to_string())));
+        }
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    if (b_response.__isset.resps) {
+        LOG(WARNING) << "response field not set, it's a bad response";
+        for (auto task : tasks) {
+            task.pro->set_exception(std::make_exception_ptr(std::runtime_error("response filed not set")));
+        }
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    if (tasks.size() != b_response.resps.size()) {
+        LOG(WARNING) << "response size=" << b_response.resps.size() 
+                     << ", while task num=" << tasks.size() << " not equal, it's a bad response";
+        for (auto task : tasks) {
+            task.pro->set_exception(std::make_exception_ptr(std::runtime_error("response size not match task size")));
+        }
+        return OLAP_ERR_REMOTE_META_PARSE_RESP;
+    }
+    return OLAP_SUCCESS;
 }
 
 } // doris

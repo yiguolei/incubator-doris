@@ -19,6 +19,7 @@
 
 #include "common/status.h"
 #include "gen_cpp/FrontendService_types.h"
+#include "runtime/client_cache.h"
 
 namespace doris {
 

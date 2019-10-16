@@ -60,6 +60,7 @@ class BackendServiceClient;
 class FrontendServiceClient;
 class TPaloBrokerServiceClient;
 class TExtDataSourceServiceClient; 
+class TMetaStoreServiceClient;
 template<class T> class ClientCache;
 
 // Execution environment for queries/plan fragments.
