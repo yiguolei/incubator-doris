@@ -1660,4 +1660,10 @@ public class Config extends ConfigBase {
 
     @ConfField
     public static boolean enable_vectorized_load = false;
+    
+    @ConfField
+    public static int dict_check_interval_sec = 10;
+    
+    @ConfField
+    public static int dict_expire_sec = 3600;
 }
