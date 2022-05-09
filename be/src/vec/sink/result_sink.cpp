@@ -89,14 +89,14 @@ Status VResultSink::send(RuntimeState* state, RowBatch* batch) {
 Status VResultSink::send(RuntimeState* state, Block* input_block) {
     SCOPED_TIMER(_append_row_batch_timer);
     Status status = Status::OK();
-    if (UNLIKELY(input_block.rows() == 0)) {
+    if (UNLIKELY(input_block->rows() == 0)) {
         return status;
     }
 
     // Exec vectorized expr here to speed up, block.rows() == 0 means expr exec
     // failed, just return the error status
-    auto block = VExprContext::get_output_block_after_execute_exprs(_output_vexpr_ctxs, input_block,
-                                                                    status);
+    auto block = VExprContext::get_output_block_after_execute_exprs(_output_vexpr_ctxs,
+                                                                    *input_block, status);
     if (UNLIKELY(block.rows() == 0)) {
         return status;
     }
