@@ -293,7 +293,6 @@ set(UTIL_TEST_FILES
     util/rle_encoding_test.cpp
     util/tdigest_test.cpp
     util/block_compression_test.cpp
-    util/arrow/arrow_row_block_test.cpp
     util/arrow/arrow_row_batch_test.cpp
     util/arrow/arrow_work_flow_test.cpp
     util/counter_cond_variable_test.cpp
