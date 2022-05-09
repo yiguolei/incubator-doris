@@ -312,7 +312,9 @@ Status VMysqlResultWriter::append_row_batch(const RowBatch* batch) {
 }
 
 Status VMysqlResultWriter::append_block(Block& input_block) {
+    Status status = Status::OK();
     auto result = std::make_unique<TFetchDataResult>();
+    size_t num_rows = block.rows();
     result->result_batch.rows.resize(num_rows);
     for (int i = 0; status.ok() && i < _output_vexpr_ctxs.size(); ++i) {
         auto column_ptr = block.get_by_position(i).column->convert_to_full_column_if_const();

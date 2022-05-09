@@ -17,6 +17,8 @@
 
 #include "vec/sink/arrow_result_writer.h"
 
+#include <arrow/memory_pool.h>
+
 #include "runtime/buffer_control_block.h"
 #include "runtime/runtime_state.h"
 #include "vec/columns/column_nullable.h"
@@ -32,7 +34,8 @@ VArrowResultWriter::VArrowResultWriter(const RowDescriptor& row_desc, BufferCont
                                        const std::vector<VExprContext*>& output_vexpr_ctxs,
                                        RuntimeProfile* parent_profile)
         : VResultWriter(),
-          _row_desc(row_desc) _sinker(sinker),
+          _row_desc(row_desc),
+          _sinker(sinker),
           _output_vexpr_ctxs(output_vexpr_ctxs),
           _parent_profile(parent_profile) {}
 

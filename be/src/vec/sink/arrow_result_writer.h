@@ -20,6 +20,7 @@
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
 #include "vec/sink/result_writer.h"
+#include "vec/utils/arrow_util.h"
 
 namespace doris {
 class BufferControlBlock;
