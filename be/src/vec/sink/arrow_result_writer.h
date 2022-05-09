@@ -17,7 +17,6 @@
 
 #pragma once
 #include "runtime/primitive_type.h"
-#include "util/mysql_row_buffer.h"
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
 #include "vec/sink/result_writer.h"
@@ -31,9 +30,9 @@ class TFetchDataResult;
 namespace vectorized {
 class VExprContext;
 
-class VMysqlResultWriter final : public VResultWriter {
+class VArrowResultWriter final : public VResultWriter {
 public:
-    VMysqlResultWriter(BufferControlBlock* sinker,
+    VArrowResultWriter(const RowDescriptor& row_desc, BufferControlBlock* sinker,
                        const std::vector<vectorized::VExprContext*>& output_vexpr_ctxs,
                        RuntimeProfile* parent_profile);
 
@@ -48,13 +47,12 @@ public:
 private:
     void _init_profile();
 
-    template <PrimitiveType type, bool is_nullable>
-    Status _add_one_column(const ColumnPtr& column_ptr, std::unique_ptr<TFetchDataResult>& result,
-                           const DataTypePtr& nested_type_ptr = nullptr);
-    int _add_one_cell(const ColumnPtr& column_ptr, size_t row_idx, const DataTypePtr& type,
-                      MysqlRowBuffer& buffer);
-
 private:
+    // Owned by the RuntimeState.
+    const RowDescriptor& _row_desc;
+    // Will convert row desc to arrow schema
+    std::shared_ptr<arrow::Schema> _arrow_schema;
+
     BufferControlBlock* _sinker;
 
     const std::vector<vectorized::VExprContext*>& _output_vexpr_ctxs;

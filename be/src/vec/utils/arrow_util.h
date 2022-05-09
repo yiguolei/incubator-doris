@@ -34,10 +34,7 @@ class Schema;
 
 } // namespace arrow
 
-namespace doris::vectorized::arrow {
-
-class ::doris::vectorized::Block;
-class ::doris::RowDescriptor;
+namespace doris::vectorized {
 
 // Convert Doris RowDescriptor to Arrow Schema.
 Status convert_to_arrow_schema(const RowDescriptor& row_desc,
@@ -46,9 +43,11 @@ Status convert_to_arrow_schema(const RowDescriptor& row_desc,
 // Convert a Doris Block to an Arrow RecordBatch. A valid Arrow Schema
 // who should match Block's schema is given. Memory used by result RecordBatch
 // will be allocated from input pool.
-Status convert_to_arrow_batch(const Block& batch, const std::shared_ptr<arrow::Schema>& schema,
-                              arrow::MemoryPool* pool, std::shared_ptr<arrow::RecordBatch>* result);
+Status convert_to_arrow_record_batch(const Block& block,
+                                     const std::shared_ptr<arrow::Schema>& schema,
+                                     arrow::MemoryPool* pool,
+                                     std::shared_ptr<arrow::RecordBatch>* result);
 
 Status serialize_record_batch(const arrow::RecordBatch& record_batch, std::string* result);
 
-} // namespace doris::vectorized::arrow
+} // namespace doris::vectorized

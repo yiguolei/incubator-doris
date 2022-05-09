@@ -43,7 +43,7 @@
 #include "util/arrow/utils.h"
 #include "util/types.h"
 
-namespace doris::vectorized::arrow {
+namespace doris::vectorized {
 
 Status convert_to_arrow_type(const TypeDescriptor& type, std::shared_ptr<arrow::DataType>* result) {
     switch (type.type) {
@@ -101,7 +101,7 @@ Status convert_to_arrow_field(SlotDescriptor* desc, std::shared_ptr<arrow::Field
 // Now we inherit TypeVisitor to use default Visit implementation
 class FromBlockConverter : public arrow::TypeVisitor {
 public:
-    FromBlockConverter(const Block& batch, const std::shared_ptr<arrow::Schema>& schema,
+    FromBlockConverter(const Block& block, const std::shared_ptr<arrow::Schema>& schema,
                        arrow::MemoryPool* pool)
             : _block(block), _schema(schema), _pool(pool), _cur_field_idx(-1) {}
 
@@ -112,12 +112,12 @@ public:
     // process string-transformable field
     arrow::Status Visit(const arrow::StringType& type) override {
         arrow::StringBuilder builder(_pool);
-        size_t num_rows = _block.num_rows();
+        size_t num_rows = _block.rows();
         ARROW_RETURN_NOT_OK(builder.Reserve(num_rows));
-        auto column = _block.get_by_position(_cur_field_idx);
+        auto column_with_name = _block.get_by_position(_cur_field_idx);
         for (size_t i = 0; i < num_rows; ++i) {
             // TODO yiguolei: Not care about nullable here, the column maybe a nullable column
-            const auto string_val = column->get_data_at(i);
+            const auto string_val = column_with_name.column->get_data_at(i);
             if (string_val.data == nullptr) {
                 ARROW_RETURN_NOT_OK(builder.Append(""));
             } else {
@@ -148,17 +148,18 @@ Status FromBlockConverter::convert(std::shared_ptr<arrow::RecordBatch>* out) {
         _cur_field_idx = idx;
         auto arrow_st = arrow::VisitTypeInline(*_schema->field(idx)->type(), this);
         if (!arrow_st.ok()) {
-            return to_status(arrow_st);
+            return Status::InvalidArgument(arrow_st.ToString());
         }
     }
-    *out = arrow::RecordBatch::Make(_schema, _block.num_rows(), std::move(_arrays));
+    *out = arrow::RecordBatch::Make(_schema, _block.rows(), std::move(_arrays));
     return Status::OK();
 }
 
-Status convert_to_arrow_batch(const Block& batch, const std::shared_ptr<arrow::Schema>& schema,
-                              arrow::MemoryPool* pool,
-                              std::shared_ptr<arrow::RecordBatch>* result) {
-    FromBlockConverter converter(batch, schema, pool);
+Status convert_to_arrow_record_batch(const Block& block,
+                                     const std::shared_ptr<arrow::Schema>& schema,
+                                     arrow::MemoryPool* pool,
+                                     std::shared_ptr<arrow::RecordBatch>* result) {
+    FromBlockConverter converter(block, schema, pool);
     return converter.convert(result);
 }
 
@@ -216,4 +217,4 @@ Status serialize_record_batch(const arrow::RecordBatch& record_batch, std::strin
     return Status::OK();
 }
 
-} // namespace doris::vectorized::arrow
+} // namespace doris::vectorized

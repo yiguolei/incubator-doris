@@ -69,6 +69,8 @@ private:
     std::shared_ptr<VResultWriter> _writer;
     RuntimeProfile* _profile; // Allocated from _pool
     int _buf_size;            // Allocated from _pool
+    // total time cost on append batch operation
+    RuntimeProfile::Counter* _append_row_batch_timer = nullptr;
 };
 } // namespace vectorized
 
