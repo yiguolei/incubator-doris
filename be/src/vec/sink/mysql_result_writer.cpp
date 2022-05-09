@@ -311,7 +311,7 @@ Status VMysqlResultWriter::append_row_batch(const RowBatch* batch) {
     return Status::RuntimeError("Not Implemented MysqlResultWriter::append_row_batch scalar");
 }
 
-Status VMysqlResultWriter::append_block(Block& input_block) {
+Status VMysqlResultWriter::append_block(Block& block) {
     Status status = Status::OK();
     auto result = std::make_unique<TFetchDataResult>();
     size_t num_rows = block.rows();
