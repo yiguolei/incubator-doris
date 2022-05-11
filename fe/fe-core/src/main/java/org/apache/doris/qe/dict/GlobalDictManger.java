@@ -81,6 +81,7 @@ public class GlobalDictManger extends Daemon {
 	
 	@Override
 	protected void runOneCycle() {
+		LOG.info("dict run one cycle");
 		if (true) {
 			ConnectContext connectContext = new ConnectContext();
 			String stmt = "select distinct s_nation from db1.supplier;";

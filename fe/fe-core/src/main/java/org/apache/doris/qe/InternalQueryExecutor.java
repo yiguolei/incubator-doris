@@ -21,16 +21,21 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.doris.common.util.DebugUtil;
+import org.apache.doris.qe.dict.GlobalDictManger;
 import org.apache.doris.thrift.TResultBatch;
 import org.apache.doris.thrift.TResultSinkType;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Queues;
 
 public class InternalQueryExecutor extends StmtExecutor {
+
+    private static final Logger LOG = LogManager.getLogger(InternalQueryExecutor.class);
     private static final int QUEUE_WAIT_SECONDS = 1; 
 	private volatile BlockingQueue<TResultBatch> resultQueue = Queues.newLinkedBlockingDeque(10);
 	private volatile boolean eos = false;
-	private Throwable exception = null;
+	private volatile Throwable exception = null;
 	private boolean isCancelled = false;
 	
 	public InternalQueryExecutor(ConnectContext context, String stmt) {
@@ -49,19 +54,23 @@ public class InternalQueryExecutor extends StmtExecutor {
 			@Override
 			public void run() {
 				try {
+					LOG.info("execute is called");
 					InternalQueryExecutor.super.execute();
 				} catch (Throwable t) {
+					LOG.info("execute is error occurred");
 					exception = t;
 				}
 			}
-		}).run();
+		}).start();
     }
 
 	/**
 	 * Get a result batch from queue, return null if the stream already finished
 	 */
 	public TResultBatch getNext() throws Exception {
+		LOG.info("getNext is called");
 		while (exception == null && !isCancelled) {
+			LOG.info("getNext is called2");
 			TResultBatch res = resultQueue.poll(QUEUE_WAIT_SECONDS, TimeUnit.SECONDS);
 			if (res != null) {
 				return res;
@@ -88,37 +97,30 @@ public class InternalQueryExecutor extends StmtExecutor {
 
     // Process a select statement.
     public void handleQueryStmt() throws Exception {
-	    try {
-	        QueryDetail queryDetail = new QueryDetail(context.getStartTime(),
-	                DebugUtil.printId(context.queryId()),
-	                context.getStartTime(), -1, -1,
-	                QueryDetail.QueryMemState.RUNNING,
-	                context.getDatabase(),
-	                originStmt.originStmt);
-	        context.setQueryDetail(queryDetail);
-	        QueryDetailQueue.addOrUpdateQueryDetail(queryDetail);
-	        RowBatch batch;
-	        coord = new Coordinator(context, analyzer, planner);
-	        QeProcessorImpl.INSTANCE.registerQuery(context.queryId(),
-	                new QeProcessorImpl.QueryInfo(context, originStmt.originStmt, coord));
-	        coord.exec();
-	        while (!isCancelled) {
-	            batch = coord.getNext();
-	            // for outfile query, there will be only one empty batch send back with eos flag
-	            if (batch.getBatch() != null) {
-	            	resultQueue.offer(batch.getBatch(), QUEUE_WAIT_SECONDS, TimeUnit.SECONDS);
-	            }
-	            if (batch.isEos()) {
-	            	eos = true;
-	                break;
-	            }
-	        }
-	        context.getState().setEof();
-	    } catch (Exception e) {
-	    	// If any exception occurs, set the exception to the memeber exception, so that the call thread
-	    	// will get the real exception
-	    	exception = e;
-	    	throw e;
-	    }
+        QueryDetail queryDetail = new QueryDetail(context.getStartTime(),
+                DebugUtil.printId(context.queryId()),
+                context.getStartTime(), -1, -1,
+                QueryDetail.QueryMemState.RUNNING,
+                context.getDatabase(),
+                originStmt.originStmt);
+        context.setQueryDetail(queryDetail);
+        QueryDetailQueue.addOrUpdateQueryDetail(queryDetail);
+        RowBatch batch;
+        coord = new Coordinator(context, analyzer, planner);
+        QeProcessorImpl.INSTANCE.registerQuery(context.queryId(),
+                new QeProcessorImpl.QueryInfo(context, originStmt.originStmt, coord));
+        coord.exec();
+        while (!isCancelled) {
+            batch = coord.getNext();
+            // for outfile query, there will be only one empty batch send back with eos flag
+            if (batch.getBatch() != null) {
+            	resultQueue.offer(batch.getBatch(), QUEUE_WAIT_SECONDS, TimeUnit.SECONDS);
+            }
+            if (batch.isEos()) {
+            	eos = true;
+                break;
+            }
+        }
+        context.getState().setEof();
     }
 }
