@@ -21,15 +21,17 @@ public abstract class IDict {
 
 	private long dictId;
 	private DictState state;
+	private long dbId;
 	private long tableId;
 	private String columnName;
 	private long lastAccessTime;
 	// Used to check whether the dict is valid
 	private long dataVersion = 1;
 
-	public IDict(long dictId, long tableId, String columnName) {
+	public IDict(long dictId, long dbId, long tableId, String columnName) {
 		this.dictId = dictId;
 		this.state = DictState.INVALID;
+		this.dbId = dbId;
 		this.tableId = tableId;
 		this.columnName = columnName;
 		this.lastAccessTime = System.currentTimeMillis() / 1000;
@@ -84,4 +86,19 @@ public abstract class IDict {
 	public long getDictId() { return dictId; }
 	
 	public void resetDictId(long newId) { this.dictId = newId; }
+
+
+	public long getDbId() {
+		return dbId;
+	}
+
+
+	public long getTableId() {
+		return tableId;
+	}
+
+
+	public String getColumnName() {
+		return columnName;
+	}
 }

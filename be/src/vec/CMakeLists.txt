@@ -181,7 +181,7 @@ set(VEC_FILES
   olap/vcollect_iterator.cpp
   olap/block_reader.cpp
   olap/olap_data_convertor.cpp
-  sink/arrow_result_writer.cpp
+  sink/thrift_result_writer.cpp
   sink/mysql_result_writer.cpp
   sink/result_sink.cpp
   sink/vdata_stream_sender.cpp
@@ -193,7 +193,6 @@ set(VEC_FILES
   runtime/vdata_stream_mgr.cpp
   runtime/vpartition_info.cpp
   runtime/vsorted_run_merger.cpp
-  utils/arrow_util.cpp
   )
 
 add_library(Vec STATIC

@@ -31,6 +31,7 @@ import org.apache.doris.mysql.privilege.PaloRole;
 import org.apache.doris.plugin.AuditEvent.AuditEventBuilder;
 import org.apache.doris.resource.Tag;
 import org.apache.doris.thrift.TResourceInfo;
+import org.apache.doris.thrift.TResultSinkType;
 import org.apache.doris.thrift.TUniqueId;
 import org.apache.doris.transaction.TransactionEntry;
 import org.apache.doris.transaction.TransactionStatus;
@@ -109,7 +110,6 @@ public class ConnectContext {
     protected boolean isSend;
 
     protected AuditEventBuilder auditEventBuilder = new AuditEventBuilder();
-    ;
 
     protected String remoteIP;
 
@@ -135,6 +135,8 @@ public class ConnectContext {
     private String currentConnectedFEIp = "";
 
     private InsertResult insertResult;
+    
+    private TResultSinkType resultSinkType = TResultSinkType.MYSQL_PROTOCAL;
 
     public void setOrUpdateInsertResult(long txnId, String label, String db, String tbl,
                                         TransactionStatus txnStatus, long loadedRows, int filteredRows) {
@@ -559,5 +561,13 @@ public class ConnectContext {
     public String getQueryIdentifier() {
         return "stmt[" + stmtId + ", " + DebugUtil.printId(queryId) + "]";
     }
+
+	public TResultSinkType getResultSinkType() {
+		return resultSinkType;
+	}
+
+	public void setResultSinkType(TResultSinkType resultSinkType) {
+		this.resultSinkType = resultSinkType;
+	}
 
 }

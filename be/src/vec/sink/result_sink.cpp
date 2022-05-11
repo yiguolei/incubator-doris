@@ -70,6 +70,9 @@ Status VResultSink::prepare(RuntimeState* state) {
         _writer.reset(new (std::nothrow)
                               VMysqlResultWriter(_sender.get(), _output_vexpr_ctxs, _profile));
         break;
+    case TResultSinkType::THRIFT_IPC_PROTOCAL:
+        _writer.reset(new (std::nothrow)
+                              VThriftResultWriter(_sender.get(), _output_vexpr_ctxs, _profile));
     default:
         return Status::InternalError("Unknown result sink type");
     }

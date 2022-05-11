@@ -17,6 +17,7 @@
 
 package org.apache.doris.qe.dict;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 
@@ -28,12 +29,18 @@ import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.util.Daemon;
+import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.qe.InternalQueryExecutor;
+import org.apache.doris.qe.RowBatch;
+import org.apache.doris.thrift.TResultBatch;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.alibaba.google.common.collect.Lists;
 import com.alibaba.google.common.collect.Maps;
 
 public class GlobalDictManger extends Daemon {
-	
+    private static final Logger LOG = LogManager.getLogger(GlobalDictManger.class);
 	private Map<DictKey, IDict> dictsMap = null;
 	
 	public GlobalDictManger() {
@@ -75,6 +82,21 @@ public class GlobalDictManger extends Daemon {
 	
 	@Override
 	protected void runOneCycle() {
+		if (true) {
+
+			ConnectContext connectContext = new ConnectContext();
+			String stmt = "select distinct lo_shipmode from lineorder;";
+			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
+			try {
+				queryExecutor.execute();
+				TResultBatch resultBatch = queryExecutor.getNext();
+				ByteBuffer resBuffer = resultBatch.rows.get(0);
+				resultBatch.getRows();
+			} catch (Exception e) {
+				LOG.info("errors while execute query ", e);
+			}
+			return;
+		}
 		// Traverse all dict, if the dict is not accessed for a long period of time, then delete it
 		long curTime = System.currentTimeMillis() / 1000;
 		List<DictKey> dictToRemove = Lists.newArrayList();
@@ -109,7 +131,7 @@ public class GlobalDictManger extends Daemon {
 						if (column.getType() == Type.CHAR 
 								|| column.getType() == Type.VARCHAR
 								|| column.getType() == Type.STRING) {
-							addDict(new DictKey(olapTable.getId(), column.getName()), new StringDict(catalog.getNextId(), olapTable.getId(), column.getName()));
+							addDict(new DictKey(olapTable.getId(), column.getName()), new StringDict(catalog.getNextId(), db.getId() ,olapTable.getId(), column.getName()));
 						}
 					}
 				}

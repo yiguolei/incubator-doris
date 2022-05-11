@@ -17,10 +17,16 @@
 
 package org.apache.doris.qe.dict;
 
+import org.apache.doris.catalog.Catalog;
+import org.apache.doris.catalog.Database;
+import org.apache.doris.catalog.Table;
+import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.qe.InternalQueryExecutor;
+
 public class StringDict extends IDict {
 
-	public StringDict(long dictId, long tableId, String columnName) {
-		super(dictId, tableId, columnName);
+	public StringDict(long dictId, long dbId, long tableId, String columnName) {
+		super(dictId, dbId, tableId, columnName);
 	}
 	
 	@Override
@@ -35,7 +41,12 @@ public class StringDict extends IDict {
 
 	@Override
 	public IDict doRefresh() {
-		// TODO Auto-generated method stub
+		Catalog catalog = Catalog.getCurrentCatalog();
+		Database db = catalog.getDbNullable(getDbId());
+		Table table = db.getTableNullable(getTableId());
+		ConnectContext connectContext = new ConnectContext();
+		String stmt = "select distinct " + getColumnName() + " from " + db.getFullName() + "." + table.getName() + "[meta]";
+		InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 		return null;
 	}
 

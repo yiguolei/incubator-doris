@@ -70,6 +70,9 @@ struct TResultBatch {
 
   // packet seq used to check if there has packet lost
   3: required i64 packet_seq
+
+  // Use thrift as seriazlize data format
+  4: optional TExtRowBatch thrift_row_batch
 }
 
 
