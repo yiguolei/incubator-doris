@@ -17,7 +17,6 @@
 
 package org.apache.doris.qe.dict;
 
-import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 
@@ -31,9 +30,8 @@ import org.apache.doris.common.Config;
 import org.apache.doris.common.util.Daemon;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.InternalQueryExecutor;
-import org.apache.doris.qe.RowBatch;
-import org.apache.doris.thrift.TExtRowBatch;
 import org.apache.doris.thrift.TResultBatch;
+import org.apache.doris.thrift.TThriftIPCRowBatch;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -85,12 +83,15 @@ public class GlobalDictManger extends Daemon {
 	protected void runOneCycle() {
 		if (true) {
 			ConnectContext connectContext = new ConnectContext();
-			String stmt = "select distinct lo_shipmode from lineorder;";
+			String stmt = "select distinct s_nation from db1.supplier;";
 			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 			try {
 				queryExecutor.execute();
 				TResultBatch resultBatch = queryExecutor.getNext();
-				TExtRowBatch rowBatch = resultBatch.getThriftRowBatch();
+				TThriftIPCRowBatch rowBatch = resultBatch.getThriftRowBatch();
+				for (int i = 0; i < rowBatch.getNumRows(); ++i) {
+					LOG.info("get string vals from {}", rowBatch.cols.get(0).string_vals.get(i));
+				}
 			} catch (Exception e) {
 				LOG.info("errors while execute query ", e);
 			}
