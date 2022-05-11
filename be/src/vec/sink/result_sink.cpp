@@ -23,6 +23,7 @@
 #include "runtime/runtime_state.h"
 #include "vec/exprs/vexpr.h"
 #include "vec/sink/mysql_result_writer.h"
+#include "vec/sink/thrift_result_writer.h"
 
 namespace doris {
 namespace vectorized {

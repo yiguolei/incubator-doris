@@ -18,6 +18,7 @@
 #include "vec/sink/thrift_result_writer.h"
 
 #include <arrow/memory_pool.h>
+#include <string>
 
 #include "runtime/buffer_control_block.h"
 #include "runtime/runtime_state.h"
@@ -71,7 +72,7 @@ Status VThriftResultWriter::_add_one_column(const ColumnPtr& column_ptr,
     }
     // Currently, only support varchar type, not other types
     if constexpr (type == TYPE_VARCHAR) {
-        std::vector<string> string_vec;
+        std::vector<std::string> string_vec;
         for (int i = 0; i < row_size; ++i) {
             if constexpr (is_nullable) {
                 if (column_ptr->is_null_at(i)) {
@@ -84,7 +85,7 @@ Status VThriftResultWriter::_add_one_column(const ColumnPtr& column_ptr,
                 is_null_vec.push_back(false);
             }
             const auto string_val = column->get_data_at(i);
-            string_vec.push_back(string_val.data, string_val.size);
+            string_vec.emplace_back(string_val.data, string_val.size);
         }
         thrift_column_data.__set_is_null(is_null_vec);
         thrift_column_data.__set_string_vals(string_vec);
@@ -133,7 +134,7 @@ Status VThriftResultWriter::append_block(Block& input_block) {
     thrift_row_batch.__set_cols(thrift_columns);
     result->result_batch.__set_thrift_row_batch(thrift_row_batch);
     // push this batch to back
-    Status status = _sinker->add_batch(result);
+    status = _sinker->add_batch(result);
 
     if (status.ok()) {
         _written_rows += input_block.rows();
