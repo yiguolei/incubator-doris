@@ -83,14 +83,12 @@ public class GlobalDictManger extends Daemon {
 	@Override
 	protected void runOneCycle() {
 		if (true) {
-
 			ConnectContext connectContext = new ConnectContext();
 			String stmt = "select distinct lo_shipmode from lineorder;";
 			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 			try {
 				queryExecutor.execute();
 				TResultBatch resultBatch = queryExecutor.getNext();
-				ByteBuffer resBuffer = resultBatch.rows.get(0);
 				resultBatch.getRows();
 			} catch (Exception e) {
 				LOG.info("errors while execute query ", e);

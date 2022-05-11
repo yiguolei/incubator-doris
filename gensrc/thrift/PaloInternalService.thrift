@@ -386,7 +386,7 @@ struct TTransmitDataParams {
   4: optional Types.TPlanNodeId dest_node_id
 
   // required in V1
-  5: optional Data.TRowBatch row_batch
+  // 5: optional Data.TRowBatch row_batch
 
   // if set to true, indicates that no more row batches will be sent
   // for this dest_node_id
@@ -425,18 +425,6 @@ struct TTabletWriterOpenParams {
 
 struct TTabletWriterOpenResult {
     1: required Status.TStatus status
-}
-
-// add batch to tablet writer
-struct TTabletWriterAddBatchParams {
-    1: required Types.TUniqueId id
-    2: required i64 index_id
-
-    3: required i64 packet_seq
-    4: required list<Types.TTabletId> tablet_ids
-    5: required Data.TRowBatch row_batch
-
-    6: required i32 sender_no
 }
 
 struct TTabletWriterAddBatchResult {

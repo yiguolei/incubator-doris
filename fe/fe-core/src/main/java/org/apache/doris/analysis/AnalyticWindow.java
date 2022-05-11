@@ -428,8 +428,6 @@ public class AnalyticWindow {
                 e2 != null && e2.isConstant() && e2.getType().isNumericType());
 
         try {
-//            TColumnValue val1 = FeSupport.EvalConstExpr(e1, analyzer.getQueryGlobals());
-//            TColumnValue val2 = FeSupport.EvalConstExpr(e2, analyzer.getQueryGlobals());
             double left = Expr.getConstFromExpr(e1);
             double right = Expr.getConstFromExpr(e2);
 
