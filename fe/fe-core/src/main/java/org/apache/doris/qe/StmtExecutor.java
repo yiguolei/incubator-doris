@@ -458,6 +458,7 @@ public class StmtExecutor implements ProfileWriter {
             LOG.warn("execute Exception. {}, {}", context.getQueryIdentifier(), e.getMessage());
             context.getState().setError(e.getMysqlErrorCode(), e.getMessage());
             context.getState().setErrType(QueryState.ErrType.ANALYSIS_ERR);
+            throw e;
         } catch (Exception e) {
             LOG.warn("execute Exception. {}", context.getQueryIdentifier(), e);
             context.getState().setError(ErrorCode.ERR_UNKNOWN_ERROR,
@@ -466,6 +467,7 @@ public class StmtExecutor implements ProfileWriter {
                 // ignore kill stmt execute err(not monitor it)
                 context.getState().setErrType(QueryState.ErrType.ANALYSIS_ERR);
             }
+            throw e;
         } finally {
             // revert Session Value
             try {

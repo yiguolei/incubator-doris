@@ -81,6 +81,9 @@ public class GlobalDictManger extends Daemon {
 	
 	@Override
 	protected void runOneCycle() {
+		if (!Catalog.getCurrentCatalog().canRead()) {
+			return;
+		}
 		LOG.info("dict run one cycle");
 		if (true) {
 			ConnectContext connectContext = new ConnectContext();

@@ -27,7 +27,7 @@ struct TThriftIPCColumnDesc {
   // The column name as given in the Create .. statement. Always set.
   1: optional string name
   // The column type. Always set.
-  2: optional TPrimitiveType type
+  2: optional Types.TPrimitiveType type
 }
 
 // A union over all possible return types for a column of data
