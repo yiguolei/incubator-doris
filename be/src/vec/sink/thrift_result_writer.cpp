@@ -59,7 +59,7 @@ Status VThriftResultWriter::append_row_batch(const RowBatch* batch) {
 
 template <PrimitiveType type, bool is_nullable>
 Status VThriftResultWriter::_add_one_column(const ColumnPtr& column_ptr,
-                                            TExtColumnData& thrift_column_data) {
+                                            TThriftIPCColumn& thrift_column_data) {
     // Init column nullable property, it is used to indicate whether the column at specified row
     // is null.
     std::vector<bool> is_null_vec;
@@ -97,18 +97,22 @@ Status VThriftResultWriter::append_block(Block& input_block) {
     Status status = Status::OK();
     auto result = std::make_unique<TFetchDataResult>();
     size_t num_rows = input_block.rows();
-    TExtRowBatch thrift_row_batch;
+    TThriftIPCRowBatch thrift_row_batch;
     thrift_row_batch.__set_num_rows(num_rows);
-    std::vector<TExtColumnData> thrift_columns;
+    std::vector<TThriftIPCColumn> thrift_columns;
+    std::vector<TThriftIPCColumnDesc> thrift_column_defs;
     for (int i = 0; i < _output_vexpr_ctxs.size(); ++i) {
         auto column_ptr = input_block.get_by_position(i).column->convert_to_full_column_if_const();
         auto type_ptr = input_block.get_by_position(i).type;
 
-        TExtColumnData thrift_column_data;
+        TThriftIPCColumn thrift_column_data;
         switch (_output_vexpr_ctxs[i]->root()->result_type()) {
         case TYPE_STRING:
         case TYPE_CHAR:
         case TYPE_VARCHAR: {
+            TThriftIPCColumnDesc col_def;
+            col_def.__set_type(TPrimitiveType::VARCHAR);
+            thrift_column_defs.push_back(col_def);
             if (type_ptr->is_nullable()) {
                 status = _add_one_column<PrimitiveType::TYPE_VARCHAR, true>(column_ptr,
                                                                             thrift_column_data);
@@ -125,7 +129,6 @@ Status VThriftResultWriter::append_block(Block& input_block) {
         }
         }
         thrift_columns.push_back(thrift_column_data);
-
         if (!status) {
             LOG(WARNING) << "convert row to thrift result failed.";
             return status;

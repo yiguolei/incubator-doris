@@ -32,6 +32,7 @@ import org.apache.doris.common.util.Daemon;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.InternalQueryExecutor;
 import org.apache.doris.qe.RowBatch;
+import org.apache.doris.thrift.TExtRowBatch;
 import org.apache.doris.thrift.TResultBatch;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -89,7 +90,7 @@ public class GlobalDictManger extends Daemon {
 			try {
 				queryExecutor.execute();
 				TResultBatch resultBatch = queryExecutor.getNext();
-				resultBatch.getRows();
+				TExtRowBatch rowBatch = resultBatch.getThriftRowBatch();
 			} catch (Exception e) {
 				LOG.info("errors while execute query ", e);
 			}

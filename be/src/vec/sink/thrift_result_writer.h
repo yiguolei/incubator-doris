@@ -47,7 +47,7 @@ public:
 private:
     void _init_profile();
     template <PrimitiveType type, bool is_nullable>
-    Status _add_one_column(const ColumnPtr& column_ptr, TExtColumnData& thrift_column_data);
+    Status _add_one_column(const ColumnPtr& column_ptr, TThriftIPCColumn& thrift_column_data);
 
 private:
     BufferControlBlock* _sinker;
