@@ -81,6 +81,7 @@ import org.apache.doris.thrift.TQueryType;
 import org.apache.doris.thrift.TReportExecStatusParams;
 import org.apache.doris.thrift.TResourceInfo;
 import org.apache.doris.thrift.TResourceLimit;
+import org.apache.doris.thrift.TResultSinkType;
 import org.apache.doris.thrift.TRuntimeFilterParams;
 import org.apache.doris.thrift.TRuntimeFilterTargetParams;
 import org.apache.doris.thrift.TScanRangeLocation;
@@ -221,6 +222,8 @@ public class Coordinator {
     public List<RuntimeFilter> assignedRuntimeFilters = new ArrayList<>();
     // Runtime filter ID to the builder instance number
     public Map<RuntimeFilterId, Integer> ridToBuilderNum = Maps.newHashMap();
+    
+    private boolean internalQuery = false;
 
     // Used for query/insert
     public Coordinator(ConnectContext context, Analyzer analyzer, Planner planner) {
@@ -249,6 +252,7 @@ public class Coordinator {
         nextInstanceId.setHi(queryId.hi);
         nextInstanceId.setLo(queryId.lo + 1);
         this.assignedRuntimeFilters = analyzer.getAssignedRuntimeFilter();
+        this.internalQuery = context.isInternalQuery();
     }
 
     // Used for broker load task/export task/update coordinator
@@ -507,6 +511,12 @@ public class Coordinator {
                 FsBroker broker = Catalog.getCurrentCatalog().getBrokerMgr()
                         .getBroker(topResultFileSink.getBrokerName(), execBeAddr.getHostname());
                 topResultFileSink.setBrokerAddr(broker.ip, broker.port);
+            }
+            // For internal query, we use thrift as serialize and deserialize protocol
+            // since fe could get result from it more easily.
+            if (internalQuery && topDataSink instanceof ResultSink) {
+            	ResultSink resultSink = (ResultSink) topDataSink;
+            	resultSink.setResultSinkType(TResultSinkType.THRIFT_IPC_PROTOCAL);
             }
         } else {
             // This is a load process.

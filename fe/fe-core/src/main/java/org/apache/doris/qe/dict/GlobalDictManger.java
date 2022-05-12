@@ -20,16 +20,20 @@ package org.apache.doris.qe.dict;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.catalog.Catalog;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.Type;
+import org.apache.doris.cluster.ClusterNamespace;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.util.Daemon;
+import org.apache.doris.mysql.privilege.PaloAuth;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.InternalQueryExecutor;
+import org.apache.doris.system.SystemInfoService;
 import org.apache.doris.thrift.TResultBatch;
 import org.apache.doris.thrift.TThriftIPCRowBatch;
 import org.apache.logging.log4j.LogManager;
@@ -87,6 +91,13 @@ public class GlobalDictManger extends Daemon {
 		LOG.info("dict run one cycle");
 		if (true) {
 			ConnectContext connectContext = new ConnectContext();
+			connectContext.setInternalQuery(true);
+			connectContext.setCatalog(Catalog.getCurrentCatalog());
+			connectContext.setCluster(SystemInfoService.DEFAULT_CLUSTER);
+			connectContext.setCurrentUserIdentity(UserIdentity.ROOT);
+			connectContext.setQualifiedUser(PaloAuth.ROOT_USER);
+			connectContext.setDatabase(ClusterNamespace.getFullName(SystemInfoService.DEFAULT_CLUSTER, "db1"));
+			connectContext.setThreadLocalInfo();
 			String stmt = "select distinct s_nation from db1.supplier;";
 			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 			try {

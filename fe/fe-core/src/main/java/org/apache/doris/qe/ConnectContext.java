@@ -136,7 +136,7 @@ public class ConnectContext {
 
     private InsertResult insertResult;
     
-    private TResultSinkType resultSinkType = TResultSinkType.MYSQL_PROTOCAL;
+    private boolean internalQuery = false;
 
     public void setOrUpdateInsertResult(long txnId, String label, String db, String tbl,
                                         TransactionStatus txnStatus, long loadedRows, int filteredRows) {
@@ -562,12 +562,12 @@ public class ConnectContext {
         return "stmt[" + stmtId + ", " + DebugUtil.printId(queryId) + "]";
     }
 
-	public TResultSinkType getResultSinkType() {
-		return resultSinkType;
+	public boolean isInternalQuery() {
+		return internalQuery;
 	}
 
-	public void setResultSinkType(TResultSinkType resultSinkType) {
-		this.resultSinkType = resultSinkType;
+	public void setInternalQuery(boolean internalQuery) {
+		this.internalQuery = internalQuery;
 	}
 
 }

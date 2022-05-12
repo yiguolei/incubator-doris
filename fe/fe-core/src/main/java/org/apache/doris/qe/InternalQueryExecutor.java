@@ -21,9 +21,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.doris.common.util.DebugUtil;
-import org.apache.doris.qe.dict.GlobalDictManger;
 import org.apache.doris.thrift.TResultBatch;
-import org.apache.doris.thrift.TResultSinkType;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -40,7 +38,6 @@ public class InternalQueryExecutor extends StmtExecutor {
 	
 	public InternalQueryExecutor(ConnectContext context, String stmt) {
 		super(context, stmt);
-		context.setResultSinkType(TResultSinkType.THRIFT_IPC_PROTOCAL);
 		eos = false;
 	}
 	
@@ -54,6 +51,7 @@ public class InternalQueryExecutor extends StmtExecutor {
 			@Override
 			public void run() {
 				try {
+					context.setThreadLocalInfo();
 					LOG.info("execute is called");
 					InternalQueryExecutor.super.execute();
 				} catch (Throwable t) {
