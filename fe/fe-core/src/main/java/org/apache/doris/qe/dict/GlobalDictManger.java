@@ -98,6 +98,7 @@ public class GlobalDictManger extends Daemon {
 			connectContext.setQualifiedUser(PaloAuth.ROOT_USER);
 			connectContext.setDatabase(ClusterNamespace.getFullName(SystemInfoService.DEFAULT_CLUSTER, "db1"));
 			connectContext.setThreadLocalInfo();
+			connectContext.getSessionVariable().setEnableVectorizedEngine(true);
 			String stmt = "select distinct s_nation from db1.supplier;";
 			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 			try {
