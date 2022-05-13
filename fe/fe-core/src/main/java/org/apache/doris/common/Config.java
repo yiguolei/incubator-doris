@@ -1666,4 +1666,7 @@ public class Config extends ConfigBase {
     
     @ConfField
     public static int dict_expire_sec = 3600;
+    
+    @ConfField
+    public static int max_string_dict_size = 1000;
 }

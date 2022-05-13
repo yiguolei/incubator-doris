@@ -20,22 +20,14 @@ package org.apache.doris.qe.dict;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.catalog.Catalog;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.Type;
-import org.apache.doris.cluster.ClusterNamespace;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.util.Daemon;
-import org.apache.doris.mysql.privilege.PaloAuth;
-import org.apache.doris.qe.ConnectContext;
-import org.apache.doris.qe.InternalQueryExecutor;
-import org.apache.doris.system.SystemInfoService;
-import org.apache.doris.thrift.TResultBatch;
-import org.apache.doris.thrift.TThriftIPCRowBatch;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -43,17 +35,17 @@ import com.alibaba.google.common.collect.Lists;
 import com.alibaba.google.common.collect.Maps;
 
 public class GlobalDictManger extends Daemon {
-    private static final Logger LOG = LogManager.getLogger(GlobalDictManger.class);
+	private static final Logger LOG = LogManager.getLogger(GlobalDictManger.class);
 	private Map<DictKey, IDict> dictsMap = null;
-	
+
 	public GlobalDictManger() {
 		super("GLOBAL_DICT_MGR", Config.dict_check_interval_sec * 1000L);
 		this.dictsMap = Maps.newConcurrentMap();
 	}
 
 	// During query, if dict is invalid, then optimizer should not use it any more
-	public IDict getDictForQuery(long tableId, String column) {
-		IDict dict = this.dictsMap.get(new DictKey(tableId, column));
+	public IDict getDictForQuery(long dbId, long tableId, String column) {
+		IDict dict = this.dictsMap.get(new DictKey(dbId, tableId, column));
 		if (dict.getState() == DictState.INVALID) {
 			return null;
 		}
@@ -63,57 +55,27 @@ public class GlobalDictManger extends Daemon {
 
 	// During load, if dict is invalid, has to return it, and the load process will
 	// check if the dict is up to date
-	public IDict getDictForLoad(long tableId, String column) {
-		IDict dict = this.dictsMap.get(new DictKey(tableId, column));
+	public IDict getDictForLoad(long dbId, long tableId, String column) {
+		IDict dict = this.dictsMap.get(new DictKey(dbId, tableId, column));
 		dict.updateLastAccessTime();
 		return dict;
 	}
-	
-	public void invalidDict(long tableId, String column) {
-		IDict dict = dictsMap.get(new DictKey(tableId, column));
+
+	public void invalidDict(long dbId, long tableId, String column) {
+		IDict dict = dictsMap.get(new DictKey(dbId, tableId, column));
 		if (dict != null) {
 			dict.invalidDict();
 		}
 	}
-	
-	// The optimizer could call this method to set the specific <tableid, columnname> 
-	// to generate dict for it and it could be used in the future for query accelerating
-	private void addDict(DictKey dictKey, IDict dict) {
-		dict.invalidDict();
-		dictsMap.put(dictKey, dict);
-	}
-	
+
 	@Override
 	protected void runOneCycle() {
 		if (!Catalog.getCurrentCatalog().canRead()) {
 			return;
 		}
-		LOG.info("dict run one cycle");
-		if (true) {
-			ConnectContext connectContext = new ConnectContext();
-			connectContext.setInternalQuery(true);
-			connectContext.setCatalog(Catalog.getCurrentCatalog());
-			connectContext.setCluster(SystemInfoService.DEFAULT_CLUSTER);
-			connectContext.setCurrentUserIdentity(UserIdentity.ROOT);
-			connectContext.setQualifiedUser(PaloAuth.ROOT_USER);
-			connectContext.setDatabase(ClusterNamespace.getFullName(SystemInfoService.DEFAULT_CLUSTER, "db1"));
-			connectContext.setThreadLocalInfo();
-			connectContext.getSessionVariable().setEnableVectorizedEngine(true);
-			String stmt = "select distinct s_nation from db1.supplier;";
-			InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
-			try {
-				queryExecutor.execute();
-				TResultBatch resultBatch = queryExecutor.getNext();
-				TThriftIPCRowBatch rowBatch = resultBatch.getThriftRowBatch();
-				for (int i = 0; i < rowBatch.getNumRows(); ++i) {
-					LOG.info("get string vals from {}", rowBatch.cols.get(0).string_vals.get(i));
-				}
-			} catch (Exception e) {
-				LOG.info("errors while execute query ", e);
-			}
-			return;
-		}
-		// Traverse all dict, if the dict is not accessed for a long period of time, then delete it
+		// Traverse all dict, if the dict is not accessed for a long period of time,
+		// then delete it
+		// If the related database or column is dropped, then dict will be cleared in this code.
 		long curTime = System.currentTimeMillis() / 1000;
 		List<DictKey> dictToRemove = Lists.newArrayList();
 		for (IDict dict : dictsMap.values()) {
@@ -124,9 +86,11 @@ public class GlobalDictManger extends Daemon {
 		for (DictKey key : dictToRemove) {
 			dictsMap.remove(key);
 		}
-		
-		// Traverse all columns from catalog and check if it is needed to generate global dict
-		// This is a temporary work, because doris does not have a wonderful optimizer, so that
+
+		// Traverse all columns from catalog and check if it is needed to generate
+		// global dict
+		// This is a temporary work, because doris does not have a wonderful optimizer,
+		// so that
 		// check all column here instead.
 		// Maybe this method could be moved to catalog class
 		Catalog catalog = Catalog.getCurrentCatalog();
@@ -140,20 +104,23 @@ public class GlobalDictManger extends Daemon {
 			for (Table table : tables) {
 				if (table instanceof OlapTable) {
 					OlapTable olapTable = (OlapTable) table;
-					List<Column> allColumns = olapTable.getFullSchema();	
-					// TODO check if the column is low cardinality
+					List<Column> allColumns = olapTable.getFullSchema();
 					for (Column column : allColumns) {
-						// if it is low cardinality and it string
-						if (column.getType() == Type.CHAR 
-								|| column.getType() == Type.VARCHAR
-								|| column.getType() == Type.STRING) {
-							addDict(new DictKey(olapTable.getId(), column.getName()), new StringDict(catalog.getNextId(), db.getId() ,olapTable.getId(), column.getName()));
+						if (column.isLowCardinality()) {
+							if (column.getType() == Type.VARCHAR || column.getType() == Type.CHAR
+									|| column.getType() == Type.STRING) {
+								DictKey dictKey = new DictKey(db.getId(), olapTable.getId(), column.getName());
+								if (!dictsMap.containsKey(dictKey)) {
+									dictsMap.put(dictKey, new StringDict(catalog.getNextId(), db.getId(),
+											olapTable.getId(), column.getName()));
+								}
+							}
 						}
 					}
 				}
 			}
 		}
-        // Call select dict(col) from table[meta] to get dict
+		// Call select dict(col) from table[meta] to get dict
 		List<IDict> dictToRefresh = Lists.newArrayList();
 		for (IDict dict : dictsMap.values()) {
 			if (dict.getState() != DictState.VALID) {
@@ -162,22 +129,29 @@ public class GlobalDictManger extends Daemon {
 		}
 		for (IDict dict : dictToRefresh) {
 			IDict newDict = dict.refresh();
-			// TODO lock here, ensure dict not changed
 			if (newDict.dataChanged(dict)) {
 				newDict.copyDictState(dict);
 				newDict.invalidDict();
 			}
-			// If cur data version is 10, then use version = 10 to refresh dict, but current load is using old
-			// dict, then it will increase data version to a larger value for example 15. After refresh finished, then
-			// the dict will find that version 10 < version 15, then it will invalid the dict. If we do not replace the 
-			// old dict, load process will increase data version to more larger value and we could not catchup. But if we 
-			// replace the old dict with dict (version = 10), then the new key maybe covered by the new dict, load process
-			// will use the new dict to encode data, it will find there is no new key. Then the data version will kept to be
-			// 15. Then in next round dict will refresh to 15. And it is valid, could be used during query.
+			// If cur data version is 10, then use version = 10 to refresh dict, but current
+			// load is using old
+			// dict, then it will increase data version to a larger value for example 15.
+			// After refresh finished, then
+			// the dict will find that version 10 < version 15, then it will invalid the
+			// dict. If we do not replace the
+			// old dict, load process will increase data version to more larger value and we
+			// could not catchup. But if we
+			// replace the old dict with dict (version = 10), then the new key maybe covered
+			// by the new dict, load process
+			// will use the new dict to encode data, it will find there is no new key. Then
+			// the data version will kept to be
+			// 15. Then in next round dict will refresh to 15. And it is valid, could be
+			// used during query.
 			// replace the old dict with new dict, then load process will use the newly dict
-			// if the load process does not find any new key, then the it will not call invalid
+			// if the load process does not find any new key, then the it will not call
+			// invalid
 			newDict.resetDictId(catalog.getNextId());
 			dictsMap.put(dict.getDictKey(), newDict);
 		}
-    }
+	}
 }

@@ -277,7 +277,7 @@ struct TTxnParams {
 // Definition of global dict, global dict is used to accelerate query performance of low cardinality data
 struct TColumnDict {
   1: optional Types.TPrimitiveType type
-  2: list<string> str_dict  // map one string to a integer, using offset as id
+  2: optional list<string> str_dict  // map one string to a integer, using offset as id
 }
 
 struct TGlobalDict {

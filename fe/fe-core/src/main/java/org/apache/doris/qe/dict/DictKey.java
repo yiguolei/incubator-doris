@@ -21,10 +21,12 @@ import java.util.Objects;
 
 public class DictKey {
 
+	private long dbId;
 	private long tableId;
 	private String columnName;
 	
-	public DictKey(long tableId, String columnName) {
+	public DictKey(long dbId, long tableId, String columnName) {
+		this.dbId = dbId;
 		this.tableId = tableId;
 		this.columnName = columnName;
 	}
@@ -37,9 +39,13 @@ public class DictKey {
 		return columnName;
 	}
 
+	public long getDbId() {
+		return dbId;
+	}
+
 	@Override
 	public int hashCode() {
-		return Objects.hash(columnName, tableId);
+		return Objects.hash(columnName, dbId, tableId);
 	}
 
 	@Override
@@ -51,6 +57,6 @@ public class DictKey {
 		if (getClass() != obj.getClass())
 			return false;
 		DictKey other = (DictKey) obj;
-		return Objects.equals(columnName, other.columnName) && tableId == other.tableId;
+		return Objects.equals(columnName, other.columnName) && dbId == other.dbId && tableId == other.tableId;
 	}
 }

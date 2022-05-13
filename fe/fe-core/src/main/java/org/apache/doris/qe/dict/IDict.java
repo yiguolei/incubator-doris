@@ -17,6 +17,8 @@
 
 package org.apache.doris.qe.dict;
 
+import org.apache.doris.thrift.TColumnDict;
+
 public abstract class IDict {
 
 	private long dictId;
@@ -68,7 +70,7 @@ public abstract class IDict {
 	public abstract IDict doRefresh();
 	
 	// Return thrift definition of this dict
-	public abstract void toThrift();
+	public abstract TColumnDict toThrift();
 	
 	public void invalidDict() {
 		this.state = DictState.INVALID;
@@ -81,7 +83,7 @@ public abstract class IDict {
 	
 	public long getLastAccessTime() { return lastAccessTime; }
 	
-	public DictKey getDictKey() { return new DictKey(tableId, columnName); }
+	public DictKey getDictKey() { return new DictKey(dbId, tableId, columnName); }
 
 	public long getDictId() { return dictId; }
 	
