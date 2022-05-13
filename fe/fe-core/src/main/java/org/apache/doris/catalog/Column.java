@@ -86,6 +86,8 @@ public class Column implements Writable {
     private Expr defineExpr; // use to define column in materialize view
     @SerializedName(value = "visible")
     private boolean visible;
+    @SerializedName(value = "lowCardinality")
+    private boolean lowCardinality = false;
 
     public Column() {
         this.name = "";
@@ -495,6 +497,14 @@ public class Column implements Writable {
         }
     }
 
+	public boolean isLowCardinality() {
+		return lowCardinality;
+	}
+
+	public void setLowCardinality(boolean lowCardinality) {
+		this.lowCardinality = lowCardinality;
+	}
+
     public String toSql() {
         return toSql(false);
     }
@@ -515,6 +525,9 @@ public class Column implements Writable {
         }
         if (defaultValue != null && getDataType() != PrimitiveType.HLL && getDataType() != PrimitiveType.BITMAP) {
             sb.append("DEFAULT \"").append(defaultValue).append("\" ");
+        }
+        if (lowCardinality) {
+        	sb.append("LowCardinality");
         }
         sb.append("COMMENT \"").append(getComment(true)).append("\"");
 
@@ -601,28 +614,7 @@ public class Column implements Writable {
         Text.writeString(out, json);
     }
 
-    @Deprecated
-    private void readFields(DataInput in) throws IOException {
-        name = Text.readString(in);
-        type = ColumnType.read(in);
-        boolean notNull = in.readBoolean();
-        if (notNull) {
-            aggregationType = AggregateType.valueOf(Text.readString(in));
-            isAggregationTypeImplicit = in.readBoolean();
-        }
-        isKey = in.readBoolean();
-        isAllowNull = in.readBoolean();
-        notNull = in.readBoolean();
-        if (notNull) {
-            defaultValue = Text.readString(in);
-        }
-        stats = ColumnStats.read(in);
-
-        comment = Text.readString(in);
-    }
-
     public static Column read(DataInput in) throws IOException {
-
         String json = Text.readString(in);
         return GsonUtils.GSON.fromJson(json, Column.class);
     }

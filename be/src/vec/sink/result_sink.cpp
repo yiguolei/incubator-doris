@@ -74,6 +74,7 @@ Status VResultSink::prepare(RuntimeState* state) {
     case TResultSinkType::THRIFT_IPC_PROTOCAL:
         _writer.reset(new (std::nothrow)
                               VThriftResultWriter(_sender.get(), _output_vexpr_ctxs, _profile));
+        break;
     default:
         return Status::InternalError("Unknown result sink type");
     }

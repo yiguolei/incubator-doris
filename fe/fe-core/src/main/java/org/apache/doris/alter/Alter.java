@@ -28,6 +28,7 @@ import org.apache.doris.analysis.DateLiteral;
 import org.apache.doris.analysis.DropMaterializedViewStmt;
 import org.apache.doris.analysis.DropPartitionClause;
 import org.apache.doris.analysis.ModifyColumnCommentClause;
+import org.apache.doris.analysis.ModifyColumnLowCardinalityClause;
 import org.apache.doris.analysis.ModifyDistributionClause;
 import org.apache.doris.analysis.ModifyEngineClause;
 import org.apache.doris.analysis.ModifyPartitionClause;
@@ -64,6 +65,7 @@ import org.apache.doris.common.util.PropertyAnalyzer;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.persist.AlterViewInfo;
 import org.apache.doris.persist.BatchModifyPartitionsInfo;
+import org.apache.doris.persist.ModifyColumnSettingsLog;
 import org.apache.doris.persist.ModifyCommentOperationLog;
 import org.apache.doris.persist.ModifyPartitionInfo;
 import org.apache.doris.persist.ModifyTableEngineOperationLog;
@@ -209,6 +211,8 @@ public class Alter {
             Catalog.getCurrentCatalog().modifyDefaultDistributionBucketNum(db, olapTable, (ModifyDistributionClause) alterClause);
         } else if (currentAlterOps.contains(AlterOpType.MODIFY_COLUMN_COMMENT)) {
             processModifyColumnComment(db, olapTable, alterClauses);
+        } else if (currentAlterOps.contains(AlterOpType.MODIFY_COLUMN_LOW_CARDINALITY)) {
+        	processModifyColumnSettings(db, olapTable, alterClauses);
         } else if (currentAlterOps.contains(AlterOpType.MODIFY_TABLE_COMMENT)) {
             Preconditions.checkState(alterClauses.size() == 1);
             AlterClause alterClause = alterClauses.get(0);
@@ -286,6 +290,54 @@ public class Alter {
                     break;
                 default:
                     break;
+            }
+        } finally {
+            tbl.writeUnlock();
+        }
+    }
+    
+    private void processModifyColumnSettings(Database db, OlapTable tbl, List<AlterClause> alterClauses)
+            throws DdlException {
+        tbl.writeLockOrDdlException();
+        try {
+            // check first
+            Map<String, Boolean> colToModify = Maps.newHashMap();
+            for (AlterClause alterClause : alterClauses) {
+                Preconditions.checkState(alterClause instanceof ModifyColumnLowCardinalityClause);
+                ModifyColumnLowCardinalityClause clause = (ModifyColumnLowCardinalityClause) alterClause;
+                String colName = clause.getColName();
+                if (tbl.getColumn(colName) == null) {
+                    throw new DdlException("Unknown column: " + colName);
+                }
+                if (colToModify.containsKey(colName)) {
+                    throw new DdlException("Duplicate column: " + colName);
+                }
+                colToModify.put(colName, clause.isLowCardinality());
+            }
+
+            ModifyColumnSettingsLog op = new ModifyColumnSettingsLog(db.getId(), tbl.getId());
+            for (Map.Entry<String, Boolean> entry : colToModify.entrySet()) {
+                Column col = tbl.getColumn(entry.getKey());
+                col.setLowCardinality(entry.getValue());
+                op.setLowCardinality(entry.getKey(), entry.getValue());
+            }
+            Catalog.getCurrentCatalog().getEditLog().logModifyColSettings(op);
+        } finally {
+            tbl.writeUnlock();
+        }
+    }
+
+    public void replayModifyColumnSettings(ModifyColumnSettingsLog operation) throws MetaNotFoundException {
+        long dbId = operation.getDbId();
+        long tblId = operation.getTblId();
+        Database db = Catalog.getCurrentCatalog().getDbOrMetaException(dbId);
+        Table tbl = db.getTableOrMetaException(tblId);
+        tbl.writeLock();
+        try {
+        	Map<String, Boolean> lowCardinalitySettings = operation.getLowCardinalitySettings();
+        	for (Map.Entry<String, Boolean> entry : lowCardinalitySettings.entrySet()) {
+                Column col = tbl.getColumn(entry.getKey());
+                col.setLowCardinality(entry.getValue());
             }
         } finally {
             tbl.writeUnlock();
