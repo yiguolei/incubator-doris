@@ -64,9 +64,9 @@ public class ModifyColumnSettingsLog implements Writable {
 		Text.writeString(out, json);
 	}
 
-	public static ModifyCommentOperationLog read(DataInput in) throws IOException {
+	public static ModifyColumnSettingsLog read(DataInput in) throws IOException {
 		String json = Text.readString(in);
-		return GsonUtils.GSON.fromJson(json, ModifyCommentOperationLog.class);
+		return GsonUtils.GSON.fromJson(json, ModifyColumnSettingsLog.class);
 	}
 
 	public Map<String, Boolean> getLowCardinalitySettings() {
