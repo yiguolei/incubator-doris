@@ -151,6 +151,7 @@ public class GlobalDictManger extends Daemon {
 			// if the load process does not find any new key, then the it will not call
 			// invalid
 			newDict.resetDictId(catalog.getNextId());
+			LOG.info("get new dict {}", newDict.toString());
 			dictsMap.put(dict.getDictKey(), newDict);
 		}
 	}

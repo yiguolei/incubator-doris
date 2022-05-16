@@ -124,4 +124,9 @@ public class StringDict extends IDict {
 		return columnDict;
 	}
 
+	@Override
+	public String toString() {
+		return "StringDict [dictValues=" + String.join(",", dictValues) + "]";
+	}
+
 }
