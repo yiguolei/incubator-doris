@@ -24,6 +24,7 @@ import org.apache.doris.catalog.Catalog;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.PrimitiveType;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.Config;
@@ -108,8 +109,8 @@ public class GlobalDictManger extends Daemon {
 					for (Column column : allColumns) {
 						LOG.info("2dict key is {}", column.toSql());
 						if (column.isLowCardinality()) {
-							if (column.getType() == Type.VARCHAR || column.getType() == Type.CHAR
-									|| column.getType() == Type.STRING) {
+							if (column.getDataType() == PrimitiveType.VARCHAR || column.getDataType() == PrimitiveType.CHAR
+									|| column.getDataType() == PrimitiveType.STRING) {
 								DictKey dictKey = new DictKey(db.getId(), olapTable.getId(), column.getName());
 								LOG.info("dict key is {}", dictKey);
 								if (!dictsMap.containsKey(dictKey)) {
