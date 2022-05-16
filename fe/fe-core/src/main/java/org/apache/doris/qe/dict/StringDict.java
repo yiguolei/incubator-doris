@@ -80,6 +80,7 @@ public class StringDict extends IDict {
 		connectContext.setThreadLocalInfo();
 		connectContext.getSessionVariable().setEnableVectorizedEngine(true);
 		String stmt = "select distinct "+ getColumnName() + " from " + db.getFullName() + "." + tbl.getName() + ";";
+		LOG.info("query stmt is {}", stmt);
 		InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 		List<String> updatedDictValues = Lists.newArrayList();
 		boolean valid = true;
