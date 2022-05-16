@@ -79,8 +79,8 @@ public class StringDict extends IDict {
 		}
 		connectContext.setThreadLocalInfo();
 		connectContext.getSessionVariable().setEnableVectorizedEngine(true);
-		String stmt = "select distinct "+ getColumnName() + " from " + db.getFullName() + "." + tbl.getName() + ";";
-		LOG.info("query stmt is {}", stmt);
+		String stmt = "select distinct "+ getColumnName() + " from " + tbl.getName() + ";";
+		LOG.info("try to use query stmt {} to get string dict", stmt);
 		InternalQueryExecutor queryExecutor = new InternalQueryExecutor(connectContext, stmt);
 		List<String> updatedDictValues = Lists.newArrayList();
 		boolean valid = true;
