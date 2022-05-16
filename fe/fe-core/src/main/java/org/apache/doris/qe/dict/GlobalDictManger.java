@@ -106,6 +106,7 @@ public class GlobalDictManger extends Daemon {
 					OlapTable olapTable = (OlapTable) table;
 					List<Column> allColumns = olapTable.getFullSchema();
 					for (Column column : allColumns) {
+						LOG.info("2dict key is {}", column.toSql());
 						if (column.isLowCardinality()) {
 							if (column.getType() == Type.VARCHAR || column.getType() == Type.CHAR
 									|| column.getType() == Type.STRING) {
