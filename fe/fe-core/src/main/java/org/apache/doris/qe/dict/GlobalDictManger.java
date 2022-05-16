@@ -110,6 +110,7 @@ public class GlobalDictManger extends Daemon {
 							if (column.getType() == Type.VARCHAR || column.getType() == Type.CHAR
 									|| column.getType() == Type.STRING) {
 								DictKey dictKey = new DictKey(db.getId(), olapTable.getId(), column.getName());
+								LOG.info("dict key is {}", dictKey);
 								if (!dictsMap.containsKey(dictKey)) {
 									dictsMap.put(dictKey, new StringDict(catalog.getNextId(), db.getId(),
 											olapTable.getId(), column.getName()));

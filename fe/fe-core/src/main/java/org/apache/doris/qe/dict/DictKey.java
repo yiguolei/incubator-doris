@@ -59,4 +59,9 @@ public class DictKey {
 		DictKey other = (DictKey) obj;
 		return Objects.equals(columnName, other.columnName) && dbId == other.dbId && tableId == other.tableId;
 	}
+
+	@Override
+	public String toString() {
+		return "DictKey [dbId=" + dbId + ", tableId=" + tableId + ", columnName=" + columnName + "]";
+	}
 }
