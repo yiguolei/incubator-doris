@@ -180,6 +180,7 @@ public final class QeProcessorImpl implements QeProcessor {
     @Override
     public TReportExecStatusResult reportExecStatus(TReportExecStatusParams params, TNetworkAddress beAddr) {
         try {
+        try {
             Thread.currentThread().sleep(1000);
         } catch (Exception e) {
             LOG.info("");
@@ -212,6 +213,10 @@ public final class QeProcessorImpl implements QeProcessor {
         }
         result.setStatus(new TStatus(TStatusCode.OK));
         return result;
+        } catch (Exception e) {
+            LOG.info("errors yyy", e);
+            return null;
+        }
     }
 
     @Override
