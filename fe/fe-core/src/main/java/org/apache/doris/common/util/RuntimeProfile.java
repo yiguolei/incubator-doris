@@ -363,7 +363,7 @@ public class RuntimeProfile {
         if (child == null) {
             return;
         }
-
+        LOG.info("try to add child {}, {}", name, child.getName(), new Exception());
         childLock.writeLock().lock();
         try {
             if (childMap.containsKey(child.name)) {

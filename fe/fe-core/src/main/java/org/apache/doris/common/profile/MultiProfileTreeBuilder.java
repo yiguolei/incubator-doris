@@ -22,6 +22,8 @@ import org.apache.doris.common.Pair;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.Counter;
 import org.apache.doris.common.util.RuntimeProfile;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -43,6 +45,7 @@ import java.util.regex.Pattern;
  * Each ExecutionProfile node corresponds to a ProfileTreeBuilder
  */
 public class MultiProfileTreeBuilder {
+    private static final Logger LOG = LogManager.getLogger(MultiProfileTreeBuilder.class);
     public static final String PROFILE_NAME_EXECUTION = "Execution Profile";
     private static final Set<String> PROFILE_ROOT_NAMES;
     private static final String EXECUTION_ID_PATTERN_STR = "^Execution Profile (.*)";
@@ -95,6 +98,7 @@ public class MultiProfileTreeBuilder {
 
     private void buildTrees() throws UserException {
         for (Map.Entry<String, RuntimeProfile> entry : idToSingleProfile.entrySet()) {
+            LOG.info("yyy1 {}", entry.getKey());
             ProfileTreeBuilder builder = new ProfileTreeBuilder(entry.getValue());
             builder.build();
             idToSingleTreeBuilder.put(entry.getKey(), builder);

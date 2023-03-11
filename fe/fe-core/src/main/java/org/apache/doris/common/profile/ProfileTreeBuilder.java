@@ -160,10 +160,12 @@ public class ProfileTreeBuilder {
 
     private void analyzeAndBuildFragmentTree(RuntimeProfile fragmentProfile) throws UserException {
         String fragmentId = getFragmentId(fragmentProfile);
+        LOG.info("yyy2 fragmentId = {}", fragmentId);
         List<Pair<RuntimeProfile, Boolean>> fragmentChildren = fragmentProfile.getChildList();
         if (fragmentChildren.isEmpty()) {
             throw new UserException("Empty instance in fragment: " + fragmentProfile.getName());
         }
+        LOG.info("yyy3 fragment child num = {}", fragmentChildren.size());
 
         // 1. Get max active time of instances in this fragment
         List<Triple<String, String, Long>> instanceIdAndActiveTimeList = Lists.newArrayList();
