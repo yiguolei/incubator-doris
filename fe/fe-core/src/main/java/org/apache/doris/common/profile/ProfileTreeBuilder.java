@@ -160,12 +160,15 @@ public class ProfileTreeBuilder {
 
     private void analyzeAndBuildFragmentTree(RuntimeProfile fragmentProfile) throws UserException {
         String fragmentId = getFragmentId(fragmentProfile);
-        LOG.info("yyy2 fragmentId = {}", fragmentId);
+        LOG.info("yyy2 {} fragmentId = {}", fragmentProfile.getName(), fragmentId);
         List<Pair<RuntimeProfile, Boolean>> fragmentChildren = fragmentProfile.getChildList();
         if (fragmentChildren.isEmpty()) {
             throw new UserException("Empty instance in fragment: " + fragmentProfile.getName());
         }
-        LOG.info("yyy3 fragment child num = {}", fragmentChildren.size());
+        for (int i = 0; i < fragmentChildren.size(); ++i) {
+            LOG.info("yyy3 fragment child  = {}", fragmentChildren.get(i));
+        }
+        LOG.info("yyy4 fragment child num = {}", fragmentChildren.size());
 
         // 1. Get max active time of instances in this fragment
         List<Triple<String, String, Long>> instanceIdAndActiveTimeList = Lists.newArrayList();
@@ -187,6 +190,7 @@ public class ProfileTreeBuilder {
         // 2. Build tree for all fragments
         //    All instance in a fragment are same, so use first instance to build the fragment tree
         RuntimeProfile instanceProfile = fragmentChildren.get(0).first;
+        LOG.info("yyy5 fragment instance {}", instanceProfile.getName());
         ProfileTreeNode instanceTreeRoot = buildSingleInstanceTree(instanceProfile, fragmentId, null);
         instanceTreeRoot.setMaxInstanceActiveTime(RuntimeProfile.printCounter(maxActiveTimeNs, TUnit.TIME_NS));
         if (instanceTreeRoot.id.equals(FINAL_SENDER_ID)) {
