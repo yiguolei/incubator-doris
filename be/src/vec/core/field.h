@@ -811,31 +811,6 @@ private:
 };
 
 #undef DBMS_MIN_FIELD_SIZE
-
-template <>
-struct TypeId<AggregateFunctionStateData> {
-    static constexpr const TypeIndex value = TypeIndex::AggregateFunction;
-};
-template <>
-struct TypeId<Tuple> {
-    static constexpr const TypeIndex value = TypeIndex::Tuple;
-};
-template <>
-struct TypeId<DecimalField<Decimal32>> {
-    static constexpr const TypeIndex value = TypeIndex::Decimal32;
-};
-template <>
-struct TypeId<DecimalField<Decimal64>> {
-    static constexpr const TypeIndex value = TypeIndex::Decimal64;
-};
-template <>
-struct TypeId<DecimalField<Decimal128>> {
-    static constexpr const TypeIndex value = TypeIndex::Decimal128;
-};
-template <>
-struct TypeId<DecimalField<Decimal128I>> {
-    static constexpr const TypeIndex value = TypeIndex::Decimal128I;
-};
 template <>
 struct Field::TypeToEnum<Null> {
     static constexpr Types::Which value = Types::Null;
