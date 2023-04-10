@@ -30,6 +30,7 @@
 #include "vec/core/types.h"
 #include "vec/data_types/data_type.h"
 #include "vec/data_types/data_type_number.h"
+#include "vec/data_types/serde/data_type_decimal_serde.h"
 
 namespace doris::vectorized {
 
@@ -244,6 +245,10 @@ public:
     static T get_scale_multiplier(UInt32 scale);
 
     T parse_from_string(const std::string& str) const;
+
+    DataTypeSerDeSPtr get_serde() const override {
+        return std::make_shared<DataTypeDecimalSerDe<T>>(scale);
+    }
 
 private:
     const UInt32 precision;

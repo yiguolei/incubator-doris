@@ -24,6 +24,7 @@
 
 #include "vec/core/field.h"
 #include "vec/data_types/data_type_number_base.h"
+#include "vec/data_types/serde/data_type_number_serde.h"
 
 namespace doris::vectorized {
 
@@ -41,6 +42,10 @@ class DataTypeNumber final : public DataTypeNumberBase<T> {
     DataTypePtr promote_numeric_type() const override {
         using PromotedType = DataTypeNumber<NearestFieldType<T>>;
         return std::make_shared<PromotedType>();
+    }
+
+    DataTypeSerDeSPtr get_serde() const override {
+        return std::make_shared<DataTypeNumberSerDe<T>>();
     }
 };
 

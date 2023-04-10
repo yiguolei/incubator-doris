@@ -21,6 +21,7 @@
 #pragma once
 
 #include "vec/data_types/data_type_number_base.h"
+#include "vec/data_types/serde/data_type_date_serde.h"
 
 namespace doris::vectorized {
 
@@ -45,6 +46,8 @@ public:
     static void cast_to_date(Int64& x);
 
     MutableColumnPtr create_column() const override;
+
+    DataTypeSerDeSPtr get_serde() const override { return std::make_shared<DataTypeDateSerDe>(); }
 };
 
 } // namespace doris::vectorized

@@ -19,6 +19,8 @@
 
 #include "runtime/define_primitive_type.h"
 #include "vec/data_types/data_type_number_base.h"
+#include "vec/data_types/serde/data_type_datetimev2_serde.h"
+#include "vec/data_types/serde/data_type_datev2_serde.h"
 
 namespace doris::vectorized {
 
@@ -51,6 +53,8 @@ public:
     static void cast_to_date_time_v2(const UInt32 from, UInt64& to);
     static void cast_from_date(const Int64 from, UInt32& to);
     static void cast_from_date_time(const Int64 from, UInt32& to);
+
+    DataTypeSerDeSPtr get_serde() const override { return std::make_shared<DataTypeDateV2SerDe>(); }
 };
 
 /**
@@ -97,6 +101,9 @@ public:
     static void cast_to_date_v2(const UInt64 from, UInt32& to);
     static void cast_from_date(const Int64 from, UInt64& to);
     static void cast_from_date_time(const Int64 from, UInt64& to);
+    DataTypeSerDeSPtr get_serde() const override {
+        return std::make_shared<DataTypeDateTimeV2SerDe>();
+    }
 
 private:
     UInt32 _scale;
