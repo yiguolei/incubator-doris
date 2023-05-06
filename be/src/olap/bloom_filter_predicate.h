@@ -25,6 +25,7 @@
 #include "vec/columns/column_nullable.h"
 #include "vec/columns/column_vector.h"
 #include "vec/columns/predicate_column.h"
+#include "vec/data_types/data_type_factory.hpp"
 #include "vec/exprs/vruntimefilter_wrapper.h"
 
 namespace doris {
@@ -41,7 +42,10 @@ public:
             : ColumnPredicate(column_id),
               _filter(filter),
               _specific_filter(static_cast<SpecificFilter*>(_filter.get())),
-              _be_exec_version(be_exec_version) {}
+              _be_exec_version(be_exec_version) {
+        rf_use_batch = IRuntimeFilter::enable_use_batch(
+                _be_exec_version > 0, vectorized::DataTypeFactory::instance().create_data_type(T));
+    }
     ~BloomFilterColumnPredicate() override = default;
 
     PredicateType type() const override { return PredicateType::BF; }
@@ -55,6 +59,7 @@ public:
                       uint16_t size) const override;
 
 private:
+    bool rf_use_batch = false;
     template <bool is_nullable>
     uint16_t evaluate(const vectorized::IColumn& column, const uint8_t* null_map, uint16_t* sel,
                       uint16_t size) const {
@@ -89,7 +94,7 @@ private:
                     }
                 }
             }
-        } else if (IRuntimeFilter::enable_use_batch(_be_exec_version > 0, T)) {
+        } else if (rf_use_batch) {
             const auto& data =
                     reinterpret_cast<
                             const vectorized::PredicateColumnType<PredicateEvaluateType<T>>*>(

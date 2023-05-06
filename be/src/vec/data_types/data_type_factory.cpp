@@ -126,6 +126,10 @@ DataTypePtr DataTypeFactory::create_data_type(const TabletColumn& col_desc, bool
     return nested;
 }
 
+DataTypePtr DataTypeFactory::create_data_type(const PrimitiveType& primitive_type) {
+    return create_data_type(TypeDescriptor(primitive_type), false);
+}
+
 DataTypePtr DataTypeFactory::create_data_type(const TypeDescriptor& col_desc, bool is_nullable) {
     DataTypePtr nested = nullptr;
     switch (col_desc.type) {

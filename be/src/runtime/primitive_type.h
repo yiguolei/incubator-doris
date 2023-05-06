@@ -89,15 +89,6 @@ constexpr bool is_string_type(PrimitiveType type) {
     return type == TYPE_CHAR || type == TYPE_VARCHAR || type == TYPE_STRING;
 }
 
-constexpr bool is_float_or_double(PrimitiveType type) {
-    return type == TYPE_FLOAT || type == TYPE_DOUBLE;
-}
-
-constexpr bool is_int_or_bool(PrimitiveType type) {
-    return type == TYPE_BOOLEAN || type == TYPE_TINYINT || type == TYPE_SMALLINT ||
-           type == TYPE_INT || type == TYPE_BIGINT || type == TYPE_LARGEINT;
-}
-
 constexpr bool has_variable_type(PrimitiveType type) {
     return type == TYPE_CHAR || type == TYPE_VARCHAR || type == TYPE_OBJECT ||
            type == TYPE_QUANTILE_STATE || type == TYPE_STRING;
@@ -105,7 +96,6 @@ constexpr bool has_variable_type(PrimitiveType type) {
 
 bool is_type_compatible(PrimitiveType lhs, PrimitiveType rhs);
 
-TExprOpcode::type to_in_opcode(PrimitiveType t);
 PrimitiveType thrift_to_type(TPrimitiveType::type ttype);
 TPrimitiveType::type to_thrift(PrimitiveType ptype);
 TColumnType to_tcolumn_type_thrift(TPrimitiveType::type ttype);

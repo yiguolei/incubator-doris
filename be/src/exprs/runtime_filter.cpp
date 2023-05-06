@@ -358,8 +358,9 @@ public:
               _use_new_hash(_be_exec_version >= 2) {}
     // for a 'tmp' runtime predicate wrapper
     // only could called assign method or as a param for merge
-    RuntimePredicateWrapper(RuntimeState* state, ObjectPool* pool, PrimitiveType column_type,
-                            RuntimeFilterType type, uint32_t filter_id)
+    RuntimePredicateWrapper(RuntimeState* state, ObjectPool* pool,
+                            vectorized::DataTypePtr column_type, RuntimeFilterType type,
+                            uint32_t filter_id)
             : _state(state),
               _be_exec_version(_state->be_exec_version()),
               _pool(pool),
@@ -383,8 +384,9 @@ public:
               _use_new_hash(_be_exec_version >= 2) {}
     // for a 'tmp' runtime predicate wrapper
     // only could called assign method or as a param for merge
-    RuntimePredicateWrapper(QueryContext* query_ctx, ObjectPool* pool, PrimitiveType column_type,
-                            RuntimeFilterType type, uint32_t filter_id)
+    RuntimePredicateWrapper(QueryContext* query_ctx, ObjectPool* pool,
+                            vectorized::DataTypePtr column_type, RuntimeFilterType type,
+                            uint32_t filter_id)
             : _query_ctx(query_ctx),
               _be_exec_version(_query_ctx->be_exec_version()),
               _pool(pool),
@@ -400,28 +402,34 @@ public:
         _max_in_num = params->max_in_num;
         switch (_filter_type) {
         case RuntimeFilterType::IN_FILTER: {
-            _context.hybrid_set.reset(create_set(_column_return_type));
+            _context.hybrid_set.reset(
+                    create_set(_column_return_type->get_type_as_primitive_type()));
             break;
         }
         case RuntimeFilterType::MINMAX_FILTER: {
-            _context.minmax_func.reset(create_minmax_filter(_column_return_type));
+            _context.minmax_func.reset(
+                    create_minmax_filter(_column_return_type->get_type_as_primitive_type()));
             break;
         }
         case RuntimeFilterType::BLOOM_FILTER: {
             _is_bloomfilter = true;
-            _context.bloom_filter_func.reset(create_bloom_filter(_column_return_type));
+            _context.bloom_filter_func.reset(
+                    create_bloom_filter(_column_return_type->get_type_as_primitive_type()));
             _context.bloom_filter_func->set_length(params->bloom_filter_size);
             _context.bloom_filter_func->set_build_bf_exactly(params->build_bf_exactly);
             return Status::OK();
         }
         case RuntimeFilterType::IN_OR_BLOOM_FILTER: {
-            _context.hybrid_set.reset(create_set(_column_return_type));
-            _context.bloom_filter_func.reset(create_bloom_filter(_column_return_type));
+            _context.hybrid_set.reset(
+                    create_set(_column_return_type->get_type_as_primitive_type()));
+            _context.bloom_filter_func.reset(
+                    create_bloom_filter(_column_return_type->get_type_as_primitive_type()));
             _context.bloom_filter_func->set_length(params->bloom_filter_size);
             return Status::OK();
         }
         case RuntimeFilterType::BITMAP_FILTER: {
-            _context.bitmap_filter_func.reset(create_bitmap_filter(_column_return_type));
+            _context.bitmap_filter_func.reset(
+                    create_bitmap_filter(_column_return_type->get_type_as_primitive_type()));
             _context.bitmap_filter_func->set_not_in(params->bitmap_filter_not_in);
             return Status::OK();
         }
@@ -438,7 +446,7 @@ public:
         _is_bloomfilter = true;
         insert_to_bloom_filter(_context.bloom_filter_func.get());
         // release in filter
-        _context.hybrid_set.reset(create_set(_column_return_type));
+        _context.hybrid_set.reset(create_set(_column_return_type->get_type_as_primitive_type()));
     }
 
     Status init_bloom_filter(const size_t build_bf_cardinality) {
@@ -546,7 +554,7 @@ public:
     }
 
     void insert(const StringRef& value) {
-        switch (_column_return_type) {
+        switch (_column_return_type->get_type_as_primitive_type()) {
         case TYPE_CHAR:
         case TYPE_VARCHAR:
         case TYPE_HLL:
@@ -628,7 +636,8 @@ public:
                 _is_ignored_in_filter = true;
                 _ignored_in_filter_msg = wrapper->_ignored_in_filter_msg;
                 // release in filter
-                _context.hybrid_set.reset(create_set(_column_return_type));
+                _context.hybrid_set.reset(
+                        create_set(_column_return_type->get_type_as_primitive_type()));
                 break;
             }
             // try insert set
@@ -646,7 +655,8 @@ public:
                 _is_ignored_in_filter = true;
 
                 // release in filter
-                _context.hybrid_set.reset(create_set(_column_return_type));
+                _context.hybrid_set.reset(
+                        create_set(_column_return_type->get_type_as_primitive_type()));
             }
             break;
         }
@@ -1012,11 +1022,11 @@ public:
         return Status::OK();
     }
 
-    PrimitiveType column_type() { return _column_return_type; }
+    vectorized::DataTypePtr column_type() { return _column_return_type; }
 
     void ready_for_publish() {
         if (_filter_type == RuntimeFilterType::MINMAX_FILTER) {
-            switch (_column_return_type) {
+            switch (_column_return_type->get_type_as_primitive_type()) {
             case TYPE_VARCHAR:
             case TYPE_CHAR:
             case TYPE_STRING: {
@@ -1064,7 +1074,7 @@ private:
     ObjectPool* _pool;
 
     // When a runtime filter received from remote and it is a bloom filter, _column_return_type will be invalid.
-    PrimitiveType _column_return_type; // column type
+    vectorized::DataTypePtr _column_return_type; // column type
     RuntimeFilterType _filter_type;
     int32_t _max_in_num = -1;
 
@@ -1341,7 +1351,7 @@ Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, const TQue
     RuntimeFilterParams params;
     params.filter_id = _filter_id;
     params.filter_type = _runtime_filter_type;
-    params.column_return_type = build_ctx->root()->type().type;
+    params.column_return_type = build_ctx->root()->data_type();
     params.max_in_num = options->runtime_filter_max_in_num;
     // We build runtime filter by exact distinct count iff three conditions are met:
     // 1. Only 1 join key
@@ -1363,7 +1373,7 @@ Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, const TQue
         vectorized::VExprContext* bitmap_target_ctx = nullptr;
         RETURN_IF_ERROR(vectorized::VExpr::create_expr_tree(_pool, desc->bitmap_target_expr,
                                                             &bitmap_target_ctx));
-        params.column_return_type = bitmap_target_ctx->root()->type().type;
+        params.column_return_type = bitmap_target_ctx->root()->data_type();
 
         if (desc->__isset.bitmap_filter_not_in) {
             params.bitmap_filter_not_in = desc->bitmap_filter_not_in;
@@ -1420,8 +1430,9 @@ Status IRuntimeFilter::create_wrapper(QueryContext* query_ctx,
     if (param->request->has_in_filter()) {
         column_type = to_primitive_type(param->request->in_filter().column_type());
     }
-    wrapper->reset(new RuntimePredicateWrapper(query_ctx, pool, column_type, get_type(filter_type),
-                                               param->request->filter_id()));
+    wrapper->reset(new RuntimePredicateWrapper(
+            query_ctx, pool, vectorized::DataTypeFactory::instance().create_data_type(column_type),
+            get_type(filter_type), param->request->filter_id()));
 
     switch (filter_type) {
     case PFilterType::IN_FILTER: {
@@ -1461,8 +1472,9 @@ Status IRuntimeFilter::_create_wrapper(RuntimeState* state, const T* param, Obje
     if (param->request->has_in_filter()) {
         column_type = to_primitive_type(param->request->in_filter().column_type());
     }
-    wrapper->reset(new RuntimePredicateWrapper(state, pool, column_type, get_type(filter_type),
-                                               param->request->filter_id()));
+    wrapper->reset(new RuntimePredicateWrapper(
+            state, pool, vectorized::DataTypeFactory::instance().create_data_type(column_type),
+            get_type(filter_type), param->request->filter_id()));
 
     switch (filter_type) {
     case PFilterType::IN_FILTER: {
@@ -1573,7 +1585,7 @@ Status IRuntimeFilter::serialize_impl(T* request, void** data, int* len) {
 
 void IRuntimeFilter::to_protobuf(PInFilter* filter) {
     auto column_type = _wrapper->column_type();
-    filter->set_column_type(to_proto(column_type));
+    filter->set_column_type(to_proto(column_type->get_type_as_primitive_type()));
 
     if (_is_ignored) {
         filter->set_ignored_msg(_ignored_msg);
@@ -1584,7 +1596,7 @@ void IRuntimeFilter::to_protobuf(PInFilter* filter) {
     _wrapper->get_in_filter_iterator(&it);
     DCHECK(it != nullptr);
 
-    switch (column_type) {
+    switch (column_type->get_type_as_primitive_type()) {
     case TYPE_BOOLEAN: {
         batch_copy<bool>(filter, it, [](PColumnValue* column, const bool* value) {
             column->set_boolval(*value);
@@ -1707,9 +1719,9 @@ void IRuntimeFilter::to_protobuf(PMinMaxFilter* filter) {
     _wrapper->get_minmax_filter_desc(&min_data, &max_data);
     DCHECK(min_data != nullptr);
     DCHECK(max_data != nullptr);
-    filter->set_column_type(to_proto(_wrapper->column_type()));
+    filter->set_column_type(to_proto(_wrapper->column_type()->get_type_as_primitive_type()));
 
-    switch (_wrapper->column_type()) {
+    switch (_wrapper->column_type()->get_type_as_primitive_type()) {
     case TYPE_BOOLEAN: {
         filter->mutable_min_val()->set_boolval(*reinterpret_cast<const int32_t*>(min_data));
         filter->mutable_max_val()->set_boolval(*reinterpret_cast<const int32_t*>(max_data));
@@ -1868,13 +1880,6 @@ Status RuntimePredicateWrapper::get_push_vexprs(std::vector<vectorized::VExpr*>*
                                                 vectorized::VExprContext* vprob_expr) {
     DCHECK(container != nullptr);
     DCHECK(_pool != nullptr);
-    DCHECK(vprob_expr->root()->type().type == _column_return_type ||
-           (is_string_type(vprob_expr->root()->type().type) &&
-            is_string_type(_column_return_type)) ||
-           _filter_type == RuntimeFilterType::BITMAP_FILTER)
-            << " vprob_expr->root()->type().type: " << vprob_expr->root()->type().type
-            << " _column_return_type: " << _column_return_type
-            << " _filter_type: " << ::doris::to_string(_filter_type);
 
     auto real_filter_type = get_real_type();
     switch (real_filter_type) {
@@ -1888,7 +1893,7 @@ Status RuntimePredicateWrapper::get_push_vexprs(std::vector<vectorized::VExpr*>*
             node.in_predicate.__set_is_not_in(false);
             node.__set_opcode(TExprOpcode::FILTER_IN);
             node.__isset.vector_opcode = true;
-            node.__set_vector_opcode(to_in_opcode(_column_return_type));
+            node.__set_vector_opcode(TExprOpcode::FILTER_IN);
             node.__set_is_nullable(false);
 
             auto in_pred =
@@ -1943,7 +1948,7 @@ Status RuntimePredicateWrapper::get_push_vexprs(std::vector<vectorized::VExpr*>*
         node.__set_node_type(TExprNodeType::BLOOM_PRED);
         node.__set_opcode(TExprOpcode::RT_FILTER);
         node.__isset.vector_opcode = true;
-        node.__set_vector_opcode(to_in_opcode(_column_return_type));
+        node.__set_vector_opcode(TExprOpcode::FILTER_IN);
         node.__set_is_nullable(false);
         auto bloom_pred = _pool->add(vectorized::VBloomPredicate::create_unique(node).release());
         bloom_pred->set_filter(_context.bloom_filter_func);
@@ -1963,7 +1968,7 @@ Status RuntimePredicateWrapper::get_push_vexprs(std::vector<vectorized::VExpr*>*
         node.__set_node_type(TExprNodeType::BITMAP_PRED);
         node.__set_opcode(TExprOpcode::RT_FILTER);
         node.__isset.vector_opcode = true;
-        node.__set_vector_opcode(to_in_opcode(_column_return_type));
+        node.__set_vector_opcode(TExprOpcode::FILTER_IN);
         node.__set_is_nullable(false);
         auto bitmap_pred = _pool->add(vectorized::VBitmapPredicate::create_unique(node).release());
         bitmap_pred->set_filter(_context.bitmap_filter_func);

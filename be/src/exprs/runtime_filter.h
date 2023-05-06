@@ -111,7 +111,7 @@ struct RuntimeFilterParams {
               bitmap_filter_not_in(false) {}
 
     RuntimeFilterType filter_type;
-    PrimitiveType column_return_type;
+    vectorized::DataTypePtr column_return_type;
     // used in bloom filter
     int64_t bloom_filter_size;
     int32_t max_in_num;
@@ -305,8 +305,10 @@ public:
 
     void ready_for_publish();
 
-    static bool enable_use_batch(bool use_batch, PrimitiveType type) {
-        return use_batch && (is_int_or_bool(type) || is_float_or_double(type));
+    static bool enable_use_batch(bool use_batch, vectorized::DataTypePtr data_type) {
+        // Why decimal not use batch
+        return use_batch && (vectorized::WhichDataType(data_type).is_int() ||
+                             vectorized::WhichDataType(data_type).is_float());
     }
 
     int filter_id() const { return _filter_id; }
