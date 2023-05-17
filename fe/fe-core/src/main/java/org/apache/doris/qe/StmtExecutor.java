@@ -399,9 +399,11 @@ public class StmtExecutor {
     }
 
     public void execute(TUniqueId queryId) throws Exception {
+        SessionVariable sessionVariable = context.getSessionVariable();
         // If a statement has limit, but not have order by, then this statement is from spotfire
         // spotfire will add select xxx (xxx) as xxx limit offset,length.
-        if (parsedStmt instanceof SelectStmt) {
+        if (parsedStmt instanceof SelectStmt && sessionVariable.getMaxExecutionTimeMS() > 0
+                && sessionVariable.getEnableRewriteLimit()) {
             SelectStmt selectStmt = (SelectStmt) parsedStmt;
             // If has limit and not have order by, this is from BI spotfire because limit without order
             // by clause is unstable, user should not write this query.
@@ -415,7 +417,6 @@ public class StmtExecutor {
                 }
             }
         }
-        SessionVariable sessionVariable = context.getSessionVariable();
         Span executeSpan = context.getTracer().spanBuilder("execute").setParent(Context.current()).startSpan();
         try (Scope scope = executeSpan.makeCurrent()) {
             if (parsedStmt instanceof LogicalPlanAdapter
