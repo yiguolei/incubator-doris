@@ -399,6 +399,22 @@ public class StmtExecutor {
     }
 
     public void execute(TUniqueId queryId) throws Exception {
+        // If a statement has limit, but not have order by, then this statement is from spotfire
+        // spotfire will add select xxx (xxx) as xxx limit offset,length.
+        if (parsedStmt instanceof SelectStmt) {
+            SelectStmt selectStmt = (SelectStmt) parsedStmt;
+            // If has limit and not have order by, this is from BI spotfire because limit without order
+            // by clause is unstable, user should not write this query.
+            if (selectStmt.hasLimitClause() && selectStmt.getOrderByElements() == null) {
+                if (selectStmt.getOffset() == 0) {
+                    // This is the first batch, then we treat it as a total data, just remote limit clause
+                    selectStmt.removeLimitElement();
+                } else {
+                    // This is the second batch, then just treat it as empty, to indicate finished pull data
+                    selectStmt.setLimit(0);
+                }
+            }
+        }
         SessionVariable sessionVariable = context.getSessionVariable();
         Span executeSpan = context.getTracer().spanBuilder("execute").setParent(Context.current()).startSpan();
         try (Scope scope = executeSpan.makeCurrent()) {
