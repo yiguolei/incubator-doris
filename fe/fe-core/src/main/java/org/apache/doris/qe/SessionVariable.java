@@ -374,7 +374,7 @@ public class SessionVariable implements Serializable, Writable {
     // no MAX_EXECUTION_TIME(N) optimizer hint or for which N is 0.
     // https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html
     // So that it is == query timeout in doris
-    @VariableMgr.VarAttr(name = MAX_EXECUTION_TIME, fuzzy = true)
+    @VariableMgr.VarAttr(name = MAX_EXECUTION_TIME, fuzzy = true, setter = "setMaxExecutionTimeMS")
     public int maxExecutionTimeMS = -1;
 
     @VariableMgr.VarAttr(name = ENABLE_REWRITE_LIMIT)
@@ -1233,6 +1233,11 @@ public class SessionVariable implements Serializable, Writable {
 
     public void setMaxExecutionTimeMS(int maxExecutionTimeMS) {
         this.maxExecutionTimeMS = maxExecutionTimeMS;
+        this.queryTimeoutS = this.maxExecutionTimeMS / 1000;
+    }
+
+    public void setMaxExecutionTimeMS(String maxExecutionTimeMS) {
+        this.maxExecutionTimeMS = Integer.valueOf(maxExecutionTimeMS);
         this.queryTimeoutS = this.maxExecutionTimeMS / 1000;
     }
 
