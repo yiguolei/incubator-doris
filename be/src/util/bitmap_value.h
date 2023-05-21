@@ -1155,15 +1155,33 @@ public:
         DCHECK(res);
     }
 
-    BitmapValue(const BitmapValue&) = default;
+    BitmapValue(const BitmapValue& other) {
+        _type = other._type;
+        _sv = other._sv;
+        _bitmap = other._bitmap;
+        _is_shared = true;
+        // should also set other's state to shared, so that other bitmapvalue will
+        // create a new bitmap when it wants to modify it.
+        std::const_cast<BitmapValue&>(other)._is_shared = true;
+    }
 
     BitmapValue(BitmapValue&& other) {
         _type = other._type;
         _sv = other._sv;
         _bitmap = std::move(other._bitmap);
+        _is_shared = other._is_shared;
     }
 
-    BitmapValue& operator=(const BitmapValue&) = default;
+    BitmapValue& operator=(const BitmapValue& other) {
+        _type = other._type;
+        _sv = other._sv;
+        _bitmap = other._bitmap;
+        _is_shared = true;
+        // should also set other's state to shared, so that other bitmapvalue will
+        // create a new bitmap when it wants to modify it.
+        std::const_cast<BitmapValue&>(other)._is_shared = true;
+        return *this;
+    }
 
     BitmapValue& operator=(BitmapValue&& other) {
         if (this == &other) {
@@ -1173,6 +1191,7 @@ public:
         _type = other._type;
         _sv = other._sv;
         _bitmap = std::move(other._bitmap);
+        _is_shared = other._is_shared;
         return *this;
     }
 
@@ -1918,11 +1937,20 @@ private:
             return;
         }
 
+        if (!_is_shared) {
+            // the state is not shared, not need to check use count any more
+            return;
+        }
+
         if (_bitmap.use_count() > 1) {
             auto new_one = std::make_shared<detail::Roaring64Map>();
             *new_one = *_bitmap;
             _bitmap = new_one;
+            _is_shared = false;
+        } else {
+            _is_shared = false;
         }
+        return;
     }
 
     enum BitmapDataType {
@@ -1933,6 +1961,8 @@ private:
     uint64_t _sv = 0;                              // store the single value when _type == SINGLE
     std::shared_ptr<detail::Roaring64Map> _bitmap; // used when _type == BITMAP
     BitmapDataType _type {EMPTY};
+    // Indicate whether the state is shared among multi BitmapValue object
+    bool _is_shared = true;
 };
 
 // A simple implement of bitmap value iterator(Read only)
