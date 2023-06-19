@@ -62,11 +62,11 @@ public:
 
     void release_resource(doris::RuntimeState* state) override;
 
-    Status sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
 
-    Status push(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_push(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
 
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
 
     bool need_more_input_data() const;
 

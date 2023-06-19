@@ -60,7 +60,8 @@ Status VAssertNumRowsNode::open(RuntimeState* state) {
     return Status::OK();
 }
 
-Status VAssertNumRowsNode::pull(doris::RuntimeState* state, vectorized::Block* block, bool* eos) {
+Status VAssertNumRowsNode::do_pull(doris::RuntimeState* state, vectorized::Block* block,
+                                   bool* eos) {
     _num_rows_returned += block->rows();
     bool assert_res = false;
     switch (_assertion) {
@@ -115,7 +116,7 @@ Status VAssertNumRowsNode::get_next(RuntimeState* state, Block* block, bool* eos
                       _children[0], std::placeholders::_1, std::placeholders::_2,
                       std::placeholders::_3)));
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
 } // namespace doris::vectorized

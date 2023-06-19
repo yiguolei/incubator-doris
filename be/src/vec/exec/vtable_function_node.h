@@ -69,7 +69,7 @@ public:
         ExecNode::release_resource(state);
     }
 
-    Status push(RuntimeState*, Block* input_block, bool eos) override {
+    Status do_push(RuntimeState*, Block* input_block, bool eos) override {
         _child_eos = eos;
         if (input_block->rows() == 0) {
             return Status::OK();
@@ -82,7 +82,7 @@ public:
         return Status::OK();
     }
 
-    Status pull(RuntimeState* state, Block* output_block, bool* eos) override {
+    Status do_pull(RuntimeState* state, Block* output_block, bool* eos) override {
         RETURN_IF_ERROR(_get_expanded_block(state, output_block, eos));
         reached_limit(output_block, eos);
         return Status::OK();

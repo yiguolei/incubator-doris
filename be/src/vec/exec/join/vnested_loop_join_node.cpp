@@ -187,7 +187,7 @@ Status VNestedLoopJoinNode::_materialize_build_side(RuntimeState* state) {
                               std::placeholders::_3)));
         }
 
-        sink(state, &block, eos);
+        do_sink(state, &block, eos);
 
         if (eos) {
             break;
@@ -197,7 +197,8 @@ Status VNestedLoopJoinNode::_materialize_build_side(RuntimeState* state) {
     return Status::OK();
 }
 
-Status VNestedLoopJoinNode::sink(doris::RuntimeState* state, vectorized::Block* block, bool eos) {
+Status VNestedLoopJoinNode::do_sink(doris::RuntimeState* state, vectorized::Block* block,
+                                    bool eos) {
     SCOPED_TIMER(_build_timer);
     auto rows = block->rows();
     auto mem_usage = block->allocated_bytes();
@@ -226,7 +227,8 @@ Status VNestedLoopJoinNode::sink(doris::RuntimeState* state, vectorized::Block* 
     return Status::OK();
 }
 
-Status VNestedLoopJoinNode::push(doris::RuntimeState* state, vectorized::Block* block, bool eos) {
+Status VNestedLoopJoinNode::do_push(doris::RuntimeState* state, vectorized::Block* block,
+                                    bool eos) {
     COUNTER_UPDATE(_probe_rows_counter, block->rows());
     _cur_probe_row_visited_flags.resize(block->rows());
     std::fill(_cur_probe_row_visited_flags.begin(), _cur_probe_row_visited_flags.end(), 0);
@@ -270,10 +272,10 @@ Status VNestedLoopJoinNode::get_next(RuntimeState* state, Block* block, bool* eo
 
     while (need_more_input_data()) {
         RETURN_IF_ERROR(_fresh_left_block(state));
-        push(state, &_left_block, _left_side_eos);
+        do_push(state, &_left_block, _left_side_eos);
     }
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
 void VNestedLoopJoinNode::_append_left_data_with_null(MutableBlock& mutable_block) const {
@@ -660,7 +662,7 @@ void VNestedLoopJoinNode::_release_mem() {
     _tuple_is_null_right_flag_column = nullptr;
 }
 
-Status VNestedLoopJoinNode::pull(RuntimeState* state, vectorized::Block* block, bool* eos) {
+Status VNestedLoopJoinNode::do_pull(RuntimeState* state, vectorized::Block* block, bool* eos) {
     if (_is_output_left_side_only) {
         RETURN_IF_ERROR(_build_output_block(&_left_block, block));
         *eos = _left_side_eos;

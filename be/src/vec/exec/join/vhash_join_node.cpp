@@ -521,7 +521,8 @@ void HashJoinNode::prepare_for_next() {
     _prepare_probe_block();
 }
 
-Status HashJoinNode::pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) {
+Status HashJoinNode::do_pull(doris::RuntimeState* state, vectorized::Block* output_block,
+                             bool* eos) {
     SCOPED_TIMER(_probe_timer);
     if (_short_circuit_for_probe) {
         // If we use a short-circuit strategy, should return empty block directly.
@@ -617,7 +618,7 @@ Status HashJoinNode::pull(doris::RuntimeState* state, vectorized::Block* output_
     return Status::OK();
 }
 
-Status HashJoinNode::push(RuntimeState* /*state*/, vectorized::Block* input_block, bool eos) {
+Status HashJoinNode::do_push(RuntimeState* /*state*/, vectorized::Block* input_block, bool eos) {
     _probe_eos = eos;
     if (input_block->rows() > 0) {
         COUNTER_UPDATE(_probe_rows_counter, input_block->rows());
@@ -686,10 +687,10 @@ Status HashJoinNode::get_next(RuntimeState* state, Block* output_block, bool* eo
                           _children[0], std::placeholders::_1, std::placeholders::_2,
                           std::placeholders::_3)));
 
-        RETURN_IF_ERROR(push(state, &_probe_block, _probe_eos));
+        RETURN_IF_ERROR(do_push(state, &_probe_block, _probe_eos));
     }
 
-    return pull(state, output_block, eos);
+    return do_pull(state, output_block, eos);
 }
 
 void HashJoinNode::_add_tuple_is_null_column(Block* block) {
@@ -789,17 +790,17 @@ Status HashJoinNode::_materialize_build_side(RuntimeState* state) {
                                   _children[1], std::placeholders::_1, std::placeholders::_2,
                                   std::placeholders::_3)));
             }
-            RETURN_IF_ERROR(sink(state, &block, eos));
+            RETURN_IF_ERROR(do_sink(state, &block, eos));
         }
         RETURN_IF_ERROR(child(1)->close(state));
     } else {
         RETURN_IF_ERROR(child(1)->close(state));
-        RETURN_IF_ERROR(sink(state, nullptr, true));
+        RETURN_IF_ERROR(do_sink(state, nullptr, true));
     }
     return Status::OK();
 }
 
-Status HashJoinNode::sink(doris::RuntimeState* state, vectorized::Block* in_block, bool eos) {
+Status HashJoinNode::do_sink(doris::RuntimeState* state, vectorized::Block* in_block, bool eos) {
     SCOPED_TIMER(_build_timer);
 
     // make one block for each 4 gigabytes

@@ -39,7 +39,7 @@ public:
 
     Status open(RuntimeState* state) override;
     Status get_next(RuntimeState* state, Block* block, bool* eos) override;
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
 
 private:
     int64_t _desired_num_rows;
