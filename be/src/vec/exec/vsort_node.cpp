@@ -135,7 +135,7 @@ Status VSortNode::alloc_resource(doris::RuntimeState* state) {
     return Status::OK();
 }
 
-Status VSortNode::sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
+Status VSortNode::do_sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
     if (input_block->rows() > 0) {
         RETURN_IF_ERROR(_sorter->append_block(input_block));
         RETURN_IF_CANCELLED(state);
@@ -187,7 +187,7 @@ Status VSortNode::open(RuntimeState* state) {
         }
         {
             SCOPED_TIMER(_sink_timer);
-            RETURN_IF_ERROR_OR_CATCH_EXCEPTION(sink(state, upstream_block.get(), eos));
+            RETURN_IF_ERROR_OR_CATCH_EXCEPTION(do_sink(state, upstream_block.get(), eos));
         }
 
     } while (!eos);
@@ -200,8 +200,7 @@ Status VSortNode::open(RuntimeState* state) {
     return Status::OK();
 }
 
-Status VSortNode::pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) {
-    SCOPED_TIMER(_get_next_timer);
+Status VSortNode::do_pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) {
     RETURN_IF_ERROR_OR_CATCH_EXCEPTION(_sorter->get_next(state, output_block, eos));
     reached_limit(output_block, eos);
     if (*eos) {
@@ -213,7 +212,7 @@ Status VSortNode::pull(doris::RuntimeState* state, vectorized::Block* output_blo
 Status VSortNode::get_next(RuntimeState* state, Block* block, bool* eos) {
     SCOPED_TIMER(_runtime_profile->total_time_counter());
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
 Status VSortNode::reset(RuntimeState* state) {

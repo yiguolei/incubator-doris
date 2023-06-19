@@ -70,10 +70,10 @@ Status VSelectNode::get_next(RuntimeState* state, vectorized::Block* block, bool
         }
     } while (block->rows() == 0);
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
-Status VSelectNode::pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) {
+Status VSelectNode::do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) {
     RETURN_IF_CANCELLED(state);
     RETURN_IF_ERROR(VExprContext::filter_block(_conjuncts, output_block, output_block->columns()));
     reached_limit(output_block, eos);

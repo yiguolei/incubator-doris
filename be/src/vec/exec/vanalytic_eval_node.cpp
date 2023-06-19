@@ -262,8 +262,8 @@ Status VAnalyticEvalNode::alloc_resource(RuntimeState* state) {
     return Status::OK();
 }
 
-Status VAnalyticEvalNode::pull(doris::RuntimeState* /*state*/, vectorized::Block* output_block,
-                               bool* eos) {
+Status VAnalyticEvalNode::do_pull(doris::RuntimeState* /*state*/, vectorized::Block* output_block,
+                                  bool* eos) {
     if (_input_eos && (_output_block_index == _input_blocks.size() || _input_total_rows == 0)) {
         *eos = true;
         return Status::OK();
@@ -534,12 +534,12 @@ Status VAnalyticEvalNode::_fetch_next_block_data(RuntimeState* state) {
                           std::placeholders::_3)));
     } while (!_input_eos && block.rows() == 0);
 
-    RETURN_IF_ERROR(sink(state, &block, _input_eos));
+    RETURN_IF_ERROR(do_sink(state, &block, _input_eos));
     return Status::OK();
 }
 
-Status VAnalyticEvalNode::sink(doris::RuntimeState* /*state*/, vectorized::Block* input_block,
-                               bool eos) {
+Status VAnalyticEvalNode::do_sink(doris::RuntimeState* /*state*/, vectorized::Block* input_block,
+                                  bool eos) {
     _input_eos = eos;
     if (_input_eos && input_block->rows() == 0) {
         _need_more_input = false;

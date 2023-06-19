@@ -845,8 +845,8 @@ public:
     Status get_next(RuntimeState* state, Block* block, bool* eos) override;
     Status close(RuntimeState* state) override;
     void release_resource(RuntimeState* state) override;
-    Status pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
-    Status sink(doris::RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_sink(doris::RuntimeState* state, vectorized::Block* input_block, bool eos) override;
     Status do_pre_agg(vectorized::Block* input_block, vectorized::Block* output_block);
     bool is_streaming_preagg() const { return _is_streaming_preagg; }
     bool is_aggregate_evaluators_empty() const { return _aggregate_evaluators.empty(); }

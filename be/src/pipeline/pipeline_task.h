@@ -311,6 +311,8 @@ private:
     // TODO we should calculate the time between when really runnable and runnable
     MonotonicStopWatch _wait_schedule_watcher;
     RuntimeProfile::Counter* _wait_schedule_timer;
+    MonotonicStopWatch _wait_dependency_watcher;
+    RuntimeProfile::Counter* _wait_dependency_timer;
     RuntimeProfile::Counter* _yield_counts;
     RuntimeProfile::Counter* _core_change_times;
 

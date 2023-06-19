@@ -36,7 +36,7 @@ public:
     Status open(RuntimeState* state) override;
     Status get_next(RuntimeState* state, vectorized::Block* block, bool* eos) override;
     Status close(RuntimeState* state) override;
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
 
 private:
     // true if last get_next() call on child signalled eos

@@ -40,6 +40,8 @@ class NestLoopJoinBuildOperator final : public StreamingOperator<NestLoopJoinBui
 public:
     NestLoopJoinBuildOperator(OperatorBuilderBase* operator_builder, ExecNode* node);
     bool can_write() override { return true; }
+    // build is not on critital path, should not update total time counter
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {}
 };
 
 } // namespace pipeline

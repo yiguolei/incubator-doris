@@ -237,10 +237,10 @@ public:
 
     Status alloc_resource(RuntimeState* state) override;
     void release_resource(RuntimeState* state) override;
-    Status sink(doris::RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_sink(doris::RuntimeState* state, vectorized::Block* input_block, bool eos) override;
     bool need_more_input_data() const;
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
-    Status push(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_push(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
     void prepare_for_next() override;
 
     void debug_string(int indentation_level, std::stringstream* out) const override;

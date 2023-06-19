@@ -451,8 +451,8 @@ public:
     Status get_next(RuntimeState* state, Block* block, bool* eos) override;
     Status close(RuntimeState* state) override;
 
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
-    Status sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
 
     void debug_profile();
     bool can_read();

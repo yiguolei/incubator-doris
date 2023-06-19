@@ -148,10 +148,10 @@ Status VTableFunctionNode::get_next(RuntimeState* state, Block* block, bool* eos
                           _children[0], std::placeholders::_1, std::placeholders::_2,
                           std::placeholders::_3)));
 
-        RETURN_IF_ERROR(push(state, &_child_block, _child_eos));
+        RETURN_IF_ERROR(do_push(state, &_child_block, _child_eos));
     }
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
 Status VTableFunctionNode::_get_expanded_block(RuntimeState* state, Block* output_block,

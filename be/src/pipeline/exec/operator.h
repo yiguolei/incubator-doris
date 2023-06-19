@@ -43,15 +43,13 @@ class RuntimeState;
 class TDataSink;
 } // namespace doris
 
-#define OPERATOR_CODE_GENERATOR(NAME, SUBCLASS)                       \
-    NAME##Builder::NAME##Builder(int32_t id, ExecNode* exec_node)     \
-            : OperatorBuilder(id, #NAME, exec_node) {}                \
-                                                                      \
-    OperatorPtr NAME##Builder::build_operator() {                     \
-        return std::make_shared<NAME>(this, _node);                   \
-    }                                                                 \
-                                                                      \
-    NAME::NAME(OperatorBuilderBase* operator_builder, ExecNode* node) \
+#define OPERATOR_CODE_GENERATOR(NAME, SUBCLASS)                                                 \
+    NAME##Builder::NAME##Builder(int32_t id, ExecNode* exec_node)                               \
+            : OperatorBuilder(id, #NAME, exec_node) {}                                          \
+                                                                                                \
+    OperatorPtr NAME##Builder::build_operator() { return std::make_shared<NAME>(this, _node); } \
+                                                                                                \
+    NAME::NAME(OperatorBuilderBase* operator_builder, ExecNode* node)                           \
             : SUBCLASS(operator_builder, node) {};
 
 namespace doris::pipeline {
@@ -221,6 +219,8 @@ public:
         return Status::NotSupported(error_msg.str());
     }
 
+    virtual void update_profile(PipelineTaskTimer& pipeline_task_timer) {}
+
     /**
      * pending_finish means we have called `close` and there are still some work to do before finishing.
      * Now it is a pull-based pipeline and operators pull data from its child by this method.
@@ -303,6 +303,11 @@ public:
 
     [[nodiscard]] RuntimeProfile* get_runtime_profile() const override { return _sink->profile(); }
 
+    // Should add wait sink time to all sink node
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {
+        _sink->profile()->total_time_counter()->update(pipeline_task_timer.wait_sink_time);
+    }
+
 protected:
     NodeType* _sink;
 };
@@ -370,6 +375,11 @@ public:
         return _node->runtime_profile();
     }
 
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {
+        _node->runtime_profile()->total_time_counter()->update(
+                pipeline_task_timer.wait_source_time + pipeline_task_timer.wait_dependency_time);
+    }
+
 protected:
     NodeType* _node;
     bool _use_projection;
@@ -397,6 +407,9 @@ public:
         source_state = eos ? SourceState::FINISHED : SourceState::DEPEND_ON_SOURCE;
         return Status::OK();
     }
+
+    // In most scenarios, source operator does not do anything.
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {}
 };
 
 /**
@@ -452,6 +465,13 @@ public:
             }
         }
         return Status::OK();
+    }
+
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {
+        StreamingOperator<OperatorBuilderType>::_node->runtime_profile()
+                ->total_time_counter()
+                ->update(pipeline_task_timer.wait_source_time +
+                         pipeline_task_timer.wait_dependency_time);
     }
 
 protected:

@@ -257,7 +257,7 @@ template <bool is_intersect>
 Status VSetOperationNode<is_intersect>::get_next(RuntimeState* state, Block* output_block,
                                                  bool* eos) {
     SCOPED_TIMER(_runtime_profile->total_time_counter());
-    return pull(state, output_block, eos);
+    return do_pull(state, output_block, eos);
 }
 
 template <bool is_intersect>
@@ -381,7 +381,7 @@ void VSetOperationNode<is_intersect>::hash_table_init() {
 }
 
 template <bool is_intersect>
-Status VSetOperationNode<is_intersect>::sink(RuntimeState* state, Block* block, bool eos) {
+Status VSetOperationNode<is_intersect>::do_sink(RuntimeState* state, Block* block, bool eos) {
     constexpr static auto BUILD_BLOCK_MAX_SIZE = 4 * 1024UL * 1024UL * 1024UL;
 
     if (block->rows() != 0) {
@@ -417,7 +417,8 @@ Status VSetOperationNode<is_intersect>::sink(RuntimeState* state, Block* block, 
 }
 
 template <bool is_intersect>
-Status VSetOperationNode<is_intersect>::pull(RuntimeState* state, Block* output_block, bool* eos) {
+Status VSetOperationNode<is_intersect>::do_pull(RuntimeState* state, Block* output_block,
+                                                bool* eos) {
     SCOPED_TIMER(_pull_timer);
     create_mutable_cols(output_block);
     auto st = std::visit(
@@ -456,7 +457,7 @@ Status VSetOperationNode<is_intersect>::hash_table_build(RuntimeState* state) {
         if (eos) {
             child(0)->close(state);
         }
-        sink(state, &block, eos);
+        do_sink(state, &block, eos);
     }
 
     return Status::OK();

@@ -42,6 +42,17 @@ public:
     ExchangeSourceOperator(OperatorBuilderBase*, ExecNode*);
     bool can_read() override;
     bool is_pending_finish() const override;
+
+    // Should add wait source time to exchange node
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {
+        StreamingOperator<ExchangeSourceOperatorBuilder>::_node->runtime_profile()
+                ->total_time_counter()
+                ->update(pipeline_task_timer.wait_source_time +
+                         pipeline_task_timer.wait_dependency_time);
+
+        StreamingOperator<ExchangeSourceOperatorBuilder>::_node->update_wait_source_time(
+                pipeline_task_timer.wait_source_time);
+    }
 };
 
 } // namespace doris::pipeline

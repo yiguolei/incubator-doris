@@ -535,7 +535,7 @@ Status AggregationNode::open(RuntimeState* state) {
                                   ExecNode::get_next,
                           _children[0], std::placeholders::_1, std::placeholders::_2,
                           std::placeholders::_3)));
-        RETURN_IF_ERROR(sink(state, &block, eos));
+        RETURN_IF_ERROR(do_sink(state, &block, eos));
     }
     _children[0]->close(state);
 
@@ -572,16 +572,16 @@ Status AggregationNode::get_next(RuntimeState* state, Block* block, bool* eos) {
             if (_preagg_block.rows() != 0) {
                 RETURN_IF_ERROR(do_pre_agg(&_preagg_block, block));
             } else {
-                RETURN_IF_ERROR(pull(state, block, eos));
+                RETURN_IF_ERROR(do_pull(state, block, eos));
             }
         }
     } else {
-        RETURN_IF_ERROR(pull(state, block, eos));
+        RETURN_IF_ERROR(do_pull(state, block, eos));
     }
     return Status::OK();
 }
 
-Status AggregationNode::pull(doris::RuntimeState* state, vectorized::Block* block, bool* eos) {
+Status AggregationNode::do_pull(doris::RuntimeState* state, vectorized::Block* block, bool* eos) {
     RETURN_IF_ERROR(_executor.get_result(state, block, eos));
     _make_nullable_output_key(block);
     // dispose the having clause, should not be execute in prestreaming agg
@@ -591,7 +591,7 @@ Status AggregationNode::pull(doris::RuntimeState* state, vectorized::Block* bloc
     return Status::OK();
 }
 
-Status AggregationNode::sink(doris::RuntimeState* state, vectorized::Block* in_block, bool eos) {
+Status AggregationNode::do_sink(doris::RuntimeState* state, vectorized::Block* in_block, bool eos) {
     if (in_block->rows() > 0) {
         RETURN_IF_ERROR(_executor.execute(in_block));
         RETURN_IF_ERROR(_try_spill_disk());

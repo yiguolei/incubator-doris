@@ -74,6 +74,13 @@ class TRuntimeProfileTree;
 
 class ObjectPool;
 
+// This class is used by pipeline task to populate the ExecNode's runtime profile
+struct PipelineTaskTimer {
+    int64_t wait_source_time;
+    int64_t wait_sink_time;
+    int64_t wait_dependency_time;
+};
+
 // Runtime profile is a group of profiling counters.  It supports adding named counters
 // and being able to serialize and deserialize them.
 // The profiles support a tree structure to form a hierarchy of counters.

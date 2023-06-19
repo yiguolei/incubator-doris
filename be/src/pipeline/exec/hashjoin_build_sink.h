@@ -40,6 +40,8 @@ public:
     HashJoinBuildSink(OperatorBuilderBase* operator_builder, ExecNode* node);
     bool can_write() override { return _node->can_sink_write(); }
     bool is_pending_finish() const override { return !_node->ready_for_finish(); }
+    // build is not on critital path, should not update total time counter
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {}
 };
 
 } // namespace pipeline

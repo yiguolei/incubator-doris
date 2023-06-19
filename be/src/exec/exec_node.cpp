@@ -531,6 +531,7 @@ std::string ExecNode::get_name() {
 }
 
 Status ExecNode::do_projections(vectorized::Block* origin_block, vectorized::Block* output_block) {
+    SCOPED_TIMER(_runtime_profile->total_time_counter());
     SCOPED_TIMER(_projection_timer);
     using namespace vectorized;
     MutableBlock mutable_block =
@@ -573,10 +574,6 @@ Status ExecNode::get_next_after_projects(
         return do_projections(&_origin_block, block);
     }
     return func(state, block, eos);
-}
-
-Status ExecNode::sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
-    return Status::NotSupported("{} not implements sink", get_name());
 }
 
 } // namespace doris

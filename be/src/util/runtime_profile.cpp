@@ -489,11 +489,11 @@ void RuntimeProfile::pretty_print(std::ostream* s, const std::string& prefix) co
     stream.flags(std::ios::fixed);
     stream << prefix << _name << ":";
 
-    if (total_time->second->value() != 0) {
-        stream << "(Active: "
-               << PrettyPrinter::print(total_time->second->value(), total_time->second->type())
-               << ", non-child: " << std::setprecision(2) << _local_time_percent << "%)";
-    }
+    //if (total_time->second->value() != 0) {
+    stream << "(Active: "
+           << PrettyPrinter::print(total_time->second->value(), total_time->second->type())
+           << ", non-child: " << std::setprecision(2) << _local_time_percent << "%)";
+    //}
 
     stream << std::endl;
 

@@ -51,6 +51,16 @@ public:
     std::string debug_string() const override;
 
     Status try_close(RuntimeState* state) override;
+
+    // Should add wait source time to scan node
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {
+        StreamingOperator<ScanOperatorBuilder>::_node->runtime_profile()
+                ->total_time_counter()
+                ->update(pipeline_task_timer.wait_source_time +
+                         pipeline_task_timer.wait_dependency_time);
+        StreamingOperator<ScanOperatorBuilder>::_node->update_wait_source_time(
+                pipeline_task_timer.wait_source_time);
+    }
 };
 
 } // namespace doris::pipeline

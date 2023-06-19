@@ -88,6 +88,11 @@ Status VExchangeNode::alloc_resource(RuntimeState* state) {
     return Status::OK();
 }
 
+// for exchange node, the wait source time is data arrival wait time in non pipeline mode
+void VExchangeNode::update_wait_source_time(int64_t delta) {
+    _stream_recvr->update_wait_source_time(delta);
+}
+
 Status VExchangeNode::open(RuntimeState* state) {
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     RETURN_IF_ERROR(ExecNode::open(state));

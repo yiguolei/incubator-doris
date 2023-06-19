@@ -66,8 +66,8 @@ public:
     Status alloc_resource(RuntimeState* state) override;
     void release_resource(RuntimeState* state) override;
 
-    Status sink(RuntimeState* state, Block* block, bool eos) override;
-    Status pull(RuntimeState* state, Block* output_block, bool* eos) override;
+    Status do_sink(RuntimeState* state, Block* block, bool eos) override;
+    Status do_pull(RuntimeState* state, Block* output_block, bool* eos) override;
 
     Status sink_probe(RuntimeState* state, int child_id, Block* block, bool eos);
 

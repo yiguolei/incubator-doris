@@ -159,7 +159,8 @@ public class RuntimeProfile {
     // preorder traversal, idx should be modified in the traversal process
     private void update(List<TRuntimeProfileNode> nodes, Reference<Integer> idx) {
         TRuntimeProfileNode node = nodes.get(idx.getRef());
-        // Make sure to update the latest LoadChannel profile according to the timestamp.
+        // Make sure to update the latest LoadChannel profile according to the
+        // timestamp.
         if (node.timestamp != -1 && node.timestamp < timestamp) {
             return;
         }
@@ -182,8 +183,7 @@ public class RuntimeProfile {
 
             if (node.child_counters_map != null) {
                 // update childCounters
-                for (Map.Entry<String, Set<String>> entry :
-                        node.child_counters_map.entrySet()) {
+                for (Map.Entry<String, Set<String>> entry : node.child_counters_map.entrySet()) {
                     String parentCounterName = entry.getKey();
 
                     counterLock.writeLock().lock();
@@ -245,24 +245,24 @@ public class RuntimeProfile {
     }
 
     // Print the profile:
-    //  1. Profile Name
-    //  2. Info Strings
-    //  3. Counters
-    //  4. Children
+    // 1. Profile Name
+    // 2. Info Strings
+    // 3. Counters
+    // 4. Children
     public void prettyPrint(StringBuilder builder, String prefix) {
         Counter counter = this.counterMap.get("TotalTime");
         Preconditions.checkState(counter != null);
         // 1. profile name
         builder.append(prefix).append(name).append(":");
         // total time
-        if (counter.getValue() != 0) {
-            try (Formatter fmt = new Formatter()) {
-                builder.append("(Active: ")
-                        .append(this.printCounter(counter.getValue(), counter.getType()))
-                        .append(", % non-child: ").append(fmt.format("%.2f", localTimePercent))
-                        .append("%)");
-            }
+        // if (counter.getValue() != 0) {
+        try (Formatter fmt = new Formatter()) {
+            builder.append("(Active: ")
+                    .append(this.printCounter(counter.getValue(), counter.getType()))
+                    .append(", % non-child: ").append(fmt.format("%.2f", localTimePercent))
+                    .append("%)");
         }
+        // }
         builder.append("\n");
 
         // 2. info String
@@ -440,7 +440,8 @@ public class RuntimeProfile {
         }
     }
 
-    // Because the profile of summary and child fragment is not a real parent-child relationship
+    // Because the profile of summary and child fragment is not a real parent-child
+    // relationship
     // Each child profile needs to calculate the time proportion consumed by itself
     public void computeTimeInChildProfile() {
         childMap.values().forEach(RuntimeProfile::computeTimeInProfile);
@@ -485,8 +486,10 @@ public class RuntimeProfile {
             this.childList.sort((profile1, profile2) -> Long.compare(profile2.first.getCounterTotalTime().getValue(),
                     profile1.first.getCounterTotalTime().getValue()));
         } catch (IllegalArgumentException e) {
-            // This exception may be thrown if the counter total time of the child is updated in the update method
-            // during the sorting process. This sorting only affects the profile instance display order, so this
+            // This exception may be thrown if the counter total time of the child is
+            // updated in the update method
+            // during the sorting process. This sorting only affects the profile instance
+            // display order, so this
             // exception is temporarily ignored here.
             if (LOG.isDebugEnabled()) {
                 LOG.debug("sort child list error: ", e);
@@ -523,4 +526,3 @@ public class RuntimeProfile {
         return infoStrings;
     }
 }
-

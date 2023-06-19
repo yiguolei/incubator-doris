@@ -49,6 +49,8 @@ public:
 
     bool can_write() override { return true; }
 
+    void update_profile(PipelineTaskTimer& pipeline_task_timer) override {}
+
 private:
     vectorized::VSetOperationNode<is_intersect>* _set_node;
 };

@@ -171,7 +171,8 @@ Status VRepeatNode::get_repeated_block(Block* child_block, int repeat_id_idx, Bl
     return Status::OK();
 }
 
-Status VRepeatNode::pull(doris::RuntimeState* state, vectorized::Block* output_block, bool* eos) {
+Status VRepeatNode::do_pull(doris::RuntimeState* state, vectorized::Block* output_block,
+                            bool* eos) {
     RETURN_IF_CANCELLED(state);
     DCHECK(_repeat_id_idx >= 0);
     for (const std::vector<int64_t>& v : _grouping_list) {
@@ -199,7 +200,7 @@ Status VRepeatNode::pull(doris::RuntimeState* state, vectorized::Block* output_b
     return Status::OK();
 }
 
-Status VRepeatNode::push(RuntimeState* state, vectorized::Block* input_block, bool eos) {
+Status VRepeatNode::do_push(RuntimeState* state, vectorized::Block* input_block, bool eos) {
     _child_eos = eos;
     DCHECK(!_intermediate_block || _intermediate_block->rows() == 0);
     DCHECK(!_expr_ctxs.empty());
@@ -247,10 +248,10 @@ Status VRepeatNode::get_next(RuntimeState* state, Block* block, bool* eos) {
                           _children[0], std::placeholders::_1, std::placeholders::_2,
                           std::placeholders::_3)));
 
-        push(state, &_child_block, _child_eos);
+        do_push(state, &_child_block, _child_eos);
     }
 
-    return pull(state, block, eos);
+    return do_pull(state, block, eos);
 }
 
 Status VRepeatNode::close(RuntimeState* state) {

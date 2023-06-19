@@ -70,9 +70,9 @@ public:
 
     void release_resource(RuntimeState* state) override;
 
-    Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
+    Status do_pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) override;
 
-    Status sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
+    Status do_sink(RuntimeState* state, vectorized::Block* input_block, bool eos) override;
 
 protected:
     void debug_string(int indentation_level, std::stringstream* out) const override;

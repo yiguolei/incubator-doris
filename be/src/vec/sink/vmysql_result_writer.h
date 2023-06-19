@@ -58,14 +58,6 @@ public:
 private:
     void _init_profile();
 
-    template <PrimitiveType type, bool is_nullable>
-    Status _add_one_column(const ColumnPtr& column_ptr, std::unique_ptr<TFetchDataResult>& result,
-                           std::vector<MysqlRowBuffer<is_binary_format>>& rows_buffer,
-                           bool arg_const, int scale = -1,
-                           const DataTypes& sub_types = DataTypes());
-    int _add_one_cell(const ColumnPtr& column_ptr, size_t row_idx, const DataTypePtr& type,
-                      MysqlRowBuffer<is_binary_format>& buffer, int scale = -1);
-
     BufferControlBlock* _sinker;
 
     const VExprContextSPtrs& _output_vexpr_ctxs;

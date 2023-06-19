@@ -132,12 +132,12 @@ protected:
     MutableColumnPtr _tuple_is_null_left_flag_column;
     MutableColumnPtr _tuple_is_null_right_flag_column;
 
-    RuntimeProfile* _build_phase_profile;
+    RuntimeProfile::Counter* _build_phase_profile;
     RuntimeProfile::Counter* _build_timer;
     RuntimeProfile::Counter* _build_get_next_timer;
     RuntimeProfile::Counter* _build_rows_counter;
 
-    RuntimeProfile* _probe_phase_profile;
+    RuntimeProfile::Counter* _probe_phase_profile;
     RuntimeProfile::Counter* _probe_timer;
     RuntimeProfile::Counter* _probe_rows_counter;
     RuntimeProfile::Counter* _push_down_timer;

@@ -83,6 +83,8 @@ public:
     bool sender_queue_empty(int sender_id);
 
     bool ready_to_read();
+    // for exchange node, the wait source time is data arrival wait time in non pipeline mode
+    void update_wait_source_time(int64_t delta) { _data_arrival_timer->update(delta); }
 
     Status get_next(Block* block, bool* eos);
 

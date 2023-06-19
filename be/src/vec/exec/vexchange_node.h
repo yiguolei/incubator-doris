@@ -55,6 +55,7 @@ public:
     Status open(RuntimeState* state) override;
     Status get_next(RuntimeState* state, Block* row_batch, bool* eos) override;
     void release_resource(RuntimeState* state) override;
+    void update_wait_source_time(int64_t delta);
     Status collect_query_statistics(QueryStatistics* statistics) override;
     Status close(RuntimeState* state) override;
 

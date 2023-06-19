@@ -72,6 +72,7 @@ void PipelineTask::_fresh_profile_counter() {
     COUNTER_SET(_src_pending_finish_over_timer, _src_pending_finish_over_time);
     COUNTER_SET(_dst_pending_finish_over_timer, _dst_pending_finish_over_time);
     COUNTER_SET(_pip_task_total_timer, (int64_t)_pipeline_task_watcher.elapsed_time());
+    COUNTER_SET(_wait_dependency_timer, (int64_t)_wait_dependency_watcher.elapsed_time());
 }
 
 void PipelineTask::_init_profile() {
@@ -98,6 +99,7 @@ void PipelineTask::_init_profile() {
     _wait_sink_timer = ADD_TIMER(_task_profile, "WaitSinkTime");
     _wait_worker_timer = ADD_TIMER(_task_profile, "WaitWorkerTime");
     _wait_schedule_timer = ADD_TIMER(_task_profile, "WaitScheduleTime");
+    _wait_dependency_timer = ADD_TIMER(_task_profile, "WaitDependencyTime");
     _block_counts = ADD_COUNTER(_task_profile, "NumBlockedTimes", TUnit::UNIT);
     _block_by_source_counts = ADD_COUNTER(_task_profile, "NumBlockedBySrcTimes", TUnit::UNIT);
     _block_by_sink_counts = ADD_COUNTER(_task_profile, "NumBlockedBySinkTimes", TUnit::UNIT);
@@ -279,6 +281,16 @@ Status PipelineTask::finalize() {
             _task_queue->update_statistics(this, _finalize_timer->value());
         }
     }};
+
+    // propagate wait_source_time, wait_sink_time, wait_dependency_time to all nodes
+    PipelineTaskTimer pipeline_task_timer;
+    pipeline_task_timer.wait_dependency_time = (int64_t)_wait_dependency_watcher.elapsed_time();
+    pipeline_task_timer.wait_source_time = (int64_t)_wait_source_watcher.elapsed_time();
+    pipeline_task_timer.wait_sink_time = (int64_t)_wait_sink_watcher.elapsed_time();
+    for (auto& optor : _operators) {
+        optor->update_profile(pipeline_task_timer);
+    }
+    _sink->update_profile(pipeline_task_timer);
     SCOPED_TIMER(_finalize_timer);
     return _sink->finalize(_state);
 }
@@ -342,6 +354,10 @@ void PipelineTask::set_state(PipelineTaskState state) {
         if (state == PipelineTaskState::RUNNABLE) {
             _wait_bf_watcher.stop();
         }
+    } else if (_cur_state == PipelineTaskState::BLOCKED_FOR_DEPENDENCY) {
+        if (state == PipelineTaskState::RUNNABLE) {
+            _wait_dependency_watcher.stop();
+        }
     } else if (_cur_state == PipelineTaskState::RUNNABLE) {
         COUNTER_UPDATE(_block_counts, 1);
         if (state == PipelineTaskState::BLOCKED_FOR_SOURCE) {
@@ -352,6 +368,9 @@ void PipelineTask::set_state(PipelineTaskState state) {
             COUNTER_UPDATE(_block_by_sink_counts, 1);
         } else if (state == PipelineTaskState::BLOCKED_FOR_RF) {
             _wait_bf_watcher.start();
+        } else if (state == PipelineTaskState::BLOCKED_FOR_DEPENDENCY) {
+            _wait_dependency_watcher.start();
+            // block by dependency should be 1, not need log it
         }
     }
 

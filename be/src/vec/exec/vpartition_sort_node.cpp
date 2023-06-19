@@ -169,7 +169,7 @@ void VPartitionSortNode::_emplace_into_hash_table(const ColumnRawPtrs& key_colum
             _partitioned_data->_partition_method_variant);
 }
 
-Status VPartitionSortNode::sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
+Status VPartitionSortNode::do_sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
     auto current_rows = input_block->rows();
     if (current_rows > 0) {
         child_input_rows = child_input_rows + current_rows;
@@ -243,7 +243,7 @@ Status VPartitionSortNode::open(RuntimeState* state) {
                                   ExecNode::get_next,
                           _children[0], std::placeholders::_1, std::placeholders::_2,
                           std::placeholders::_3)));
-        RETURN_IF_ERROR(sink(state, input_block.get(), eos));
+        RETURN_IF_ERROR(do_sink(state, input_block.get(), eos));
     } while (!eos);
 
     child(0)->close(state);
@@ -266,8 +266,8 @@ bool VPartitionSortNode::can_read() {
     return !_blocks_buffer.empty() || _can_read;
 }
 
-Status VPartitionSortNode::pull(doris::RuntimeState* state, vectorized::Block* output_block,
-                                bool* eos) {
+Status VPartitionSortNode::do_pull(doris::RuntimeState* state, vectorized::Block* output_block,
+                                   bool* eos) {
     RETURN_IF_CANCELLED(state);
     output_block->clear_column_data();
     {
@@ -300,7 +300,7 @@ Status VPartitionSortNode::get_next(RuntimeState* state, Block* output_block, bo
     VLOG_CRITICAL << "VPartitionSortNode::get_next";
     SCOPED_TIMER(_runtime_profile->total_time_counter());
 
-    return pull(state, output_block, eos);
+    return do_pull(state, output_block, eos);
 }
 
 Status VPartitionSortNode::get_sorted_block(RuntimeState* state, Block* output_block,

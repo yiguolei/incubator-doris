@@ -122,14 +122,16 @@ public:
 
     // Emit data, both need impl with method: sink
     // Eg: Aggregation, Sort, Scan
-    [[nodiscard]] virtual Status pull(RuntimeState* state, vectorized::Block* output_block,
-                                      bool* eos) {
-        return get_next(state, output_block, eos);
+    [[nodiscard]] Status pull(RuntimeState* state, vectorized::Block* output_block, bool* eos) {
+        SCOPED_TIMER(_runtime_profile->total_time_counter());
+        return do_pull(state, output_block, eos);
     }
 
-    [[nodiscard]] virtual Status push(RuntimeState* state, vectorized::Block* input_block,
-                                      bool eos) {
-        return Status::OK();
+    // add do_pull and do_push and do_sink method to exec node, because sink,push,pull will be
+    // reused by many other methods, we could not add total time counter correctly.
+    [[nodiscard]] Status push(RuntimeState* state, vectorized::Block* input_block, bool eos) {
+        SCOPED_TIMER(_runtime_profile->total_time_counter());
+        return do_push(state, input_block, eos);
     }
 
     bool can_read() const { return _can_read; }
@@ -137,8 +139,10 @@ public:
     // Sink Data to ExecNode to do some stock work, both need impl with method: get_result
     // `eos` means source is exhausted, exec node should do some finalize work
     // Eg: Aggregation, Sort
-    [[nodiscard]] virtual Status sink(RuntimeState* state, vectorized::Block* input_block,
-                                      bool eos);
+    [[nodiscard]] Status sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
+        SCOPED_TIMER(_runtime_profile->total_time_counter());
+        return do_sink(state, input_block, eos);
+    }
 
     // Resets the stream of row batches to be retrieved by subsequent GetNext() calls.
     // Clears all internal state, returning this node to the state it was in after calling
@@ -248,6 +252,23 @@ protected:
 
     /// Only use in vectorized exec engine try to do projections to trans _row_desc -> _output_row_desc
     Status do_projections(vectorized::Block* origin_block, vectorized::Block* output_block);
+
+    [[nodiscard]] virtual Status do_sink(RuntimeState* state, vectorized::Block* input_block,
+                                         bool eos) {
+        throw doris::Exception(ErrorCode::NOT_IMPLEMENTED_ERROR,
+                               "do_sink method is not implemented by this class");
+    }
+
+    [[nodiscard]] virtual Status do_push(RuntimeState* state, vectorized::Block* input_block,
+                                         bool eos) {
+        throw doris::Exception(ErrorCode::NOT_IMPLEMENTED_ERROR,
+                               "do_push method is not implemented by this class");
+    }
+
+    [[nodiscard]] virtual Status do_pull(RuntimeState* state, vectorized::Block* output_block,
+                                         bool* eos) {
+        return get_next(state, output_block, eos);
+    }
 
     int _id; // unique w/in single plan tree
     TPlanNodeType::type _type;

@@ -156,6 +156,8 @@ public:
     void release_resource(RuntimeState* state) override;
 
     Status try_close(RuntimeState* state);
+    // for scan node, the wait source time is get next time waiting in non pipeline mode
+    void update_wait_source_time(int64_t delta) { _get_next_timer->update(delta); }
 
     bool should_run_serial() const {
         return _should_run_serial || _state->enable_scan_node_run_serial();
