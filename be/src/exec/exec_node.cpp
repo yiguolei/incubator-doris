@@ -607,8 +607,4 @@ Status ExecNode::get_next_after_projects(
     return func(state, block, eos);
 }
 
-Status ExecNode::sink(RuntimeState* state, vectorized::Block* input_block, bool eos) {
-    return Status::NotSupported("{} not implements sink", get_name());
-}
-
 } // namespace doris
