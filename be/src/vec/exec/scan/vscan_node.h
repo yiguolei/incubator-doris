@@ -175,6 +175,15 @@ public:
         PARTIAL_ACCEPTABLE
     };
 
+public:
+    RuntimeProfile::Counter* _scan_cpu_timer1 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer2 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer3 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer4 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer5 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer6 = nullptr;
+    RuntimeProfile::Counter* _scan_cpu_timer7 = nullptr;
+
 protected:
     // Different data sources register different profiles by implementing this method
     virtual Status _init_profile();

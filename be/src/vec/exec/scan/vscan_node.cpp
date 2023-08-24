@@ -303,6 +303,13 @@ Status VScanNode::_init_profile() {
 
     _scan_timer = ADD_TIMER(_scanner_profile, "ScannerGetBlockTime");
     _scan_cpu_timer = ADD_TIMER(_scanner_profile, "ScannerCpuTime");
+    _scan_cpu_timer1 = ADD_TIMER(_scanner_profile, "ScannerCpuTime1");
+    _scan_cpu_timer2 = ADD_TIMER(_scanner_profile, "ScannerCpuTime2");
+    _scan_cpu_timer3 = ADD_TIMER(_scanner_profile, "ScannerCpuTime3");
+    _scan_cpu_timer4 = ADD_TIMER(_scanner_profile, "ScannerCpuTime4");
+    _scan_cpu_timer5 = ADD_TIMER(_scanner_profile, "ScannerCpuTime5");
+    _scan_cpu_timer6 = ADD_TIMER(_scanner_profile, "ScannerCpuTime6");
+    _scan_cpu_timer7 = ADD_TIMER(_scanner_profile, "ScannerCpuTime7");
     _prefilter_timer = ADD_TIMER(_scanner_profile, "ScannerPrefilterTime");
     _convert_block_timer = ADD_TIMER(_scanner_profile, "ScannerConvertBlockTime");
     _filter_timer = ADD_TIMER(_scanner_profile, "ScannerFilterTime");

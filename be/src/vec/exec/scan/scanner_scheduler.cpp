@@ -282,11 +282,13 @@ void ScannerScheduler::_scanner_scan(ScannerScheduler* scheduler, ScannerContext
 #endif
     scanner->update_wait_worker_timer();
     scanner->start_scan_cpu_timer();
+    SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer5);
     Status status = Status::OK();
     bool eos = false;
     RuntimeState* state = ctx->state();
     DCHECK(nullptr != state);
     if (!scanner->is_init()) {
+        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer1);
         status = scanner->init();
         if (!status.ok()) {
             ctx->set_status_on_error(status);
@@ -294,6 +296,7 @@ void ScannerScheduler::_scanner_scan(ScannerScheduler* scheduler, ScannerContext
         }
     }
     if (!eos && !scanner->is_open()) {
+        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer1);
         status = scanner->open(state);
         if (!status.ok()) {
             ctx->set_status_on_error(status);
@@ -328,6 +331,7 @@ void ScannerScheduler::_scanner_scan(ScannerScheduler* scheduler, ScannerContext
     while (!eos && raw_bytes_read < raw_bytes_threshold &&
            ((raw_rows_read < raw_rows_threshold && has_free_block) ||
             num_rows_in_block < state->batch_size())) {
+        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer3);
         if (UNLIKELY(ctx->done())) {
             // No need to set status on error here.
             // Because done() maybe caused by "should_stop"
@@ -384,6 +388,7 @@ void ScannerScheduler::_scanner_scan(ScannerScheduler* scheduler, ScannerContext
         // No need to return blocks because of should_stop, just delete them
         blocks.clear();
     } else if (!blocks.empty()) {
+        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer4);
         ctx->append_blocks_to_queue(blocks);
     }
 
