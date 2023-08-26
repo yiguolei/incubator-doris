@@ -296,7 +296,7 @@ void ScannerScheduler::_scanner_scan(ScannerScheduler* scheduler, ScannerContext
         }
     }
     if (!eos && !scanner->is_open()) {
-        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer1);
+        SCOPED_TIMER(scanner->get_parent()->_scan_cpu_timer2);
         status = scanner->open(state);
         if (!status.ok()) {
             ctx->set_status_on_error(status);

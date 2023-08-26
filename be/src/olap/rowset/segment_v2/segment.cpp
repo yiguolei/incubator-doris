@@ -295,6 +295,7 @@ Status Segment::_create_column_readers() {
                                              _footer.num_rows(), _file_reader, &reader));
         _column_readers.emplace(column.unique_id(), std::move(reader));
     }
+    _footer.clear_columns();
     return Status::OK();
 }
 
