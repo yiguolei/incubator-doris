@@ -750,6 +750,8 @@ public:
 
     DateV2Value(const DateV2Value<T>& other) { int_val_ = other.to_date_int_val(); }
 
+    DateV2Value(const underlying_value& other_value) { int_val_ = other_value; }
+
     static DateV2Value create_from_olap_date(uint64_t value) {
         DateV2Value<T> date;
         date.from_olap_date(value);
