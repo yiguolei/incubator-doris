@@ -188,21 +188,6 @@ public:
         }
     }
 
-    template <typename DataType, bool nullable, bool array>
-    vectorized::DataTypePtr get_data_type() {
-        vectorized::DataTypePtr data_type = get_basic_type<DataType>();
-        if constexpr (nullable) {
-            data_type = std::make_shared<vectorized::DataTypeNullable>(data_type);
-        }
-        if constexpr (array) {
-            data_type = std::make_shared<vectorized::DataTypeArray>(data_type);
-            if constexpr (nullable) {
-                data_type = std::make_shared<vectorized::DataTypeNullable>(data_type);
-            }
-        }
-        return data_type;
-    }
-
     template <typename DataType>
     vectorized::DataTypePtr get_basic_type() {
         using FieldType = typename DataType::FieldType;
