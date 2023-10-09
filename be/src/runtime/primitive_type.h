@@ -177,12 +177,14 @@ struct PrimitiveTypeTraits<TYPE_DATETIME> {
 template <>
 struct PrimitiveTypeTraits<TYPE_DATETIMEV2> {
     using CppType = doris::vectorized::DateV2Value<doris::vectorized::DateTimeV2ValueType>;
-    using ColumnType = vectorized::ColumnVector<vectorized::UInt64>;
+    using ColumnType = vectorized::ColumnVector<
+            doris::vectorized::DateV2Value<doris::vectorized::DateTimeV2ValueType>>;
 };
 template <>
 struct PrimitiveTypeTraits<TYPE_DATEV2> {
     using CppType = doris::vectorized::DateV2Value<doris::vectorized::DateV2ValueType>;
-    using ColumnType = vectorized::ColumnVector<vectorized::UInt32>;
+    using ColumnType = vectorized::ColumnVector<
+            doris::vectorized::DateV2Value<doris::vectorized::DateV2ValueType>>;
 };
 template <>
 struct PrimitiveTypeTraits<TYPE_DECIMALV2> {
@@ -256,16 +258,6 @@ struct PredicatePrimitiveTypeTraits<TYPE_DATE> {
 
 template <>
 struct PredicatePrimitiveTypeTraits<TYPE_DATETIME> {
-    using PredicateFieldType = uint64_t;
-};
-
-template <>
-struct PredicatePrimitiveTypeTraits<TYPE_DATEV2> {
-    using PredicateFieldType = uint32_t;
-};
-
-template <>
-struct PredicatePrimitiveTypeTraits<TYPE_DATETIMEV2> {
     using PredicateFieldType = uint64_t;
 };
 
