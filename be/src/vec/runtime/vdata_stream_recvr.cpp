@@ -265,6 +265,12 @@ void VDataStreamRecvr::SenderQueue::cancel() {
         std::lock_guard<std::mutex> l(_lock);
         for (auto closure_pair : _pending_closures) {
             closure_pair.first->Run();
+            if (closure_pair.second.elapsed_time() / ((1000L * 1000L * 1000L * 1.0)) >
+                config::exchange_timeout_secs) {
+                LOG(WARNING) << "brpc response not send to client, and timeout now, cancel "
+                                "the instance now, instance id "
+                             << print_id(_recvr->fragment_instance_id());
+            }
         }
         _pending_closures.clear();
     }

@@ -1134,6 +1134,9 @@ DECLARE_Int32(scan_thread_nice_value);
 // Used to modify the recycle interval of tablet schema cache
 DECLARE_mInt32(tablet_schema_cache_recycle_interval);
 
+// If exchange timeout, should print log
+DECLARE_Int32(exchange_timeout_secs);
+
 // Use `LOG(FATAL)` to replace `throw` when true
 DECLARE_mBool(exit_on_exception);
 

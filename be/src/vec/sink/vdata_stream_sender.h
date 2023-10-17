@@ -321,8 +321,10 @@ protected:
         _receiver_status = Status::create(_closure->result.status());
         if (cntl->Failed()) {
             std::string err = fmt::format(
-                    "failed to send brpc batch, error={}, error_text={}, client: {}, "
+                    "queryid = {}, cur_instance_id = {}, dest_instance_id = {}, failed to send "
+                    "brpc batch, error={}, error_text={}, client: {}, "
                     "latency = {}",
+                    print_id(_query_id), print_id(_fragment_instance_id), print_id(_finst_id),
                     berror(cntl->ErrorCode()), cntl->ErrorText(), BackendOptions::get_localhost(),
                     cntl->latency_us());
             LOG(WARNING) << err;
