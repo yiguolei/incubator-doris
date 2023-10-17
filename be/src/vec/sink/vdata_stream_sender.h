@@ -318,15 +318,24 @@ protected:
         auto cntl = &_closure->cntl;
         auto call_id = _closure->cntl.call_id();
         brpc::Join(call_id);
+        if (cntl->latency_us() > (config::exchange_timeout_secs * 1000L * 1000L)) {
+            std::string err = fmt::format(
+                    "queryid = {}, cur_instance_id = {}, dest_instance_id = {}, send brpc batch "
+                    "too long client: {} latency = {}",
+                    print_id(_query_id), print_id(_parent->state()->fragment_instance_id()),
+                    print_id(_fragment_instance_id), BackendOptions::get_localhost(),
+                    cntl->latency_us());
+            LOG(WARNING) << err;
+        }
         _receiver_status = Status::create(_closure->result.status());
         if (cntl->Failed()) {
             std::string err = fmt::format(
                     "queryid = {}, cur_instance_id = {}, dest_instance_id = {}, failed to send "
                     "brpc batch, error={}, error_text={}, client: {}, "
                     "latency = {}",
-                    print_id(_query_id), print_id(_fragment_instance_id), print_id(_finst_id),
-                    berror(cntl->ErrorCode()), cntl->ErrorText(), BackendOptions::get_localhost(),
-                    cntl->latency_us());
+                    print_id(_query_id), print_id(_parent->state()->fragment_instance_id()),
+                    print_id(_fragment_instance_id), berror(cntl->ErrorCode()), cntl->ErrorText(),
+                    BackendOptions::get_localhost(), cntl->latency_us());
             LOG(WARNING) << err;
             return Status::RpcError(err);
         }

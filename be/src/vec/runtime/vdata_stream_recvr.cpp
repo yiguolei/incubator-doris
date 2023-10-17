@@ -269,7 +269,8 @@ void VDataStreamRecvr::SenderQueue::cancel() {
                 config::exchange_timeout_secs) {
                 LOG(WARNING) << "brpc response not send to client, and timeout now, cancel "
                                 "the instance now, instance id "
-                             << print_id(_recvr->fragment_instance_id());
+                             << print_id(_recvr->fragment_instance_id()) << " elapsed time(ns) "
+                             << closure_pair.second.elapsed_time();
             }
         }
         _pending_closures.clear();
