@@ -774,7 +774,8 @@ Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params,
     auto cur_span = opentelemetry::trace::Tracer::GetCurrentSpan();
     cur_span->SetAttribute("query_id", print_id(params.params.query_id));
     cur_span->SetAttribute("instance_id", print_id(params.params.fragment_instance_id));
-
+    LOG(INFO) << "receive new fragment query_id " << print_id(params.params.query_id)
+              << ", instance id " << print_id(params.params.fragment_instance_id);
     VLOG_ROW << "exec_plan_fragment params is "
              << apache::thrift::ThriftDebugString(params).c_str();
     // sometimes TExecPlanFragmentParams debug string is too long and glog

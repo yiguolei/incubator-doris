@@ -318,7 +318,8 @@ protected:
         auto cntl = &_closure->cntl;
         auto call_id = _closure->cntl.call_id();
         brpc::Join(call_id);
-        if (cntl->latency_us() > (config::exchange_timeout_secs * 1000L * 1000L)) {
+        // latency > timeout/2 is ok, to print more timeout or suspicious timeouts
+        if (cntl->latency_us() > (config::exchange_timeout_secs * 1000L * 500L)) {
             std::string err = fmt::format(
                     "queryid = {}, cur_instance_id = {}, dest_instance_id = {}, send brpc batch "
                     "too long client: {} latency = {}",
