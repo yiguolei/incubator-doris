@@ -536,10 +536,17 @@ Status VNodeChannel::add_block(vectorized::Block* block, const Payload* payload,
     // But there is still some unfinished things, we do mem limit here temporarily.
     // _cancelled may be set by rpc callback, and it's possible that _cancelled might be set in any of the steps below.
     // It's fine to do a fake add_block() and return OK, because we will check _cancelled in next add_block() or mark_close().
+    int print_timeout_threshold_ms = config::exchange_timeout_secs * 500;
+    int cur_block_wait_ms = 0;
     while (!_cancelled && _pending_batches_num > 0 &&
            _pending_batches_bytes > _max_pending_batches_bytes) {
         SCOPED_RAW_TIMER(&_stat.mem_exceeded_block_ns);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        cur_block_wait_ms += 10;
+        if (cur_block_wait_ms > print_timeout_threshold_ms) {
+            LOG(WARNING) << "load_id " << print_id(_parent->_load_id) << ", node channel " << _name
+                         << " wait " << cur_block_wait_ms << " ms";
+        }
     }
 
     if (UNLIKELY(!_cur_mutable_block)) {
@@ -624,10 +631,10 @@ Status VNodeChannel::add_block(vectorized::Block* block, const Payload* payload,
             _pending_batches_bytes += _cur_mutable_block->allocated_bytes();
             _pending_blocks.emplace(std::move(_cur_mutable_block), _cur_add_block_request);
             _pending_batches_num++;
-            VLOG_DEBUG << "VOlapTableSink:" << _parent << " VNodeChannel:" << this
-                       << " pending_batches_bytes:" << _pending_batches_bytes
-                       << " jobid:" << std::to_string(_state->load_job_id())
-                       << " loadinfo:" << _load_info;
+            LOG(INFO) << "VOlapTableSink:" << _parent << " VNodeChannel:" << this
+                      << " pending_batches_bytes:" << _pending_batches_bytes
+                      << " jobid:" << std::to_string(_state->load_job_id())
+                      << " loadinfo:" << _load_info;
         }
         _cur_mutable_block = vectorized::MutableBlock::create_unique(block->clone_empty());
         _cur_add_block_request.clear_tablet_ids();
@@ -1404,6 +1411,8 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block,
                     // if it is load single tablet, then append this whole block
                     load_block_to_single_tablet);
             if (!st.ok()) {
+                LOG(WARNING) << "load_id " << print_id(_load_id)
+                             << ", add block to node channel failed";
                 _channels[i]->mark_as_failed(entry.first, st.to_string());
             }
         }
