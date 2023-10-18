@@ -287,7 +287,6 @@ constexpr bool capture_stacktrace(int code) {
         && code != ErrorCode::TRY_LOCK_FAILED
         && code != ErrorCode::TOO_MANY_SEGMENTS
         && code != ErrorCode::TOO_MANY_VERSION
-        && code != ErrorCode::ALREADY_CANCELLED
         && code != ErrorCode::ALREADY_CLOSED
         && code != ErrorCode::PUSH_TRANSACTION_ALREADY_EXIST
         && code != ErrorCode::BE_NO_SUITABLE_VERSION
@@ -316,7 +315,6 @@ constexpr bool capture_stacktrace(int code) {
         && code != ErrorCode::ENTRY_NOT_FOUND
         && code != ErrorCode::KEY_NOT_FOUND
         && code != ErrorCode::KEY_ALREADY_EXISTS
-        && code != ErrorCode::CANCELLED
         && code != ErrorCode::UNINITIALIZED
         && code != ErrorCode::PIP_WAIT_FOR_RF
         && code != ErrorCode::PIP_WAIT_FOR_SC

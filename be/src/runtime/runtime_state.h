@@ -159,7 +159,13 @@ public:
     // _unreported_error_idx to _errors_log.size()
     void get_unreported_errors(std::vector<std::string>* new_errors);
 
-    bool is_cancelled() const { return _is_cancelled.load(); }
+    bool is_cancelled() const {
+        if (_is_cancelled.load()) {
+            Status cancel_st = Status::InternalError("query is cancelled, print stack trace now");
+            LOG(WARNING) << cancel_st;
+        }
+        return _is_cancelled.load();
+    }
     int codegen_level() const { return _query_options.codegen_level; }
     void set_is_cancelled(bool v, std::string msg) {
         _is_cancelled.store(v);

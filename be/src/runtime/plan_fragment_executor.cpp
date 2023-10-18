@@ -295,9 +295,11 @@ Status PlanFragmentExecutor::open() {
             _exec_env->result_queue_mgr()->update_queue_status(fragment_instance_id, status);
         }
     }
-
+    LOG(INFO) << "stop thread";
     stop_report_thread();
+    LOG(INFO) << "send report";
     send_report(true);
+    LOG(INFO) << "send report end";
     return status;
 }
 
@@ -310,6 +312,7 @@ Status PlanFragmentExecutor::open_vectorized_internal() {
         if (_sink == nullptr) {
             return Status::OK();
         }
+        LOG(INFO) << "begin running";
         RETURN_IF_ERROR(_sink->open(runtime_state()));
         doris::vectorized::Block block;
         bool eos = false;
@@ -331,6 +334,7 @@ Status PlanFragmentExecutor::open_vectorized_internal() {
                 RETURN_IF_ERROR(st);
             }
         }
+        LOG(INFO) << "end running";
     }
     {
         _collect_query_statistics();

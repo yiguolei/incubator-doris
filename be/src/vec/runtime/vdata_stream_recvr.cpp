@@ -74,6 +74,10 @@ Status VDataStreamRecvr::SenderQueue::get_batch(Block* block, bool* eos) {
                 &_is_cancelled);
         _data_arrival_cv.wait(l);
     }
+    if (_is_cancelled) {
+        Status cancel_st = Status::InternalError("query is cancelled, print stack trace now");
+        LOG(WARNING) << cancel_st;
+    }
     return _inner_get_batch_without_lock(block, eos);
 }
 
