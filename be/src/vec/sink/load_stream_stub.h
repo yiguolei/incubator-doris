@@ -95,7 +95,7 @@ private:
         bool is_closed() { return _is_closed.load(); }
 
         Status close_wait(int64_t timeout_ms) {
-            std::unique_lock<bthread::Mutex> lock(_mutex);
+            std::unique_lock<std::mutex> lock(_mutex);
             if (_is_closed) {
                 return Status::OK();
             }
@@ -109,12 +109,12 @@ private:
         };
 
         std::vector<int64_t> success_tablets() {
-            std::lock_guard<bthread::Mutex> lock(_success_tablets_mutex);
+            std::lock_guard<std::mutex> lock(_success_tablets_mutex);
             return _success_tablets;
         }
 
         std::vector<int64_t> failed_tablets() {
-            std::lock_guard<bthread::Mutex> lock(_failed_tablets_mutex);
+            std::lock_guard<std::mutex> lock(_failed_tablets_mutex);
             return _failed_tablets;
         }
 
@@ -123,11 +123,11 @@ private:
     private:
         int64_t _dst_id = -1; // for logging
         std::atomic<bool> _is_closed;
-        bthread::Mutex _mutex;
-        bthread::ConditionVariable _close_cv;
+        std::mutex _mutex;
+        std::condition_variable _close_cv;
 
-        bthread::Mutex _success_tablets_mutex;
-        bthread::Mutex _failed_tablets_mutex;
+        std::mutex _success_tablets_mutex;
+        std::mutex _failed_tablets_mutex;
         std::vector<int64_t> _success_tablets;
         std::vector<int64_t> _failed_tablets;
     };
@@ -200,7 +200,7 @@ private:
 
 protected:
     std::atomic<bool> _is_init;
-    bthread::Mutex _mutex;
+    std::mutex _mutex;
 
     std::atomic<int> _num_open;
 

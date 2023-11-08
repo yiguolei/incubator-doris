@@ -58,7 +58,7 @@ private:
     std::vector<std::unique_ptr<ThreadPoolToken>> _flush_tokens;
     std::unordered_map<int64_t, std::unique_ptr<SegIdMapping>> _segids_mapping;
     std::atomic<uint32_t> _next_segid;
-    bthread::Mutex _lock;
+    std::mutex _lock;
     std::shared_ptr<Status> _failed_st;
     PUniqueId _load_id;
     int64_t _txn_id;
@@ -88,7 +88,7 @@ private:
 private:
     int64_t _id;
     std::unordered_map<int64_t /*tabletid*/, TabletStreamSharedPtr> _tablet_streams_map;
-    bthread::Mutex _lock;
+    std::mutex _lock;
     PUniqueId _load_id;
     int64_t _txn_id;
     std::shared_ptr<OlapTableSchemaParam> _schema;
@@ -137,7 +137,7 @@ private:
     PUniqueId _load_id;
     std::unordered_map<int64_t, IndexStreamSharedPtr> _index_streams_map;
     std::atomic<uint32_t> _num_rpc_streams;
-    bthread::Mutex _lock;
+    std::mutex _lock;
     std::unordered_map<int64_t, int32_t> _open_streams;
     int64_t _txn_id;
     std::shared_ptr<OlapTableSchemaParam> _schema;

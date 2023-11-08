@@ -305,7 +305,7 @@ struct ResponseStat {
     std::vector<int64_t> success_tablet_ids;
     std::vector<int64_t> failed_tablet_ids;
 };
-bthread::Mutex g_stat_lock;
+std::mutex g_stat_lock;
 static ResponseStat g_response_stat;
 
 void reset_response_stat() {

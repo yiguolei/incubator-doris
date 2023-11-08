@@ -34,7 +34,7 @@ using Mutex = std::mutex;
 using ConditionVariable = std::condition_variable;
 using SharedMutex = std::shared_mutex;
 #else
-using Mutex = bthread::Mutex;
+using Mutex = std::mutex;
 using ConditionVariable = bthread::ConditionVariable;
 using SharedMutex = BthreadSharedMutex;
 #endif

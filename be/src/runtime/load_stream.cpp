@@ -271,9 +271,9 @@ Status LoadStream::close(int64_t src_id, const std::vector<PTabletID>& tablets_t
 
     Status st = Status::OK();
     if (_open_streams.size() == 0) {
-        bthread::Mutex mutex;
-        std::unique_lock<bthread::Mutex> lock(mutex);
-        bthread::ConditionVariable cond;
+        std::mutex mutex;
+        std::unique_lock<std::mutex> lock(mutex);
+        std::condition_variable cond;
         bool ret = _load_stream_mgr->heavy_work_pool()->try_offer([this, &success_tablet_ids,
                                                                    &failed_tablet_ids,
                                                                    &tablets_to_commit, &mutex,
@@ -282,7 +282,7 @@ Status LoadStream::close(int64_t src_id, const std::vector<PTabletID>& tablets_t
             for (auto& it : _index_streams_map) {
                 st = it.second->close(tablets_to_commit, success_tablet_ids, failed_tablet_ids);
                 if (!st.ok()) {
-                    std::unique_lock<bthread::Mutex> lock(mutex);
+                    std::unique_lock<std::mutex> lock(mutex);
                     cond.notify_one();
                     return;
                 }
@@ -290,7 +290,7 @@ Status LoadStream::close(int64_t src_id, const std::vector<PTabletID>& tablets_t
             LOG(INFO) << "close load " << *this
                       << ", failed_tablet_num=" << failed_tablet_ids->size()
                       << ", success_tablet_num=" << success_tablet_ids->size();
-            std::unique_lock<bthread::Mutex> lock(mutex);
+            std::unique_lock<std::mutex> lock(mutex);
             cond.notify_one();
         });
         if (ret) {
@@ -326,7 +326,7 @@ void LoadStream::_report_result(StreamId stream, Status& st,
         ThriftSerializer ser(false, 4096);
         uint8_t* buf = nullptr;
         uint32_t len = 0;
-        std::unique_lock<bthread::Mutex> l(_lock);
+        std::unique_lock<std::mutex> l(_lock);
 
         _profile->to_thrift(&tprofile);
         auto st = ser.serialize(&tprofile, &len, &buf);
@@ -365,14 +365,14 @@ Status LoadStream::_append_data(const PStreamHeader& header, butil::IOBuf* data)
 
     Status st = Status::OK();
     {
-        bthread::Mutex mutex;
-        std::unique_lock<bthread::Mutex> lock(mutex);
-        bthread::ConditionVariable cond;
+        std::mutex mutex;
+        std::unique_lock<std::mutex> lock(mutex);
+        std::condition_variable cond;
         bool ret = _load_stream_mgr->heavy_work_pool()->try_offer(
                 [this, &index_stream, &header, &data, &mutex, &cond, &st] {
                     signal::set_signal_task_id(_load_id);
                     st = index_stream->append_data(header, data);
-                    std::unique_lock<bthread::Mutex> lock(mutex);
+                    std::unique_lock<std::mutex> lock(mutex);
                     cond.notify_one();
                 });
         if (ret) {

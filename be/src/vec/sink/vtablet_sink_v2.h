@@ -223,13 +223,6 @@ private:
     size_t _stream_index = 0;
     std::shared_ptr<DeltaWriterV2Map> _delta_writer_for_tablet;
 
-    std::atomic<int> _pending_streams {0};
-
-    std::unordered_map<int64_t, std::vector<int64_t>> _tablet_success_map;
-    std::unordered_map<int64_t, std::vector<int64_t>> _tablet_failure_map;
-    bthread::Mutex _tablet_success_map_mutex;
-    bthread::Mutex _tablet_failure_map_mutex;
-
     friend class StreamSinkHandler;
 };
 

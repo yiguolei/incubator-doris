@@ -41,7 +41,7 @@ int LoadStreamStub::LoadStreamReplyHandler::on_received_messages(brpc::StreamId 
             for (auto tablet_id : response.success_tablet_ids()) {
                 ss << " " << tablet_id;
             }
-            std::lock_guard<bthread::Mutex> lock(_success_tablets_mutex);
+            std::lock_guard<std::mutex> lock(_success_tablets_mutex);
             for (auto tablet_id : response.success_tablet_ids()) {
                 _success_tablets.push_back(tablet_id);
             }
@@ -51,7 +51,7 @@ int LoadStreamStub::LoadStreamReplyHandler::on_received_messages(brpc::StreamId 
             for (auto tablet_id : response.failed_tablet_ids()) {
                 ss << " " << tablet_id;
             }
-            std::lock_guard<bthread::Mutex> lock(_failed_tablets_mutex);
+            std::lock_guard<std::mutex> lock(_failed_tablets_mutex);
             for (auto tablet_id : response.failed_tablet_ids()) {
                 _failed_tablets.push_back(tablet_id);
             }
@@ -78,7 +78,7 @@ int LoadStreamStub::LoadStreamReplyHandler::on_received_messages(brpc::StreamId 
 }
 
 void LoadStreamStub::LoadStreamReplyHandler::on_closed(brpc::StreamId id) {
-    std::lock_guard<bthread::Mutex> lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     _is_closed.store(true);
     _close_cv.notify_all();
 }
@@ -108,7 +108,7 @@ Status LoadStreamStub::open(BrpcClientCache<PBackendService_Stub>* client_cache,
                             const OlapTableSchemaParam& schema,
                             const std::vector<PTabletID>& tablets_for_schema, bool enable_profile) {
     _num_open++;
-    std::unique_lock<bthread::Mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(_mutex);
     if (_is_init.load()) {
         return Status::OK();
     }
