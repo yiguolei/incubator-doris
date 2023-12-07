@@ -176,6 +176,8 @@ public:
     std::vector<DataDir*> get_stores_for_create_tablet(int64 partition_id,
                                                        TStorageMedium::type storage_medium);
 
+    std::vector<DataDir*> get_stores_for_spill(TStorageMedium::type storage_medium);
+
     DataDir* get_store(const std::string& path);
 
     uint32_t available_storage_medium_type_count() const {
@@ -283,6 +285,10 @@ private:
     Status _open();
 
     Status _init_store_map();
+    Status _init_spill_store_map();
+
+    std::vector<DataDir*> _get_stores(std::map<std::string, std::shared_ptr<DataDir>>& store_map,
+                                      TStorageMedium::type storage_medium);
 
     void _update_storage_medium_type_count();
 
@@ -384,6 +390,7 @@ private:
 
     void _get_candidate_stores(TStorageMedium::type storage_medium,
                                std::vector<DirInfo>& dir_infos);
+    void _spill_gc_thread_callback();
 
     int _get_and_set_next_disk_index(int64 partition_id, TStorageMedium::type storage_medium);
 
@@ -391,7 +398,8 @@ private:
     EngineOptions _options;
     std::mutex _store_lock;
     std::mutex _trash_sweep_lock;
-    std::map<std::string, std::unique_ptr<DataDir>> _store_map;
+    std::map<std::string, std::shared_ptr<DataDir>> _store_map;
+    std::map<std::string, std::shared_ptr<DataDir>> _spill_store_map;
     std::set<std::string> _broken_paths;
     std::mutex _broken_paths_mutex;
 
@@ -496,6 +504,8 @@ private:
     // aync publish for discontinuous versions of merge_on_write table
     scoped_refptr<Thread> _async_publish_thread;
     std::shared_mutex _async_publish_lock;
+
+    scoped_refptr<Thread> _spill_gc_thread;
 
     bool _clear_segment_cache = false;
 

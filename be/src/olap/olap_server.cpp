@@ -82,6 +82,7 @@
 #include "util/time.h"
 #include "util/uid_util.h"
 #include "util/work_thread_pool.hpp"
+#include "vec/spill/spill_stream_manager.h"
 
 using std::string;
 
@@ -262,8 +263,21 @@ Status StorageEngine::start_bg_threads() {
             [this]() { this->_async_publish_callback(); }, &_async_publish_thread));
     LOG(INFO) << "async publish thread started";
 
+    RETURN_IF_ERROR(Thread::create(
+            "StorageEngine", "spill_gc_thread", [this]() { this->_spill_gc_thread_callback(); },
+            &_async_publish_thread));
+    LOG(INFO) << "spill gc thread started";
+
     LOG(INFO) << "all storage engine's background threads are started.";
     return Status::OK();
+}
+
+// clean up stale spilled files
+void StorageEngine::_spill_gc_thread_callback() {
+    while (!_stop_background_threads_latch.wait_for(
+            std::chrono::milliseconds(config::spill_gc_interval_ms))) {
+        ExecEnv::GetInstance()->spill_stream_mgr()->gc(2000);
+    }
 }
 
 void StorageEngine::_cache_clean_callback() {

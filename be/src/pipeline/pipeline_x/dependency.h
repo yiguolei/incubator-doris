@@ -42,6 +42,7 @@
 #include "vec/exec/vanalytic_eval_node.h"
 #include "vec/exec/vpartition_sort_node.h"
 #include "vec/exec/vset_operation_node.h"
+#include "vec/spill/spill_stream.h"
 
 namespace doris::pipeline {
 
@@ -325,17 +326,167 @@ public:
             _close_with_serialized_key();
         }
     }
-    void init_spill_partition_helper(size_t spill_partition_count_bits) {
-        spill_partition_helper =
-                std::make_unique<vectorized::SpillPartitionHelper>(spill_partition_count_bits);
+
+    static int _get_slot_column_id(const vectorized::AggFnEvaluator* evaluator) {
+        auto ctxs = evaluator->input_exprs_ctxs();
+        CHECK(ctxs.size() == 1 && ctxs[0]->root()->is_slot_ref())
+                << "input_exprs_ctxs is invalid, input_exprs_ctx[0]="
+                << ctxs[0]->root()->debug_string();
+        return ((vectorized::VSlotRef*)ctxs[0]->root().get())->column_id();
     }
 
+    void init_spill_partition_param(size_t spill_partition_count_bits) {
+        partition_count_bits_ = spill_partition_count_bits;
+        partition_count_ = (1 << spill_partition_count_bits);
+        max_partition_index_ = partition_count_ - 1;
+    }
+
+    template <bool limit, bool for_spill = false>
+    Status merge_with_serialized_key_helper(vectorized::Block* block) {
+        size_t key_size = probe_expr_ctxs.size();
+        vectorized::ColumnRawPtrs key_columns(key_size);
+
+        for (size_t i = 0; i < key_size; ++i) {
+            if constexpr (for_spill) {
+                key_columns[i] = block->get_by_position(i).column.get();
+            } else {
+                int result_column_id = -1;
+                RETURN_IF_ERROR(probe_expr_ctxs[i]->execute(block, &result_column_id));
+                block->replace_by_position_if_const(result_column_id);
+                key_columns[i] = block->get_by_position(result_column_id).column.get();
+            }
+        }
+
+        int rows = block->rows();
+        if (_places.size() < rows) {
+            _places.resize(rows);
+        }
+
+        if constexpr (limit) {
+            _find_in_hash_table(_places.data(), key_columns, rows);
+
+            for (int i = 0; i < aggregate_evaluators.size(); ++i) {
+                if (aggregate_evaluators[i]->is_merge()) {
+                    int col_id = _get_slot_column_id(aggregate_evaluators[i]);
+                    auto column = block->get_by_position(col_id).column;
+                    if (column->is_nullable()) {
+                        column = ((vectorized::ColumnNullable*)column.get())
+                                         ->get_nested_column_ptr();
+                    }
+
+                    size_t buffer_size = aggregate_evaluators[i]->function()->size_of_data() * rows;
+                    if (_deserialize_buffer.size() < buffer_size) {
+                        _deserialize_buffer.resize(buffer_size);
+                    }
+
+                    {
+                        // SCOPED_TIMER(_deserialize_data_timer);
+                        aggregate_evaluators[i]->function()->deserialize_and_merge_vec_selected(
+                                _places.data(), offsets_of_aggregate_states[i],
+                                _deserialize_buffer.data(),
+                                (vectorized::ColumnString*)(column.get()), agg_arena_pool.get(),
+                                rows);
+                    }
+                } else {
+                    RETURN_IF_ERROR(aggregate_evaluators[i]->execute_batch_add_selected(
+                            block, offsets_of_aggregate_states[i], _places.data(),
+                            agg_arena_pool.get()));
+                }
+            }
+        } else {
+            _emplace_into_hash_table(_places.data(), key_columns, rows);
+
+            for (int i = 0; i < aggregate_evaluators.size(); ++i) {
+                if (aggregate_evaluators[i]->is_merge() || for_spill) {
+                    int col_id = 0;
+                    if constexpr (for_spill) {
+                        col_id = probe_expr_ctxs.size() + i;
+                    } else {
+                        col_id = _get_slot_column_id(aggregate_evaluators[i]);
+                    }
+                    auto column = block->get_by_position(col_id).column;
+                    if (column->is_nullable()) {
+                        column = ((vectorized::ColumnNullable*)column.get())
+                                         ->get_nested_column_ptr();
+                    }
+
+                    size_t buffer_size = aggregate_evaluators[i]->function()->size_of_data() * rows;
+                    if (_deserialize_buffer.size() < buffer_size) {
+                        _deserialize_buffer.resize(buffer_size);
+                    }
+
+                    {
+                        // SCOPED_TIMER(_deserialize_data_timer);
+                        aggregate_evaluators[i]->function()->deserialize_and_merge_vec(
+                                _places.data(), offsets_of_aggregate_states[i],
+                                _deserialize_buffer.data(),
+                                (vectorized::ColumnString*)(column.get()), agg_arena_pool.get(),
+                                rows);
+                    }
+                } else {
+                    RETURN_IF_ERROR(aggregate_evaluators[i]->execute_batch_add(
+                            block, offsets_of_aggregate_states[i], _places.data(),
+                            agg_arena_pool.get()));
+                }
+            }
+
+            if (_should_limit_output) {
+                _reach_limit = _get_hash_table_size() >= _limit;
+            }
+        }
+
+        return Status::OK();
+    }
+
+    Status reset_hash_table() {
+        return std::visit(
+                [&](auto&& agg_method) {
+                    auto& hash_table = *agg_method.hash_table;
+                    using HashTableType = std::decay_t<decltype(hash_table)>;
+
+                    agg_method.reset();
+
+                    hash_table.for_each_mapped([&](auto& mapped) {
+                        if (mapped) {
+                            static_cast<void>(_destroy_agg_status(mapped));
+                            mapped = nullptr;
+                        }
+                    });
+
+                    agg_method.hash_table.reset(new HashTableType());
+                    return Status::OK();
+                },
+                agg_data->method_variant);
+    }
+
+    Status reset_agg_data() {
+        return std::visit(
+                [&](auto&& agg_method) {
+                    auto& hash_table = *agg_method.hash_table;
+                    using HashTableType = std::decay_t<decltype(hash_table)>;
+
+                    agg_method.reset();
+
+                    aggregate_data_container = std::make_unique<vectorized::AggregateDataContainer>(
+                            sizeof(typename HashTableType::key_type),
+                            ((total_size_of_aggregate_states + align_aggregate_states - 1) /
+                             align_aggregate_states) *
+                                    align_aggregate_states);
+                    agg_arena_pool = std::make_unique<vectorized::Arena>();
+                    return Status::OK();
+                },
+                agg_data->method_variant);
+    }
+
+    void clear();
+
+    size_t _get_hash_table_size() const;
+
+    vectorized::PODArray<vectorized::AggregateDataPtr> _places;
     vectorized::AggregatedDataVariantsUPtr agg_data = nullptr;
     std::unique_ptr<vectorized::AggregateDataContainer> aggregate_data_container;
-    vectorized::AggSpillContext spill_context;
     vectorized::ArenaUPtr agg_arena_pool;
     std::vector<vectorized::AggFnEvaluator*> aggregate_evaluators;
-    std::unique_ptr<vectorized::SpillPartitionHelper> spill_partition_helper;
     // group by k1,k2
     vectorized::VExprContextSPtrs probe_expr_ctxs;
     size_t input_num_rows = 0;
@@ -357,7 +508,29 @@ public:
     MemoryRecord mem_usage_record;
     bool agg_data_created_without_key = false;
 
+    std::vector<char> _deserialize_buffer;
+    size_t read_cursor_ {};
+    std::vector<vectorized::SpillStreamSPtr> spilled_streams_;
+    size_t partition_count_bits_;
+    size_t partition_count_;
+    size_t max_partition_index_;
+    Status sink_status_;
+
+    size_t get_partition_index(size_t hash_value) const {
+        return (hash_value >> (32 - partition_count_bits_)) & max_partition_index_;
+    }
+
+    int64_t _limit = -1; // -1: no limit
+    bool _should_limit_output = false;
+    bool _reach_limit = false;
+    bool _enable_spill = false;
+
 private:
+    Status _create_agg_status(vectorized::AggregateDataPtr data);
+    void _find_in_hash_table(vectorized::AggregateDataPtr* places,
+                             vectorized::ColumnRawPtrs& key_columns, size_t num_rows);
+    void _emplace_into_hash_table(vectorized::AggregateDataPtr* places,
+                                  vectorized::ColumnRawPtrs& key_columns, const size_t num_rows);
     void _close_with_serialized_key() {
         std::visit(
                 [&](auto&& agg_method) -> void {
@@ -395,9 +568,62 @@ private:
     }
 };
 
+struct PartitionedAggSharedState : public BasicSharedState {
+public:
+    PartitionedAggSharedState() { shared_state_ = std::make_unique<AggSharedState>(); }
+    ~PartitionedAggSharedState() override = default;
+
+    void init_spill_params(size_t spill_partition_count_bits) {
+        partition_count_bits_ = spill_partition_count_bits;
+        partition_count_ = (1 << spill_partition_count_bits);
+        max_partition_index_ = partition_count_ - 1;
+    }
+
+    size_t read_cursor_ {};
+    std::vector<vectorized::SpillStreamSPtr> spilled_streams_;
+    size_t partition_count_bits_;
+    size_t partition_count_;
+    size_t max_partition_index_;
+
+    size_t get_index(size_t hash_value) const {
+        return (hash_value >> (32 - partition_count_bits_)) & max_partition_index_;
+    }
+
+    Status prepare_merge_partition_aggregation_data() {
+        // return shared_state_->prepare_merge_partition_aggregation_data();
+        return Status::OK();
+    }
+
+    Status merge_spilt_partition_aggregation_data(vectorized::Block* block) {
+        return shared_state_->merge_with_serialized_key_helper<false, true>(block);
+    }
+
+private:
+    std::unique_ptr<AggSharedState> shared_state_;
+};
+
 struct SortSharedState : public BasicSharedState {
 public:
+    void update_spill_block_batch_size(const vectorized::Block* block) {
+        auto rows = block->rows();
+        if (rows > 0 && 0 == avg_row_bytes_) {
+            avg_row_bytes_ = std::max((std::size_t)1, block->bytes() / rows);
+            spill_block_batch_size_ =
+                    (SORT_BLOCK_SPILL_BATCH_BYTES + avg_row_bytes_ - 1) / avg_row_bytes_;
+        }
+    }
+
+    void clear();
+
+    // This number specifies the maximum size of sub blocks
+    static constexpr int SORT_BLOCK_SPILL_BATCH_BYTES = 8 * 1024 * 1024;
+
     std::unique_ptr<vectorized::Sorter> sorter;
+    Status sink_status_;
+    bool enable_spill_ = false;
+    size_t avg_row_bytes_ = 0;
+    int spill_block_batch_size_;
+    std::deque<vectorized::SpillStreamSPtr> sorted_streams_;
 };
 
 struct UnionSharedState : public BasicSharedState {
@@ -464,6 +690,10 @@ struct HashJoinSharedState : public JoinSharedState {
     std::shared_ptr<vectorized::Block> build_block;
     std::shared_ptr<std::vector<uint32_t>> build_indexes_null;
     bool probe_ignore_null = false;
+};
+
+struct PartitionedHashJoinSharedState : public HashJoinSharedState {
+    std::vector<std::unique_ptr<vectorized::MutableBlock>> partitioned_build_blocks;
 };
 
 struct NestedLoopJoinSharedState : public JoinSharedState {

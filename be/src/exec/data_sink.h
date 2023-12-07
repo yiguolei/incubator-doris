@@ -82,6 +82,10 @@ public:
         return Status::OK();
     }
 
+    virtual size_t revocable_mem_size(RuntimeState* state) const { return 0; }
+
+    virtual Status revoke_memory(RuntimeState* state) { return Status::OK(); }
+
     // Creates a new data sink from thrift_sink. A pointer to the
     // new sink is written to *sink, and is owned by the caller.
     static Status create_data_sink(ObjectPool* pool, const TDataSink& thrift_sink,

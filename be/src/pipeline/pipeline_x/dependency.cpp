@@ -26,6 +26,7 @@
 #include "pipeline/pipeline_x/pipeline_x_task.h"
 #include "runtime/exec_env.h"
 #include "runtime/memory/mem_tracker.h"
+#include "vec/spill/spill_stream_manager.h"
 
 namespace doris::pipeline {
 
@@ -194,4 +195,97 @@ LocalExchangeSharedState::LocalExchangeSharedState(int num_instances) {
     mem_trackers.resize(num_instances, nullptr);
 }
 
+void AggSharedState::clear() {
+    for (auto& stream : spilled_streams_) {
+        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+    }
+    spilled_streams_.clear();
+}
+void AggSharedState::_find_in_hash_table(vectorized::AggregateDataPtr* places,
+                                         vectorized::ColumnRawPtrs& key_columns, size_t num_rows) {
+    std::visit(
+            [&](auto&& agg_method) -> void {
+                using HashMethodType = std::decay_t<decltype(agg_method)>;
+                using AggState = typename HashMethodType::State;
+                AggState state(key_columns);
+                agg_method.init_serialized_keys(key_columns, num_rows);
+
+                /// For all rows.
+                for (size_t i = 0; i < num_rows; ++i) {
+                    auto find_result = agg_method.find(state, i);
+
+                    if (find_result.is_found()) {
+                        places[i] = find_result.get_mapped();
+                    } else {
+                        places[i] = nullptr;
+                    }
+                }
+            },
+            agg_data->method_variant);
+}
+
+Status AggSharedState::_create_agg_status(vectorized::AggregateDataPtr data) {
+    for (int i = 0; i < aggregate_evaluators.size(); ++i) {
+        try {
+            aggregate_evaluators[i]->create(data + offsets_of_aggregate_states[i]);
+        } catch (...) {
+            for (int j = 0; j < i; ++j) {
+                aggregate_evaluators[j]->destroy(data + offsets_of_aggregate_states[j]);
+            }
+            throw;
+        }
+    }
+    return Status::OK();
+}
+void AggSharedState::_emplace_into_hash_table(vectorized::AggregateDataPtr* places,
+                                              vectorized::ColumnRawPtrs& key_columns,
+                                              const size_t num_rows) {
+    std::visit(
+            [&](auto&& agg_method) -> void {
+                // SCOPED_TIMER(_hash_table_compute_timer);
+                using HashMethodType = std::decay_t<decltype(agg_method)>;
+                using AggState = typename HashMethodType::State;
+                AggState state(key_columns);
+                agg_method.init_serialized_keys(key_columns, num_rows);
+
+                auto creator = [this](const auto& ctor, auto& key, auto& origin) {
+                    HashMethodType::try_presis_key_and_origin(key, origin, *agg_arena_pool);
+                    auto mapped = aggregate_data_container->append_data(origin);
+                    auto st = _create_agg_status(mapped);
+                    if (!st) {
+                        throw Exception(st.code(), st.to_string());
+                    }
+                    ctor(key, mapped);
+                };
+
+                auto creator_for_null_key = [&](auto& mapped) {
+                    mapped = agg_arena_pool->aligned_alloc(total_size_of_aggregate_states,
+                                                           align_aggregate_states);
+                    auto st = _create_agg_status(mapped);
+                    if (!st) {
+                        throw Exception(st.code(), st.to_string());
+                    }
+                };
+
+                // SCOPED_TIMER(_hash_table_emplace_timer);
+                for (size_t i = 0; i < num_rows; ++i) {
+                    places[i] = agg_method.lazy_emplace(state, i, creator, creator_for_null_key);
+                }
+
+                // COUNTER_UPDATE(_hash_table_input_counter, num_rows);
+            },
+            agg_data->method_variant);
+}
+
+size_t AggSharedState::_get_hash_table_size() const {
+    return std::visit([&](auto&& agg_method) { return agg_method.hash_table->size(); },
+                      agg_data->method_variant);
+}
+
+void SortSharedState::clear() {
+    for (auto& stream : sorted_streams_) {
+        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+    }
+    sorted_streams_.clear();
+}
 } // namespace doris::pipeline

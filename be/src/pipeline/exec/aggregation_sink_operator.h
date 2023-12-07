@@ -19,6 +19,8 @@
 
 #include <stdint.h>
 
+#include <mutex>
+
 #include "operator.h"
 #include "pipeline/pipeline_x/dependency.h"
 #include "pipeline/pipeline_x/operator.h"
@@ -65,8 +67,12 @@ public:
     Status init(RuntimeState* state, LocalSinkStateInfo& info) override;
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state, Status exec_status) override;
+    Dependency* finishdependency() override { return finish_dependency_.get(); }
 
-    Status try_spill_disk(bool eos = false);
+    size_t memory_usage() const;
+    Status get_and_release_aggregate_data(vectorized::Block& block, bool& has_null_key,
+                                          std::vector<size_t>& keys_hashes);
+    Status revoke_memory(RuntimeState* state);
 
 protected:
     AggSinkLocalState(DataSinkOperatorXBase* parent, RuntimeState* state);
@@ -120,10 +126,9 @@ protected:
                              vectorized::ColumnRawPtrs& key_columns, size_t num_rows);
     void _emplace_into_hash_table(vectorized::AggregateDataPtr* places,
                                   vectorized::ColumnRawPtrs& key_columns, const size_t num_rows);
-    size_t _get_hash_table_size();
 
-    template <bool limit, bool for_spill = false>
-    Status _merge_with_serialized_key_helper(vectorized::Block* block);
+    // template <bool limit, bool for_spill = false>
+    // Status _merge_with_serialized_key_helper(vectorized::Block* block);
 
     template <typename HashTableCtxType, typename HashTableType, typename KeyType>
     Status _serialize_hash_table_to_block(HashTableCtxType& context, HashTableType& hash_table,
@@ -209,56 +214,66 @@ protected:
     }
 
     Status _destroy_agg_status(vectorized::AggregateDataPtr data);
+
     template <typename HashTableCtxType, typename HashTableType>
-    Status _spill_hash_table(HashTableCtxType& agg_method, HashTableType& hash_table) {
+    Status _convert_hash_table_to_block(HashTableCtxType& agg_method, HashTableType& hash_table,
+                                        vectorized::Block& block, bool& has_null_key,
+                                        std::vector<size_t>& keys_hashes);
+    Status _create_agg_status(vectorized::AggregateDataPtr data);
+    // We should call this function only at 1st phase.
+    // 1st phase: is_merge=true, only have one SlotRef.
+    // 2nd phase: is_merge=false, maybe have multiple exprs.
+    int _get_slot_column_id(const vectorized::AggFnEvaluator* evaluator);
+
+    template <typename HashTableCtxType, typename HashTableType>
+    Status _spill_hash_table(RuntimeState* state, HashTableCtxType& agg_method,
+                             HashTableType& hash_table) {
         vectorized::Block block;
         std::vector<typename HashTableType::key_type> keys;
+
+        auto hash_table_size = hash_table.size();
+        bool hash_null_key_data = hash_table.has_null_key_data();
         RETURN_IF_ERROR(_serialize_hash_table_to_block(agg_method, hash_table, block, keys));
-        CHECK_EQ(block.rows(), hash_table.size());
+
+        RETURN_IF_ERROR(Base::_shared_state->reset_hash_table());
+
+        CHECK_EQ(block.rows(), hash_table_size);
         CHECK_EQ(keys.size(), block.rows());
 
-        if (!Base::_shared_state->spill_context.has_data) {
-            Base::_shared_state->spill_context.has_data = true;
-            Base::_shared_state->spill_context.runtime_profile =
-                    Base::profile()->create_child("Spill", true, true);
-        }
-
-        vectorized::BlockSpillWriterUPtr writer;
-        RETURN_IF_ERROR(ExecEnv::GetInstance()->block_spill_mgr()->get_writer(
-                std::numeric_limits<int32_t>::max(), writer,
-                Base::_shared_state->spill_context.runtime_profile));
-        Defer defer {[&]() {
-            // redundant call is ok
-            static_cast<void>(writer->close());
-        }};
-        Base::_shared_state->spill_context.stream_ids.emplace_back(writer->get_id());
+        // if (!Base::_shared_state->spill_context.has_data) {
+        //     Base::_shared_state->spill_context.has_data = true;
+        //     Base::_shared_state->spill_context.runtime_profile =
+        //             Base::profile()->create_child("Spill", true, true);
+        // }
 
         std::vector<size_t> partitioned_indices(block.rows());
-        std::vector<size_t> blocks_rows(
-                Base::_shared_state->spill_partition_helper->partition_count);
+        std::vector<size_t> blocks_rows(Base::_shared_state->partition_count_);
 
         // The last row may contain a null key.
-        const size_t rows = hash_table.has_null_key_data() ? block.rows() - 1 : block.rows();
+        const size_t rows = hash_null_key_data ? block.rows() - 1 : block.rows();
         for (size_t i = 0; i < rows; ++i) {
-            const auto index = Base::_shared_state->spill_partition_helper->get_index(
-                    hash_table.hash(keys[i]));
+            const auto index =
+                    Base::_shared_state->get_partition_index(agg_method.hash_table->hash(keys[i]));
             partitioned_indices[i] = index;
             blocks_rows[index]++;
         }
 
-        if (hash_table.has_null_key_data()) {
+        if (hash_null_key_data) {
             // Here put the row with null key at the last partition.
-            const auto index = Base::_shared_state->spill_partition_helper->partition_count - 1;
+            const auto index = Base::_shared_state->partition_count_ - 1;
             partitioned_indices[rows] = index;
             blocks_rows[index]++;
         }
 
-        for (size_t i = 0; i < Base::_shared_state->spill_partition_helper->partition_count; ++i) {
+        vectorized::Block block_to_write = block.clone_empty();
+        vectorized::Block empty_block = block.clone_empty();
+        for (size_t i = 0; i < Base::_shared_state->partition_count_; ++i) {
             vectorized::Block block_to_write = block.clone_empty();
             if (blocks_rows[i] == 0) {
                 /// Here write one empty block to ensure there are enough blocks in the file,
                 /// blocks' count should be equal with partition_count.
-                static_cast<void>(writer->write(block_to_write));
+                RETURN_IF_ERROR(spilling_stream_->spill_block(
+                        empty_block, i == Base::_shared_state->partition_count_ - 1));
                 continue;
             }
 
@@ -290,19 +305,17 @@ protected:
             }
 
             CHECK_EQ(mutable_block.rows(), blocks_rows[i]);
-            RETURN_IF_ERROR(writer->write(mutable_block.to_block()));
+            block_to_write = mutable_block.to_block();
+            RETURN_IF_ERROR(spilling_stream_->spill_block(
+                    block_to_write, i == Base::_shared_state->partition_count_ - 1));
+            block_to_write.clear_column_data();
         }
-        RETURN_IF_ERROR(writer->close());
+
+        RETURN_IF_ERROR(Base::_shared_state->reset_agg_data());
+        _agg_arena_pool = Base::_shared_state->agg_arena_pool.get();
 
         return Status::OK();
     }
-    Status _create_agg_status(vectorized::AggregateDataPtr data);
-    Status _reset_hash_table();
-    // We should call this function only at 1st phase.
-    // 1st phase: is_merge=true, only have one SlotRef.
-    // 2nd phase: is_merge=false, maybe have multiple exprs.
-    int _get_slot_column_id(const vectorized::AggFnEvaluator* evaluator);
-    size_t _memory_usage() const;
 
     RuntimeProfile::Counter* _hash_table_compute_timer = nullptr;
     RuntimeProfile::Counter* _hash_table_emplace_timer = nullptr;
@@ -331,6 +344,14 @@ protected:
     vectorized::Arena* _agg_arena_pool = nullptr;
 
     std::unique_ptr<ExecutorBase> _executor = nullptr;
+
+    SourceState _source_state;
+
+    size_t _read_cursor {};
+    vectorized::SpillStreamSPtr spilling_stream_;
+    std::shared_ptr<Dependency> finish_dependency_;
+    std::mutex spill_lock_;
+    std::condition_variable spill_cv_;
 };
 
 class BlockingAggSinkLocalState
@@ -376,6 +397,16 @@ public:
         return _is_colocate ? DataDistribution(ExchangeType::BUCKET_HASH_SHUFFLE, _partition_exprs)
                             : DataDistribution(ExchangeType::HASH_SHUFFLE, _partition_exprs);
     }
+    size_t revocable_mem_size(RuntimeState* state) const override;
+
+    Status revoke_memory(RuntimeState* state) override;
+
+    Status get_and_release_aggregate_data(RuntimeState* state, vectorized::Block& block,
+                                          bool& has_null_key, std::vector<size_t>& keys_hashes) {
+        // auto& local_state = get_local_state(state);
+        // return local_state.get_and_release_aggregate_data(block, has_null_key, keys_hashes);
+        return Status::OK();
+    }
 
     using DataSinkOperatorX<LocalStateType>::id;
     using DataSinkOperatorX<LocalStateType>::operator_id;
@@ -385,6 +416,7 @@ protected:
     using LocalState = LocalStateType;
     template <typename DependencyType, typename Derived>
     friend class AggSinkLocalState;
+    friend struct AggSharedState;
     friend class StreamingAggSinkLocalState;
     friend class DistinctStreamingAggSinkLocalState;
     std::vector<vectorized::AggFnEvaluator*> _aggregate_evaluators;
@@ -412,13 +444,19 @@ protected:
     vectorized::VExprContextSPtrs _probe_expr_ctxs;
     ObjectPool* _pool = nullptr;
     std::vector<size_t> _make_nullable_keys;
-    size_t _spill_partition_count_bits;
     int64_t _limit; // -1: no limit
     bool _have_conjuncts;
     const bool _is_streaming;
 
     const std::vector<TExpr> _partition_exprs;
     const bool _is_colocate;
+
+private:
+    bool _enable_spill = false;
+
+    size_t _spill_partition_count_bits = 4;
+
+    // RuntimeProfile* runtime_profile = nullptr;
 };
 
 } // namespace pipeline

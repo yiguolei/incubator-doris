@@ -23,6 +23,8 @@
 #include "runtime/query_context.h"
 #include "vec/common/sort/heap_sorter.h"
 #include "vec/common/sort/topn_sorter.h"
+#include "vec/spill/spill_stream.h"
+#include "vec/spill/spill_stream_manager.h"
 
 namespace doris::pipeline {
 
@@ -33,6 +35,9 @@ Status SortSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo& info) {
     SCOPED_TIMER(exec_time_counter());
     SCOPED_TIMER(_open_timer);
     auto& p = _parent->cast<SortSinkOperatorX>();
+
+    _shared_state->enable_spill_ =
+            p._enable_spill && (p._algorithm == SortAlgorithm::FULL_SORT) && p._limit <= 0;
 
     RETURN_IF_ERROR(p._vsort_exec_exprs.clone(state, _vsort_exec_exprs));
     switch (p._algorithm) {
@@ -65,9 +70,90 @@ Status SortSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo& info) {
 
     _sort_blocks_memory_usage =
             ADD_CHILD_COUNTER_WITH_LEVEL(_profile, "SortBlocks", TUnit::BYTES, "MemoryUsage", 1);
+
+    if (_shared_state->enable_spill_) {
+        finish_dependency_->block();
+    }
     return Status::OK();
 }
 
+Status SortSinkLocalState::close(RuntimeState* state, Status exec_status) {
+    SCOPED_TIMER(Base::exec_time_counter());
+    SCOPED_TIMER(Base::_close_timer);
+    if (Base::_closed) {
+        return Status::OK();
+    }
+    {
+        std::unique_lock<std::mutex> lk(spill_lock_);
+        if (spilling_stream_) {
+            spill_cv_.wait(lk);
+        }
+    }
+    return Base::close(state, exec_status);
+}
+
+Status SortSinkLocalState::revoke_memory(RuntimeState* state) {
+    LOG(INFO) << _shared_state << " sort node id: " << _parent->id()
+              << ", operator id: " << _parent->operator_id() << " revoke memory";
+    DCHECK(!spilling_stream_);
+
+    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
+            spilling_stream_, print_id(state->query_id()), "sort", _parent->id(),
+            _shared_state->spill_block_batch_size_, SortSharedState::SORT_BLOCK_SPILL_BATCH_BYTES,
+            profile()));
+
+    RETURN_IF_ERROR(spilling_stream_->prepare_spill());
+    _shared_state->sorted_streams_.emplace_back(spilling_stream_);
+
+    if (_source_state != SourceState::FINISHED) {
+        _dependency->Dependency::block();
+    }
+
+    return ExecEnv::GetInstance()
+            ->spill_stream_mgr()
+            ->get_spill_io_thread_pool(spilling_stream_->get_spill_root_dir())
+            ->submit_func([this, state] {
+                Defer defer {[&]() {
+                    LOG(WARNING) << _shared_state << " sort node id: " << _parent->id()
+                                 << ", operator id: " << Base::_parent->operator_id()
+                                 << " revoke memory finish: " << _shared_state->sink_status_
+                                 << " source state: " << (int)_source_state;
+
+                    spilling_stream_->end_spill(_shared_state->sink_status_);
+                    if (!_shared_state->sink_status_.ok()) {
+                        _shared_state->clear();
+                    }
+
+                    if (_source_state == SourceState::FINISHED) {
+                        _dependency->set_ready_to_read();
+                        finish_dependency_->set_ready();
+                    } else {
+                        _dependency->Dependency::set_ready();
+                    }
+                    {
+                        std::unique_lock<std::mutex> lk(spill_lock_);
+                        spilling_stream_.reset();
+                        spill_cv_.notify_one();
+                    }
+                }};
+
+                _shared_state->sink_status_ = _shared_state->sorter->prepare_for_read();
+                RETURN_IF_ERROR(_shared_state->sink_status_);
+                bool eos = false;
+                vectorized::Block block;
+                while (!eos && !state->is_cancelled()) {
+                    _shared_state->sink_status_ = _shared_state->sorter->merge_sort_read_for_spill(
+                            state, &block, _shared_state->spill_block_batch_size_, &eos);
+                    RETURN_IF_ERROR(_shared_state->sink_status_);
+                    _shared_state->sink_status_ = spilling_stream_->spill_block(block, eos);
+                    RETURN_IF_ERROR(_shared_state->sink_status_);
+                    block.clear_column_data();
+                }
+                _shared_state->sorter->reset();
+
+                return Status::OK();
+            });
+}
 SortSinkOperatorX::SortSinkOperatorX(ObjectPool* pool, int operator_id, const TPlanNode& tnode,
                                      const DescriptorTbl& descs)
         : DataSinkOperatorX(operator_id, tnode.node_id),
@@ -91,6 +177,7 @@ Status SortSinkOperatorX::init(const TPlanNode& tnode, RuntimeState* state) {
     RETURN_IF_ERROR(_vsort_exec_exprs.init(tnode.sort_node.sort_info, _pool));
     _is_asc_order = tnode.sort_node.sort_info.is_asc_order;
     _nulls_first = tnode.sort_node.sort_info.nulls_first;
+    _enable_spill = state->enable_sort_spill();
 
     // init runtime predicate
     if (_use_topn_opt) {
@@ -136,6 +223,7 @@ Status SortSinkOperatorX::prepare(RuntimeState* state) {
     } else {
         _algorithm = SortAlgorithm::FULL_SORT;
     }
+    _enable_spill = _enable_spill && (_algorithm == SortAlgorithm::FULL_SORT) && _limit <= 0;
     return _vsort_exec_exprs.prepare(state, _child_x->row_desc(), _row_descriptor);
 }
 
@@ -146,9 +234,12 @@ Status SortSinkOperatorX::open(RuntimeState* state) {
 Status SortSinkOperatorX::sink(doris::RuntimeState* state, vectorized::Block* in_block,
                                SourceState source_state) {
     auto& local_state = get_local_state(state);
+    RETURN_IF_ERROR(local_state._shared_state->sink_status_);
+    local_state._source_state = source_state;
     SCOPED_TIMER(local_state.exec_time_counter());
     COUNTER_UPDATE(local_state.rows_input_counter(), (int64_t)in_block->rows());
     if (in_block->rows() > 0) {
+        local_state._shared_state->update_spill_block_batch_size(in_block);
         RETURN_IF_ERROR(local_state._shared_state->sorter->append_block(in_block));
         local_state._mem_tracker->set_consumption(local_state._shared_state->sorter->data_size());
         COUNTER_SET(local_state._sort_blocks_memory_usage,
@@ -175,10 +266,31 @@ Status SortSinkOperatorX::sink(doris::RuntimeState* state, vectorized::Block* in
     }
 
     if (source_state == SourceState::FINISHED) {
-        RETURN_IF_ERROR(local_state._shared_state->sorter->prepare_for_read());
-        local_state._dependency->set_ready_to_read();
+        if (revocable_mem_size(state) > 0) {
+            RETURN_IF_ERROR(revoke_memory(state));
+        } else {
+            if (!_enable_spill) {
+                RETURN_IF_ERROR(local_state._shared_state->sorter->prepare_for_read());
+            }
+            local_state._dependency->set_ready_to_read();
+        }
     }
     return Status::OK();
 }
 
+size_t SortSinkOperatorX::revocable_mem_size(RuntimeState* state) const {
+    if (_enable_spill) {
+        auto& local_state = get_local_state(state);
+        return local_state._shared_state->sorter->data_size();
+    }
+    return 0;
+}
+
+Status SortSinkOperatorX::revoke_memory(RuntimeState* state) {
+    DCHECK(_enable_spill);
+    auto& local_state = get_local_state(state);
+    RETURN_IF_ERROR(local_state._shared_state->sink_status_);
+    RETURN_IF_ERROR(local_state.revoke_memory(state));
+    return Status::WaitForIO("Spilling");
+}
 } // namespace doris::pipeline

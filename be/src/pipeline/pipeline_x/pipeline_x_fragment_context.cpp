@@ -65,6 +65,8 @@
 #include "pipeline/exec/olap_table_sink_v2_operator.h"
 #include "pipeline/exec/partition_sort_sink_operator.h"
 #include "pipeline/exec/partition_sort_source_operator.h"
+#include "pipeline/exec/partitioned_hash_join_probe_operator.h"
+#include "pipeline/exec/partitioned_hash_join_sink_operator.h"
 #include "pipeline/exec/repeat_operator.h"
 #include "pipeline/exec/result_file_sink_operator.h"
 #include "pipeline/exec/result_sink_operator.h"
@@ -1003,25 +1005,52 @@ Status PipelineXFragmentContext::_create_operator(ObjectPool* pool, const TPlanN
         break;
     }
     case TPlanNodeType::HASH_JOIN_NODE: {
-        op.reset(new HashJoinProbeOperatorX(pool, tnode, next_operator_id(), descs));
-        RETURN_IF_ERROR(cur_pipe->add_operator(op));
+        const auto is_broadcast_join = tnode.hash_join_node.__isset.is_broadcast_join &&
+                                       tnode.hash_join_node.is_broadcast_join;
+        const auto enable_join_spill = _runtime_state->enable_join_spill();
+        if (enable_join_spill && !is_broadcast_join) {
+            const uint32_t partition_count = 16;
+            op.reset(new PartitionedHashJoinProbeOperatorX(pool, tnode, next_operator_id(), descs,
+                                                           partition_count));
+            RETURN_IF_ERROR(cur_pipe->add_operator(op));
 
-        const auto downstream_pipeline_id = cur_pipe->id();
-        if (_dag.find(downstream_pipeline_id) == _dag.end()) {
-            _dag.insert({downstream_pipeline_id, {}});
+            const auto downstream_pipeline_id = cur_pipe->id();
+            if (_dag.find(downstream_pipeline_id) == _dag.end()) {
+                _dag.insert({downstream_pipeline_id, {}});
+            }
+            PipelinePtr build_side_pipe = add_pipeline(cur_pipe);
+            _dag[downstream_pipeline_id].push_back(build_side_pipe->id());
+
+            DataSinkOperatorXPtr sink;
+            sink.reset(new PartitionedHashJoinSinkOperatorX(
+                    pool, next_sink_operator_id(), tnode, descs, _use_global_rf, partition_count));
+            sink->set_dests_id({op->operator_id()});
+            RETURN_IF_ERROR(build_side_pipe->set_sink(sink));
+            RETURN_IF_ERROR(build_side_pipe->sink_x()->init(tnode, _runtime_state.get()));
+
+            _pipeline_parent_map.push(op->node_id(), cur_pipe);
+            _pipeline_parent_map.push(op->node_id(), build_side_pipe);
+        } else {
+            op.reset(new HashJoinProbeOperatorX(pool, tnode, next_operator_id(), descs));
+            RETURN_IF_ERROR(cur_pipe->add_operator(op));
+
+            const auto downstream_pipeline_id = cur_pipe->id();
+            if (_dag.find(downstream_pipeline_id) == _dag.end()) {
+                _dag.insert({downstream_pipeline_id, {}});
+            }
+            PipelinePtr build_side_pipe = add_pipeline(cur_pipe);
+            _dag[downstream_pipeline_id].push_back(build_side_pipe->id());
+
+            DataSinkOperatorXPtr sink;
+            sink.reset(new HashJoinBuildSinkOperatorX(pool, next_sink_operator_id(), tnode, descs,
+                                                      _use_global_rf));
+            sink->set_dests_id({op->operator_id()});
+            RETURN_IF_ERROR(build_side_pipe->set_sink(sink));
+            RETURN_IF_ERROR(build_side_pipe->sink_x()->init(tnode, _runtime_state.get()));
+
+            _pipeline_parent_map.push(op->node_id(), cur_pipe);
+            _pipeline_parent_map.push(op->node_id(), build_side_pipe);
         }
-        PipelinePtr build_side_pipe = add_pipeline(cur_pipe);
-        _dag[downstream_pipeline_id].push_back(build_side_pipe->id());
-
-        DataSinkOperatorXPtr sink;
-        sink.reset(new HashJoinBuildSinkOperatorX(pool, next_sink_operator_id(), tnode, descs,
-                                                  _use_global_rf));
-        sink->set_dests_id({op->operator_id()});
-        RETURN_IF_ERROR(build_side_pipe->set_sink(sink));
-        RETURN_IF_ERROR(build_side_pipe->sink_x()->init(tnode, _runtime_state.get()));
-
-        _pipeline_parent_map.push(op->node_id(), cur_pipe);
-        _pipeline_parent_map.push(op->node_id(), build_side_pipe);
         break;
     }
     case TPlanNodeType::CROSS_JOIN_NODE: {

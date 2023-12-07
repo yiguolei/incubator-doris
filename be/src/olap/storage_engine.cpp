@@ -195,6 +195,7 @@ static Status load_data_dirs(const std::vector<DataDir*>& data_dirs) {
 Status StorageEngine::_open() {
     // init store_map
     RETURN_NOT_OK_STATUS_WITH_WARN(_init_store_map(), "_init_store_map failed");
+    RETURN_NOT_OK_STATUS_WITH_WARN(_init_spill_store_map(), "_init_spill_store_map failed");
 
     _effective_cluster_id = config::cluster_id;
     RETURN_NOT_OK_STATUS_WITH_WARN(_check_all_root_path_cluster_id(), "fail to check cluster id");
@@ -221,9 +222,11 @@ Status StorageEngine::_init_store_map() {
     std::vector<std::thread> threads;
     SpinLock error_msg_lock;
     std::string error_msg;
-    for (auto& path : _options.store_paths) {
-        auto store = std::make_unique<DataDir>(*this, path.path, path.capacity_bytes,
-                                               path.storage_medium);
+    for (const auto& path : _options.store_paths) {
+        std::string spill_dir = fmt::format("{}/{}", path.path, SPILL_DIR_PREFIX);
+        std::string spill_gc_dir = fmt::format("{}/{}", path.path, SPILL_GC_DIR_PREFIX);
+        auto store = std::make_shared<DataDir>(*this, path.path, spill_dir, spill_gc_dir,
+                                               path.capacity_bytes, path.storage_medium);
         threads.emplace_back([store = store.get(), &error_msg_lock, &error_msg]() {
             auto st = store->init();
             if (!st.ok()) {
@@ -248,6 +251,46 @@ Status StorageEngine::_init_store_map() {
 
     RETURN_NOT_OK_STATUS_WITH_WARN(_init_stream_load_recorder(_options.store_paths[0].path),
                                    "init StreamLoadRecorder failed");
+
+    return Status::OK();
+}
+
+Status StorageEngine::_init_spill_store_map() {
+    std::vector<std::thread> threads;
+    SpinLock error_msg_lock;
+    std::string error_msg;
+    for (const auto& path : _options.spill_store_paths) {
+        auto data_dir = _store_map.find(path.path);
+        if (data_dir != _store_map.end()) {
+            LOG(INFO) << "storage path used as spill storage path: " << path.path;
+            _spill_store_map.emplace(path.path, data_dir->second);
+            continue;
+        }
+        std::string spill_dir = fmt::format("{}/{}", path.path, SPILL_DIR_PREFIX);
+        std::string spill_gc_dir = fmt::format("{}/{}", path.path, SPILL_GC_DIR_PREFIX);
+        auto store = std::make_shared<DataDir>(*this, path.path, spill_dir, spill_gc_dir,
+                                               path.capacity_bytes, path.storage_medium);
+        threads.emplace_back([store = store.get(), &error_msg_lock, &error_msg]() {
+            auto st = store->init();
+            if (!st.ok()) {
+                {
+                    std::lock_guard<SpinLock> l(error_msg_lock);
+                    error_msg.append(st.to_string() + ";");
+                }
+                LOG(WARNING) << "Store load failed, status=" << st.to_string()
+                             << ", path=" << store->path();
+            }
+        });
+        _spill_store_map.emplace(store->path(), std::move(store));
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // All store paths MUST init successfully
+    if (!error_msg.empty()) {
+        return Status::InternalError("init path failed, error={}", error_msg);
+    }
 
     return Status::OK();
 }
@@ -541,6 +584,46 @@ std::vector<DataDir*> StorageEngine::get_stores_for_create_tablet(
 
     std::sort(dir_infos.begin(), dir_infos.end());
     get_round_robin_stores(curr_index, dir_infos, stores);
+
+    return stores;
+}
+std::vector<DataDir*> StorageEngine::get_stores_for_spill(TStorageMedium::type storage_medium) {
+    std::vector<DataDir*> stores;
+    {
+        std::lock_guard<std::mutex> l(_store_lock);
+        for (auto&& [_, store] : _spill_store_map) {
+            if (store->is_used()) {
+                if ((_available_storage_medium_type_count == 1 ||
+                     store->storage_medium() == storage_medium) &&
+                    !store->reach_capacity_limit(0)) {
+                    stores.push_back(store.get());
+                }
+            }
+        }
+    }
+
+    std::sort(stores.begin(), stores.end(),
+              [](DataDir* a, DataDir* b) { return a->get_usage(0) < b->get_usage(0); });
+
+    size_t seventy_percent_index = stores.size();
+    size_t eighty_five_percent_index = stores.size();
+    for (size_t index = 0; index < stores.size(); index++) {
+        // If the usage of the store is less than 70%, we choose disk randomly.
+        if (stores[index]->get_usage(0) > 0.7 && seventy_percent_index == stores.size()) {
+            seventy_percent_index = index;
+        }
+        if (stores[index]->get_usage(0) > 0.85 && eighty_five_percent_index == stores.size()) {
+            eighty_five_percent_index = index;
+            break;
+        }
+    }
+
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(stores.begin(), stores.begin() + seventy_percent_index, g);
+    std::shuffle(stores.begin() + seventy_percent_index, stores.begin() + eighty_five_percent_index,
+                 g);
+    std::shuffle(stores.begin() + eighty_five_percent_index, stores.end(), g);
 
     return stores;
 }

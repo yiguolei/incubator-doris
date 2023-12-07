@@ -49,7 +49,8 @@ const char* const kTestFilePath = ".testfile";
 // Now, After DataDir was created, it will never be deleted for easy implementation.
 class DataDir {
 public:
-    DataDir(StorageEngine& engine, const std::string& path, int64_t capacity_bytes = -1,
+    DataDir(StorageEngine& engine, const std::string& path, const std::string& spill_path,
+            const std::string& spill_gc_path, int64_t capacity_bytes = -1,
             TStorageMedium::type storage_medium = TStorageMedium::HDD);
     ~DataDir();
 
@@ -57,6 +58,8 @@ public:
     void stop_bg_worker();
 
     const std::string& path() const { return _path; }
+    const std::string& spill_path() const { return _spill_path; }
+    const std::string& spill_gc_path() const { return _spill_gc_path; }
     size_t path_hash() const { return _path_hash; }
 
     bool is_used() const { return _is_used; }
@@ -167,6 +170,8 @@ private:
 
     StorageEngine& _engine;
     std::string _path;
+    std::string _spill_path;
+    std::string _spill_gc_path;
     size_t _path_hash;
 
     // the actual available capacity of the disk of this data dir
@@ -174,6 +179,7 @@ private:
     // the actual capacity of the disk of this data dir
     size_t _disk_capacity_bytes;
     size_t _trash_used_bytes;
+    std::atomic_uint64_t _spill_data_bytes = 0;
     TStorageMedium::type _storage_medium;
     bool _is_used;
 

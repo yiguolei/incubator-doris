@@ -74,6 +74,7 @@ Status parse_conf_cache_paths(const std::string& config_path, std::vector<CacheP
 struct EngineOptions {
     // list paths that tablet will be put into.
     std::vector<StorePath> store_paths;
+    std::vector<StorePath> spill_store_paths;
     std::set<std::string> broken_paths;
     // BE's UUID. It will be reset every time BE restarts.
     UniqueId backend_uid {0, 0};

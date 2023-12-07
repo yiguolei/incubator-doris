@@ -18,6 +18,8 @@
 
 #include <stdint.h>
 
+#include <atomic>
+
 #include "common/status.h"
 #include "operator.h"
 #include "pipeline/pipeline_x/dependency.h"
@@ -97,8 +99,6 @@ protected:
                                                                  vectorized::Block* block,
                                                                  SourceState& source_state);
     Status _destroy_agg_status(vectorized::AggregateDataPtr data);
-    Status _reset_hash_table();
-    Status _merge_spilt_data();
     void _make_nullable_output_key(vectorized::Block* block) {
         if (block->rows() != 0) {
             auto& shared_state = *Base ::_shared_state;
@@ -109,6 +109,7 @@ protected:
             }
         }
     }
+    Status _initiate_merge_spill_partition_agg_data(RuntimeState* state);
 
     RuntimeProfile::Counter* _get_results_timer = nullptr;
     RuntimeProfile::Counter* _serialize_result_timer = nullptr;
@@ -127,6 +128,10 @@ protected:
     executor _executor;
 
     vectorized::AggregatedDataVariants* _agg_data = nullptr;
+    Status status_;
+    bool is_merging_ = false;
+    std::mutex merge_spill_lock_;
+    std::condition_variable merge_spill_cv_;
 };
 
 class AggSourceOperatorX : public OperatorX<AggLocalState> {

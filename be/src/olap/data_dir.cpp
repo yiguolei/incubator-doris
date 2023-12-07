@@ -113,10 +113,13 @@ DEFINE_GAUGE_METRIC_PROTOTYPE_2ARG(disks_state, MetricUnit::BYTES);
 DEFINE_GAUGE_METRIC_PROTOTYPE_2ARG(disks_compaction_score, MetricUnit::NOUNIT);
 DEFINE_GAUGE_METRIC_PROTOTYPE_2ARG(disks_compaction_num, MetricUnit::NOUNIT);
 
-DataDir::DataDir(StorageEngine& engine, const std::string& path, int64_t capacity_bytes,
+DataDir::DataDir(StorageEngine& engine, const std::string& path, const std::string& spill_path,
+                 const std::string& spill_gc_path, int64_t capacity_bytes,
                  TStorageMedium::type storage_medium)
         : _engine(engine),
           _path(path),
+          _spill_path(spill_path),
+          _spill_gc_path(spill_gc_path),
           _available_bytes(0),
           _disk_capacity_bytes(0),
           _trash_used_bytes(0),

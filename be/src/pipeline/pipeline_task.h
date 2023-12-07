@@ -78,6 +78,7 @@ enum class PipelineTaskState : uint8_t {
     FINISHED = 6,
     CANCELED = 7,
     BLOCKED_FOR_RF = 8,
+    BLOCKED_FOR_IO = 9,
 };
 
 inline const char* get_state_name(PipelineTaskState idx) {
@@ -100,6 +101,8 @@ inline const char* get_state_name(PipelineTaskState idx) {
         return "CANCELED";
     case PipelineTaskState::BLOCKED_FOR_RF:
         return "BLOCKED_FOR_RF";
+    case PipelineTaskState::BLOCKED_FOR_IO:
+        return "BLOCKED_FOR_IO";
     }
     LOG(FATAL) << "__builtin_unreachable";
     __builtin_unreachable();

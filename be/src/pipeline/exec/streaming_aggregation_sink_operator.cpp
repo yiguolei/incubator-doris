@@ -259,8 +259,8 @@ Status StreamingAggSinkLocalState::_pre_agg_with_serialized_key(
                     const bool used_too_much_memory =
                             (_parent->cast<StreamingAggSinkOperatorX>()
                                              ._external_agg_bytes_threshold > 0 &&
-                             _memory_usage() > _parent->cast<StreamingAggSinkOperatorX>()
-                                                       ._external_agg_bytes_threshold);
+                             memory_usage() > _parent->cast<StreamingAggSinkOperatorX>()
+                                                      ._external_agg_bytes_threshold);
                     // do not try to do agg, just init and serialize directly return the out_block
                     if (!_should_expand_preagg_hash_tables() || used_too_much_memory) {
                         SCOPED_TIMER(_streaming_agg_timer);

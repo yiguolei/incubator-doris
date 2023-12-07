@@ -109,6 +109,13 @@ public:
         return _query_options.__isset.scan_queue_mem_limit ? _query_options.scan_queue_mem_limit
                                                            : _query_options.mem_limit / 20;
     }
+    int64_t query_mem_limit() const {
+        if (_query_options.__isset.mem_limit && (_query_options.mem_limit > 0)) {
+            return _query_options.mem_limit;
+        }
+        return 0;
+    }
+
     ObjectPool* obj_pool() const { return _obj_pool.get(); }
 
     const DescriptorTbl& desc_tbl() const { return *_desc_tbl; }
@@ -565,6 +572,25 @@ public:
         CHECK(_task_execution_context_inited)
                 << "_task_execution_context_inited == false, the ctx is not inited";
         return _task_execution_context;
+    }
+
+    bool enable_join_spill() const {
+        return _query_options.__isset.enable_join_spill && _query_options.enable_join_spill;
+    }
+
+    bool enable_sort_spill() const {
+        return _query_options.__isset.enable_sort_spill && _query_options.enable_sort_spill;
+    }
+
+    bool enable_agg_spill() const {
+        return _query_options.__isset.enable_agg_spill && _query_options.enable_agg_spill;
+    }
+
+    int64_t min_revocable_mem() const {
+        if (_query_options.__isset.min_revocable_mem) {
+            return _query_options.min_revocable_mem;
+        }
+        return 0;
     }
 
 private:

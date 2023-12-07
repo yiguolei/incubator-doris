@@ -297,7 +297,7 @@ void TaskScheduler::_do_work(size_t index) {
             // Sink operator finished, just close task now.
             _close_task(task, PipelineTaskState::FINISHED, Status::OK());
             continue;
-        } else if (!status.ok()) {
+        } else if (!status.is<ErrorCode::PIP_WAIT_FOR_IO>() && !status.ok()) {
             task->set_eos_time();
             LOG(WARNING) << fmt::format(
                     "Pipeline task failed. query_id: {} reason: {}",
@@ -358,6 +358,7 @@ void TaskScheduler::_do_work(size_t index) {
         case PipelineTaskState::BLOCKED_FOR_SOURCE:
         case PipelineTaskState::BLOCKED_FOR_SINK:
         case PipelineTaskState::BLOCKED_FOR_RF:
+        case PipelineTaskState::BLOCKED_FOR_IO:
         case PipelineTaskState::BLOCKED_FOR_DEPENDENCY:
             static_cast<void>(_blocked_task_scheduler->add_blocked_task(task));
             break;

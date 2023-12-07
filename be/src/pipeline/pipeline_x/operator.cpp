@@ -49,6 +49,8 @@
 #include "pipeline/exec/olap_table_sink_v2_operator.h"
 #include "pipeline/exec/partition_sort_sink_operator.h"
 #include "pipeline/exec/partition_sort_source_operator.h"
+#include "pipeline/exec/partitioned_hash_join_probe_operator.h"
+#include "pipeline/exec/partitioned_hash_join_sink_operator.h"
 #include "pipeline/exec/repeat_operator.h"
 #include "pipeline/exec/result_file_sink_operator.h"
 #include "pipeline/exec/result_sink_operator.h"
@@ -613,6 +615,7 @@ DECLARE_OPERATOR_X(SetProbeSinkLocalState<true>)
 DECLARE_OPERATOR_X(SetProbeSinkLocalState<false>)
 DECLARE_OPERATOR_X(SetSinkLocalState<true>)
 DECLARE_OPERATOR_X(SetSinkLocalState<false>)
+DECLARE_OPERATOR_X(PartitionedHashJoinSinkLocalState)
 
 #undef DECLARE_OPERATOR_X
 
@@ -640,6 +643,7 @@ DECLARE_OPERATOR_X(DataGenLocalState)
 DECLARE_OPERATOR_X(SchemaScanLocalState)
 DECLARE_OPERATOR_X(MetaScanLocalState)
 DECLARE_OPERATOR_X(LocalExchangeSourceLocalState)
+DECLARE_OPERATOR_X(PartitionedHashJoinProbeLocalState)
 
 #undef DECLARE_OPERATOR_X
 
@@ -647,6 +651,7 @@ template class StreamingOperatorX<AssertNumRowsLocalState>;
 template class StreamingOperatorX<SelectLocalState>;
 
 template class StatefulOperatorX<HashJoinProbeLocalState>;
+template class StatefulOperatorX<PartitionedHashJoinProbeLocalState>;
 template class StatefulOperatorX<RepeatLocalState>;
 template class StatefulOperatorX<NestedLoopJoinProbeLocalState>;
 template class StatefulOperatorX<TableFunctionLocalState>;
@@ -667,6 +672,7 @@ template class PipelineXSinkLocalState<SetProbeSinkDependency>;
 template class PipelineXSinkLocalState<LocalExchangeSinkDependency>;
 template class PipelineXSinkLocalState<AndDependency>;
 template class PipelineXSinkLocalState<ResultSinkDependency>;
+template class PipelineXSinkLocalState<SharedPartitionedHashJoinDependency>;
 
 template class PipelineXLocalState<HashJoinProbeDependency>;
 template class PipelineXLocalState<SortSourceDependency>;
@@ -681,6 +687,7 @@ template class PipelineXLocalState<SetSourceDependency>;
 template class PipelineXLocalState<LocalExchangeSourceDependency>;
 template class PipelineXLocalState<AndDependency>;
 template class PipelineXLocalState<ScanDependency>;
+template class PipelineXLocalState<PartitionedHashJoinProbeDependency>;
 
 template class AsyncWriterSink<doris::vectorized::VFileResultWriter, ResultFileSinkOperatorX>;
 template class AsyncWriterSink<doris::vectorized::VJdbcTableWriter, JdbcTableSinkOperatorX>;
