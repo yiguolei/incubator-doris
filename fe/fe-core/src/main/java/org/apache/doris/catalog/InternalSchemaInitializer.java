@@ -116,6 +116,24 @@ public class InternalSchemaInitializer extends Thread {
         modifyTblReplicaCount(database, AuditLoaderPlugin.AUDIT_LOG_TABLE);
     }
 
+    // Sometimes we may add new column to audit table, but the audit log table may
+    // already exits, but user may not modify the audit table, so that import may failed.
+    // This method will remove the columns from AUDIT_TABLE_COLUMNS that not in audit log
+    // table schema if it is already exist.
+    public static List<ColumnDef> getAuditTableCols() {
+        List<ColumnDef> existingCols = new ArrayList<>();
+        TableIf auditTbl = StatisticsUtil.findTable(InternalCatalog.INTERNAL_CATALOG_NAME,
+                StatisticConstants.DB_NAME, AuditLoaderPlugin.AUDIT_LOG_TABLE);
+        for (ColumnDef columnDef : AUDIT_TABLE_COLUMNS) {
+            // If the column in code definition but not in existing audit table, then ignore
+            // it.
+            if (auditTbl.getColumn(columnDef.getName()) != null) {
+                existingCols.add(columnDef);
+            }
+        }
+        return existingCols;
+    }
+
     public void modifyTblReplicaCount(Database database, String tblName) {
         if (!(Config.min_replication_num_per_tablet < StatisticConstants.STATISTIC_INTERNAL_TABLE_REPLICA_NUM
                 && Config.max_replication_num_per_tablet >= StatisticConstants.STATISTIC_INTERNAL_TABLE_REPLICA_NUM)) {
