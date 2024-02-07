@@ -155,7 +155,6 @@ public:
     }
 
     [[nodiscard]] const TUniqueId& task_id() const { return _task_id; }
-    [[nodiscard]] const TUniqueId& fragment_instance_id() const { return _fragment_instance_id; }
 
     static std::string get_thread_id() {
         std::stringstream ss;
