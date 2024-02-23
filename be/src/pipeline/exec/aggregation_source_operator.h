@@ -87,17 +87,7 @@ protected:
                                            SourceState& source_state);
     Status _serialize_with_serialized_key_result(RuntimeState* state, vectorized::Block* block,
                                                  SourceState& source_state);
-    Status _get_result_with_serialized_key_non_spill(RuntimeState* state, vectorized::Block* block,
-                                                     SourceState& source_state);
-    Status _get_result_with_spilt_data(RuntimeState* state, vectorized::Block* block,
-                                       SourceState& source_state);
 
-    Status _serialize_with_serialized_key_result_non_spill(RuntimeState* state,
-                                                           vectorized::Block* block,
-                                                           SourceState& source_state);
-    Status _serialize_with_serialized_key_result_with_spilt_data(RuntimeState* state,
-                                                                 vectorized::Block* block,
-                                                                 SourceState& source_state);
     Status _destroy_agg_status(vectorized::AggregateDataPtr data);
     void _make_nullable_output_key(vectorized::Block* block) {
         if (block->rows() != 0) {
@@ -109,7 +99,6 @@ protected:
             }
         }
     }
-    Status _initiate_merge_spill_partition_agg_data(RuntimeState* state);
 
     RuntimeProfile::Counter* _get_results_timer = nullptr;
     RuntimeProfile::Counter* _serialize_result_timer = nullptr;
@@ -128,10 +117,6 @@ protected:
     executor _executor;
 
     vectorized::AggregatedDataVariants* _agg_data = nullptr;
-    Status status_;
-    bool is_merging_ = false;
-    std::mutex merge_spill_lock_;
-    std::condition_variable merge_spill_cv_;
 };
 
 class AggSourceOperatorX : public OperatorX<AggLocalState> {
@@ -145,6 +130,11 @@ public:
                      SourceState& source_state) override;
 
     bool is_source() const override { return true; }
+
+    AggSharedState* get_shared_state(RuntimeState* state) {
+        auto& local_state = get_local_state(state);
+        return local_state.Base::_shared_state;
+    }
 
 private:
     friend class AggLocalState;

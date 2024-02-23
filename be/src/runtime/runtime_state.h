@@ -593,6 +593,10 @@ public:
         return 0;
     }
 
+    void set_max_operator_id(int max_operator_id) { _max_operator_id = max_operator_id; }
+
+    int max_operator_id() const { return _max_operator_id; }
+
 private:
     Status create_error_log_file();
 
@@ -704,6 +708,7 @@ private:
     std::ofstream* _error_log_file = nullptr; // error file path, absolute path
     std::vector<TTabletCommitInfo> _tablet_commit_infos;
     std::vector<TErrorTabletInfo> _error_tablet_infos;
+    int _max_operator_id = 0;
 
     std::vector<std::unique_ptr<doris::pipeline::PipelineXLocalStateBase>> _op_id_to_local_state;
 

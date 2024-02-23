@@ -60,16 +60,20 @@ Status SpillReader::open() {
                                                     &file_reader_));
 
     size_t file_size = file_reader_->size();
+    DCHECK(file_size >= 16); // max_sub_block_size, block count
 
     Slice result((char*)&block_count_, sizeof(size_t));
 
     // read block count
     size_t bytes_read = 0;
     RETURN_IF_ERROR(file_reader_->read_at(file_size - sizeof(size_t), result, &bytes_read));
+    DCHECK(bytes_read == 8); // max_sub_block_size, block count
 
     // read max sub block size
+    bytes_read = 0;
     result.data = (char*)&max_sub_block_size_;
     RETURN_IF_ERROR(file_reader_->read_at(file_size - sizeof(size_t) * 2, result, &bytes_read));
+    DCHECK(bytes_read == 8); // max_sub_block_size, block count
 
     size_t buff_size = std::max(block_count_ * sizeof(size_t), max_sub_block_size_);
     read_buff_.reset(new char[buff_size]);

@@ -19,6 +19,7 @@
 
 #include <string>
 
+#include "common/status.h"
 #include "pipeline/exec/distinct_streaming_aggregation_sink_operator.h"
 #include "pipeline/exec/operator.h"
 #include "pipeline/exec/streaming_aggregation_sink_operator.h"
@@ -63,9 +64,9 @@ AggSinkLocalState<DependencyType, Derived>::AggSinkLocalState(DataSinkOperatorXB
           _serialize_data_timer(nullptr),
           _deserialize_data_timer(nullptr),
           _max_row_size_counter(nullptr) {
-    finish_dependency_ = std::make_shared<FinishDependency>(
-            parent->operator_id(), parent->node_id(), parent->get_name() + "_FINISH_DEPENDENCY",
-            state->get_query_ctx());
+    // finish_dependency_ = std::make_shared<FinishDependency>(
+    //         parent->operator_id(), parent->node_id(), parent->get_name() + "_FINISH_DEPENDENCY",
+    //         state->get_query_ctx());
 }
 
 template <typename DependencyType, typename Derived>
@@ -82,8 +83,6 @@ Status AggSinkLocalState<DependencyType, Derived>::init(RuntimeState* state,
     Base::_shared_state->offsets_of_aggregate_states = p._offsets_of_aggregate_states;
     Base::_shared_state->make_nullable_keys = p._make_nullable_keys;
     Base::_shared_state->_limit = p._limit;
-    Base::_shared_state->_enable_spill = p._enable_spill;
-    Base::_shared_state->init_spill_partition_param(p._spill_partition_count_bits);
     for (auto& evaluator : p._aggregate_evaluators) {
         Base::_shared_state->aggregate_evaluators.push_back(evaluator->clone(state, p._pool));
     }
@@ -157,9 +156,6 @@ Status AggSinkLocalState<DependencyType, Derived>::init(RuntimeState* state,
                                p._needs_finalize;      // agg's finalize step
     }
 
-    if (p._enable_spill) {
-        finish_dependency_->block();
-    }
     return Status::OK();
 }
 
@@ -549,46 +545,13 @@ void AggSinkLocalState<DependencyType, Derived>::_init_hash_method(
     }
 }
 
-/*
 template <typename DependencyType, typename Derived>
-template <typename HashTableCtxType, typename HashTableType>
-Status AggSinkLocalState<DependencyType, Derived>::_convert_hash_table_to_block(
-        HashTableCtxType& agg_method, HashTableType& hash_table, vectorized::Block& block,
-        bool& has_null_key, std::vector<size_t>& keys_hashes) {
-    std::vector<typename HashTableType::key_type> keys;
-    RETURN_IF_ERROR(_serialize_hash_table_to_block(agg_method, hash_table, block, keys));
-    CHECK_EQ(block.rows(), hash_table.size());
-    CHECK_EQ(keys.size(), block.rows());
-
-    has_null_key = hash_table.has_null_key_data();
-
-    const size_t rows = has_null_key ? block.rows() - 1 : block.rows();
-    for (size_t i = 0; i < rows; ++i) {
-        keys_hashes.emplace_back(hash_table.hash(keys[i]));
-    }
+Status AggSinkLocalState<DependencyType, Derived>::reset_hash_table() {
+    auto& ss = *Base::_shared_state;
+    RETURN_IF_ERROR(ss.reset_hash_table());
+    _agg_arena_pool = ss.agg_arena_pool.get();
     return Status::OK();
 }
-
-template <typename DependencyType, typename Derived>
-Status AggSinkLocalState<DependencyType, Derived>::get_and_release_aggregate_data(
-        vectorized::Block& block, bool& has_null_key, std::vector<size_t>& keys_hashes) {
-    has_null_key = false;
-    if (_get_hash_table_size() == 0) {
-        return Status::OK();
-    }
-
-    auto st = std::visit(
-            [&](auto&& agg_method) -> Status {
-                auto& hash_table = *agg_method.hash_table;
-
-                return _convert_hash_table_to_block(agg_method, hash_table, block, has_null_key,
-                                                    keys_hashes);
-            },
-            _agg_data->method_variant);
-    RETURN_IF_ERROR(st);
-    return Base::_shared_state->reset_hash_table();
-}
-*/
 
 template <typename LocalStateType>
 AggSinkOperatorX<LocalStateType>::AggSinkOperatorX(ObjectPool* pool, int operator_id,
@@ -637,15 +600,9 @@ Status AggSinkOperatorX<LocalStateType>::init(const TPlanNode& tnode, RuntimeSta
     const auto& agg_functions = tnode.agg_node.aggregate_functions;
     _external_agg_bytes_threshold = state->external_agg_bytes_threshold();
 
-    if (state->query_options().__isset.external_agg_partition_bits) {
-        _spill_partition_count_bits = state->query_options().external_agg_partition_bits;
-    }
-
     _is_merge = std::any_of(agg_functions.cbegin(), agg_functions.cend(),
                             [](const auto& e) { return e.nodes[0].agg_expr.is_merge_agg; });
 
-    _enable_spill =
-            state->enable_agg_spill() && !_is_streaming && !tnode.agg_node.grouping_exprs.empty();
     return Status::OK();
 }
 
@@ -720,8 +677,7 @@ Status AggSinkOperatorX<LocalStateType>::sink(doris::RuntimeState* state,
                                               vectorized::Block* in_block,
                                               SourceState source_state) {
     auto& local_state = get_local_state(state);
-    RETURN_IF_ERROR(local_state._shared_state->sink_status_);
-    local_state._source_state = source_state;
+    // local_state._source_state = source_state;
     SCOPED_TIMER(local_state.exec_time_counter());
     COUNTER_UPDATE(local_state.rows_input_counter(), (int64_t)in_block->rows());
     local_state._shared_state->input_num_rows += in_block->rows();
@@ -730,95 +686,29 @@ Status AggSinkOperatorX<LocalStateType>::sink(doris::RuntimeState* state,
         local_state._executor->update_memusage(&local_state);
     }
     if (source_state == SourceState::FINISHED) {
-        if (revocable_mem_size(state) > 0) {
-            RETURN_IF_ERROR(revoke_memory(state));
-        } else {
-            local_state._dependency->set_ready_to_read();
-        }
+        local_state._dependency->set_ready_to_read();
     }
     return Status::OK();
 }
 
 template <typename LocalStateType>
-size_t AggSinkOperatorX<LocalStateType>::revocable_mem_size(RuntimeState* state) const {
-    if (_enable_spill) {
-        auto& local_state = get_local_state(state);
-        return local_state.memory_usage();
-    }
-    return 0;
+size_t AggSinkOperatorX<LocalStateType>::get_revocable_mem_size(RuntimeState* state) const {
+    auto& local_state = get_local_state(state);
+    return local_state.memory_usage();
 }
 
 template <typename LocalStateType>
-Status AggSinkOperatorX<LocalStateType>::revoke_memory(RuntimeState* state) {
-    DCHECK(_enable_spill);
+Status AggSinkOperatorX<LocalStateType>::reset_hash_table(RuntimeState* state) {
     auto& local_state = get_local_state(state);
-    RETURN_IF_ERROR(local_state._shared_state->sink_status_);
-    RETURN_IF_ERROR(local_state.revoke_memory(state));
-    return Status::WaitForIO("Spilling");
+    return local_state.reset_hash_table();
 }
 
-template <typename DependencyType, typename Derived>
-Status AggSinkLocalState<DependencyType, Derived>::revoke_memory(RuntimeState* state) {
-    LOG(WARNING) << "agg node id: " << Base::_parent->id()
-                 << ", operator id: " << Base::_parent->operator_id() << " revoke_memory";
-    DCHECK(!spilling_stream_);
-
-    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-            spilling_stream_, print_id(state->query_id()), "agg", Base::_parent->id(),
-            std::numeric_limits<int32_t>::max(), std::numeric_limits<size_t>::max(),
-            Base::profile()));
-    RETURN_IF_ERROR(spilling_stream_->prepare_spill());
-    Base::_shared_state->spilled_streams_.emplace_back(spilling_stream_);
-
-    if (_source_state != SourceState::FINISHED) {
-        Base::_dependency->Dependency::block();
-    }
-
-    return ExecEnv::GetInstance()
-            ->spill_stream_mgr()
-            ->get_spill_io_thread_pool(spilling_stream_->get_spill_root_dir())
-            ->submit_func([this, state] {
-                std::visit(
-                        [&](auto&& agg_method) -> void {
-                            Defer defer {[&]() {
-                                if (!Base::_shared_state->sink_status_.ok()) {
-                                    LOG(INFO) << "agg node id: " << Base::_parent->id()
-                                              << ", operator id: " << Base::_parent->operator_id()
-                                              << " revoke_memory end: "
-                                              << Base::_shared_state->sink_status_;
-                                }
-                                spilling_stream_->end_spill(Base::_shared_state->sink_status_);
-                                {
-                                    std::unique_lock<std::mutex> lk(spill_lock_);
-                                    spilling_stream_.reset();
-                                    if (_source_state == SourceState::FINISHED) {
-                                        Base::_dependency->set_ready_to_read();
-                                        finish_dependency_->set_ready();
-                                    } else {
-                                        Base::_dependency->Dependency::set_ready();
-                                    }
-                                    spill_cv_.notify_one();
-                                }
-                            }};
-                            auto& hash_table = *agg_method.hash_table;
-                            Base::_shared_state->sink_status_ =
-                                    _spill_hash_table(state, agg_method, hash_table);
-                        },
-                        _agg_data->method_variant);
-            });
-}
 template <typename DependencyType, typename Derived>
 Status AggSinkLocalState<DependencyType, Derived>::close(RuntimeState* state, Status exec_status) {
     SCOPED_TIMER(Base::exec_time_counter());
     SCOPED_TIMER(Base::_close_timer);
     if (Base::_closed) {
         return Status::OK();
-    }
-    {
-        std::unique_lock<std::mutex> lk(spill_lock_);
-        if (spilling_stream_) {
-            spill_cv_.wait(lk);
-        }
     }
     _preagg_block.clear();
     vectorized::PODArray<vectorized::AggregateDataPtr> tmp_places;

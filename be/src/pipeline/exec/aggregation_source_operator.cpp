@@ -93,32 +93,6 @@ Status AggLocalState::_destroy_agg_status(vectorized::AggregateDataPtr data) {
 Status AggLocalState::_serialize_with_serialized_key_result(RuntimeState* state,
                                                             vectorized::Block* block,
                                                             SourceState& source_state) {
-    RETURN_IF_ERROR(_shared_state->sink_status_);
-    RETURN_IF_ERROR(status_);
-    if (_shared_state->_enable_spill) {
-        return _serialize_with_serialized_key_result_with_spilt_data(state, block, source_state);
-    } else {
-        return _serialize_with_serialized_key_result_non_spill(state, block, source_state);
-    }
-}
-
-Status AggLocalState::_serialize_with_serialized_key_result_with_spilt_data(
-        RuntimeState* state, vectorized::Block* block, SourceState& source_state) {
-    RETURN_IF_ERROR(_initiate_merge_spill_partition_agg_data(state));
-
-    RETURN_IF_ERROR(_serialize_with_serialized_key_result_non_spill(state, block, source_state));
-    if (source_state == SourceState::FINISHED) {
-        source_state = _shared_state->read_cursor_ == _shared_state->partition_count_
-                               ? SourceState::FINISHED
-                               : SourceState::DEPEND_ON_SOURCE;
-    }
-    CHECK(!block->empty() || source_state == SourceState::FINISHED);
-    return Status::OK();
-}
-
-Status AggLocalState::_serialize_with_serialized_key_result_non_spill(RuntimeState* state,
-                                                                      vectorized::Block* block,
-                                                                      SourceState& source_state) {
     SCOPED_TIMER(_serialize_result_timer);
     auto& shared_state = *_shared_state;
     int key_size = _shared_state->probe_expr_ctxs.size();
@@ -231,102 +205,6 @@ Status AggLocalState::_serialize_with_serialized_key_result_non_spill(RuntimeSta
 
 Status AggLocalState::_get_with_serialized_key_result(RuntimeState* state, vectorized::Block* block,
                                                       SourceState& source_state) {
-    RETURN_IF_ERROR(_shared_state->sink_status_);
-    RETURN_IF_ERROR(status_);
-    if (_shared_state->_enable_spill) {
-        return _get_result_with_spilt_data(state, block, source_state);
-    } else {
-        return _get_result_with_serialized_key_non_spill(state, block, source_state);
-    }
-}
-
-Status AggLocalState::_get_result_with_spilt_data(RuntimeState* state, vectorized::Block* block,
-                                                  SourceState& source_state) {
-    RETURN_IF_ERROR(_initiate_merge_spill_partition_agg_data(state));
-
-    RETURN_IF_ERROR(_get_result_with_serialized_key_non_spill(state, block, source_state));
-    if (source_state == SourceState::FINISHED) {
-        source_state = _shared_state->read_cursor_ == _shared_state->partition_count_
-                               ? SourceState::FINISHED
-                               : SourceState::DEPEND_ON_SOURCE;
-    }
-    CHECK(!block->empty() || source_state == SourceState::FINISHED);
-    return Status::OK();
-}
-
-Status AggLocalState::_initiate_merge_spill_partition_agg_data(RuntimeState* state) {
-    DCHECK(!is_merging_);
-    _shared_state->aggregate_data_container->init_once();
-    if (_shared_state->aggregate_data_container->iterator !=
-                _shared_state->aggregate_data_container->end() ||
-        _shared_state->read_cursor_ == _shared_state->partition_count_) {
-        return Status::OK();
-    }
-    is_merging_ = true;
-
-    RETURN_IF_ERROR(_shared_state->reset_hash_table());
-    RETURN_IF_ERROR(_shared_state->reset_agg_data());
-    _dependency->Dependency::block();
-
-    RETURN_IF_ERROR(
-            ExecEnv::GetInstance()->spill_stream_mgr()->get_async_task_thread_pool()->submit_func(
-                    [this] {
-                        Defer defer {[&]() {
-                            if (!status_.ok() ||
-                                _shared_state->read_cursor_ == _shared_state->partition_count_) {
-                                LOG(WARNING) << "agg node id: " << _parent->node_id()
-                                             << ", operator id: " << _parent->operator_id()
-                                             << " merge spilled agg data finished: " << status_;
-                            }
-                            _shared_state->aggregate_data_container->init_once();
-                            {
-                                std::unique_lock<std::mutex> lk(merge_spill_lock_);
-                                is_merging_ = false;
-                                _dependency->Dependency::set_ready();
-                                merge_spill_cv_.notify_all();
-                            }
-                        }};
-                        bool has_agg_data = false;
-                        while (!_closed && !has_agg_data &&
-                               _shared_state->read_cursor_ != _shared_state->partition_count_) {
-                            // merge aggregation data of a spilled partition
-                            VLOG_ROW
-                                    << "agg node id: " << _parent->node_id()
-                                    << ", operator id: " << _parent->operator_id()
-                                    << " read spilled partition " << _shared_state->read_cursor_
-                                    << ", stream count: " << _shared_state->spilled_streams_.size();
-                            // optmize: initiate read for many streams and wait for read finish
-                            // need to consider memory pressure
-                            for (auto& stream : _shared_state->spilled_streams_) {
-                                status_ = stream->seek_for_read(_shared_state->read_cursor_);
-                                RETURN_IF_ERROR(status_);
-                                vectorized::Block block;
-                                bool eos;
-                                status_ = stream->read_current_block_sync(&block, &eos);
-                                RETURN_IF_ERROR(status_);
-
-                                if (!block.empty()) {
-                                    has_agg_data = true;
-                                    status_ =
-                                            _shared_state
-                                                    ->merge_with_serialized_key_helper<false, true>(
-                                                            &block);
-                                    RETURN_IF_ERROR(status_);
-                                }
-                            }
-                            _shared_state->read_cursor_++;
-                        }
-                        if (_shared_state->read_cursor_ == _shared_state->partition_count_) {
-                            _shared_state->clear();
-                        }
-                        return status_;
-                    }));
-    return Status::WaitForIO("Merging spilt agg data");
-}
-
-Status AggLocalState::_get_result_with_serialized_key_non_spill(RuntimeState* state,
-                                                                vectorized::Block* block,
-                                                                SourceState& source_state) {
     auto& shared_state = *_shared_state;
     // non-nullable column(id in `_make_nullable_keys`) will be converted to nullable.
     bool mem_reuse = shared_state.make_nullable_keys.empty() && block->mem_reuse();
@@ -561,12 +439,6 @@ Status AggLocalState::close(RuntimeState* state) {
     if (_closed) {
         return Status::OK();
     }
-    {
-        std::unique_lock<std::mutex> lk(merge_spill_lock_);
-        if (is_merging_) {
-            merge_spill_cv_.wait(lk);
-        }
-    }
 
     /// _hash_table_size_counter may be null if prepare failed.
     if (_hash_table_size_counter) {
@@ -577,7 +449,6 @@ Status AggLocalState::close(RuntimeState* state) {
                 _agg_data->method_variant);
     }
     RETURN_IF_ERROR(Base::close(state));
-    _shared_state->clear();
     return Status::OK();
 }
 

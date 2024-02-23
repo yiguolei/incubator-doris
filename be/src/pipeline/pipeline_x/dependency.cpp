@@ -195,12 +195,6 @@ LocalExchangeSharedState::LocalExchangeSharedState(int num_instances) {
     mem_trackers.resize(num_instances, nullptr);
 }
 
-void AggSharedState::clear() {
-    for (auto& stream : spilled_streams_) {
-        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
-    }
-    spilled_streams_.clear();
-}
 void AggSharedState::_find_in_hash_table(vectorized::AggregateDataPtr* places,
                                          vectorized::ColumnRawPtrs& key_columns, size_t num_rows) {
     std::visit(
@@ -282,6 +276,66 @@ size_t AggSharedState::_get_hash_table_size() const {
                       agg_data->method_variant);
 }
 
+void PartitionedAggSharedState::init_spill_params(size_t spill_partition_count_bits,
+                                                  AggSharedState* agg_shared_state) {
+    _agg_shared_state = agg_shared_state;
+    partition_count_bits_ = spill_partition_count_bits;
+    partition_count_ = (1 << spill_partition_count_bits);
+    max_partition_index_ = partition_count_ - 1;
+
+    for (int i = 0; i < partition_count_; ++i) {
+        spill_partitions_.emplace_back(std::make_shared<AggSpillPartition>(this));
+        spill_partitions_[i]->init();
+    }
+}
+void AggSpillPartition::init() {
+    for (const auto& probe_expr_ctx : _parent->_agg_shared_state->probe_expr_ctxs) {
+        key_columns_.emplace_back(probe_expr_ctx->root()->data_type()->create_column());
+    }
+    for (const auto& aggregate_evaluator : _parent->_agg_shared_state->aggregate_evaluators) {
+        value_data_types_.emplace_back(aggregate_evaluator->function()->get_serialized_type());
+        value_columns_.emplace_back(aggregate_evaluator->function()->create_serialize_column());
+    }
+}
+
+Status AggSpillPartition::prepare_spill_stream(RuntimeState* state, int operator_id,
+                                               RuntimeProfile* profile) {
+    if (spilling_stream_) {
+        return spilling_stream_->prepare_spill();
+    }
+    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
+            spilling_stream_, print_id(state->query_id()), "agg", operator_id,
+            std::numeric_limits<int32_t>::max(), std::numeric_limits<size_t>::max(), profile));
+    RETURN_IF_ERROR(spilling_stream_->prepare_spill());
+    spill_streams_.emplace_back(spilling_stream_);
+
+    return Status::OK();
+}
+void AggSpillPartition::close() {
+    if (spilling_stream_) {
+        (void)spilling_stream_->wait_spill();
+        spilling_stream_.reset();
+    }
+    _reset_tmp_data();
+    {
+        vectorized::MutableColumns cols;
+        key_columns_.swap(cols);
+    }
+    {
+        vectorized::MutableColumns cols;
+        value_columns_.swap(cols);
+    }
+    for (auto& stream : spill_streams_) {
+        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+    }
+    spill_streams_.clear();
+}
+
+void PartitionedAggSharedState::clear() {
+    for (auto partition : spill_partitions_) {
+        partition->close();
+    }
+}
 void SortSharedState::clear() {
     for (auto& stream : sorted_streams_) {
         (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);

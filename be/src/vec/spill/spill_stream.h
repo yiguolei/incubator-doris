@@ -64,7 +64,11 @@ public:
 
     void end_spill(const Status& status);
 
-    Status read_current_block_sync(Block* block, bool* eos);
+    Status spill_eof();
+
+    Status wait_spill();
+
+    Status read_next_block_sync(Block* block, bool* eos);
 
 private:
     friend class SpillStreamManager;

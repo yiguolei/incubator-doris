@@ -49,6 +49,8 @@
 #include "pipeline/exec/olap_table_sink_v2_operator.h"
 #include "pipeline/exec/partition_sort_sink_operator.h"
 #include "pipeline/exec/partition_sort_source_operator.h"
+#include "pipeline/exec/partitioned_aggregation_sink_operator.h"
+#include "pipeline/exec/partitioned_aggregation_source_operator.h"
 #include "pipeline/exec/partitioned_hash_join_probe_operator.h"
 #include "pipeline/exec/partitioned_hash_join_sink_operator.h"
 #include "pipeline/exec/repeat_operator.h"
@@ -604,6 +606,7 @@ DECLARE_OPERATOR_X(AnalyticSinkLocalState)
 DECLARE_OPERATOR_X(SortSinkLocalState)
 DECLARE_OPERATOR_X(LocalExchangeSinkLocalState)
 DECLARE_OPERATOR_X(BlockingAggSinkLocalState)
+DECLARE_OPERATOR_X(PartitionedAggSinkLocalState)
 DECLARE_OPERATOR_X(StreamingAggSinkLocalState)
 DECLARE_OPERATOR_X(DistinctStreamingAggSinkLocalState)
 DECLARE_OPERATOR_X(ExchangeSinkLocalState)
@@ -628,6 +631,7 @@ DECLARE_OPERATOR_X(EsScanLocalState)
 DECLARE_OPERATOR_X(AnalyticLocalState)
 DECLARE_OPERATOR_X(SortLocalState)
 DECLARE_OPERATOR_X(AggLocalState)
+DECLARE_OPERATOR_X(PartitionedAggLocalState)
 DECLARE_OPERATOR_X(TableFunctionLocalState)
 DECLARE_OPERATOR_X(ExchangeLocalState)
 DECLARE_OPERATOR_X(RepeatLocalState)
@@ -673,12 +677,14 @@ template class PipelineXSinkLocalState<LocalExchangeSinkDependency>;
 template class PipelineXSinkLocalState<AndDependency>;
 template class PipelineXSinkLocalState<ResultSinkDependency>;
 template class PipelineXSinkLocalState<SharedPartitionedHashJoinDependency>;
+template class PipelineXSinkLocalState<PartitionedAggSinkDependency>;
 
 template class PipelineXLocalState<HashJoinProbeDependency>;
 template class PipelineXLocalState<SortSourceDependency>;
 template class PipelineXLocalState<NestedLoopJoinProbeDependency>;
 template class PipelineXLocalState<AnalyticSourceDependency>;
 template class PipelineXLocalState<AggSourceDependency>;
+template class PipelineXLocalState<PartitionedAggSourceDependency>;
 template class PipelineXLocalState<FakeDependency>;
 template class PipelineXLocalState<UnionSourceDependency>;
 template class PipelineXLocalState<MultiCastSourceDependency>;

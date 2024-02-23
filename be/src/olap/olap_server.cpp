@@ -265,7 +265,7 @@ Status StorageEngine::start_bg_threads() {
 
     RETURN_IF_ERROR(Thread::create(
             "StorageEngine", "spill_gc_thread", [this]() { this->_spill_gc_thread_callback(); },
-            &_async_publish_thread));
+            &_spill_gc_thread));
     LOG(INFO) << "spill gc thread started";
 
     LOG(INFO) << "all storage engine's background threads are started.";

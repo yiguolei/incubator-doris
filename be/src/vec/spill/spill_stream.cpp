@@ -57,7 +57,7 @@ void SpillStream::close() {
     if (closed_) {
         return;
     }
-    VLOG_ROW << "spill stream closing: " << stream_id_;
+    VLOG_ROW << "closing: " << stream_id_;
     closed_ = true;
     if (spill_promise_) {
         spill_future_.wait();
@@ -84,6 +84,15 @@ void SpillStream::end_spill(const Status& status) {
     spill_promise_->set_value(status);
 }
 
+Status SpillStream::wait_spill() {
+    if (spill_promise_) {
+        auto status = spill_future_.get();
+        spill_promise_.reset();
+        return status;
+    }
+    return Status::OK();
+}
+
 Status SpillStream::spill_block(const Block& block, bool eof) {
     size_t written_bytes = 0;
     RETURN_IF_ERROR(writer_->write(block, written_bytes));
@@ -93,13 +102,17 @@ Status SpillStream::spill_block(const Block& block, bool eof) {
     return Status::OK();
 }
 
+Status SpillStream::spill_eof() {
+    return writer_->close();
+}
+
 Status SpillStream::seek_for_read(size_t block_index) {
     RETURN_IF_ERROR(reader_->open());
     reader_->seek(block_index);
     return Status::OK();
 }
 
-Status SpillStream::read_current_block_sync(Block* block, bool* eos) {
+Status SpillStream::read_next_block_sync(Block* block, bool* eos) {
     DCHECK(!read_promise_);
     Status status;
     read_promise_ = std::make_unique<std::promise<Status>>();
@@ -120,7 +133,6 @@ Status SpillStream::read_current_block_sync(Block* block, bool* eos) {
         return status;
     }
 
-    read_future_.wait();
     status = read_future_.get();
     read_promise_.reset();
     return status;

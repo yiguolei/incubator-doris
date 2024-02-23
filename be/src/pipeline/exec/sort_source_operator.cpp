@@ -147,8 +147,8 @@ Status SortLocalState::_create_intermediate_merger(
         auto stream = _shared_state->sorted_streams_.front();
         current_merging_streams_.emplace_back(stream);
         child_block_suppliers.emplace_back(
-                std::bind(std::mem_fn(&vectorized::SpillStream::read_current_block_sync),
-                          stream.get(), std::placeholders::_1, std::placeholders::_2));
+                std::bind(std::mem_fn(&vectorized::SpillStream::read_next_block_sync), stream.get(),
+                          std::placeholders::_1, std::placeholders::_2));
 
         _shared_state->sorted_streams_.pop_front();
     }

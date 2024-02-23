@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <runtime/result_buffer_mgr.h>
 #include <stdlib.h>
+
+#include "pipeline/exec/partitioned_aggregation_sink_operator.h"
+#include "pipeline/exec/partitioned_aggregation_source_operator.h"
 // IWYU pragma: no_include <bits/chrono.h>
 #include <chrono> // IWYU pragma: keep
 #include <map>
@@ -500,6 +503,7 @@ Status PipelineXFragmentContext::_build_pipeline_tasks(
             runtime_state->set_per_fragment_instance_idx(local_params.sender_id);
             runtime_state->set_num_per_fragment_instances(request.num_senders);
             runtime_state->resize_op_id_to_local_state(max_operator_id());
+            runtime_state->set_max_operator_id(max_operator_id());
             runtime_state->set_load_stream_per_node(request.load_stream_per_node);
             runtime_state->set_total_load_streams(request.total_load_streams);
             runtime_state->set_num_local_sink(request.num_local_sink);
@@ -986,7 +990,11 @@ Status PipelineXFragmentContext::_create_operator(ObjectPool* pool, const TPlanN
             RETURN_IF_ERROR(cur_pipe->sink_x()->init(tnode, _runtime_state.get()));
 
         } else {
-            op.reset(new AggSourceOperatorX(pool, tnode, next_operator_id(), descs));
+            if (_runtime_state->enable_agg_spill() && !tnode.agg_node.grouping_exprs.empty()) {
+                op.reset(new PartitionedAggSourceOperatorX(pool, tnode, next_operator_id(), descs));
+            } else {
+                op.reset(new AggSourceOperatorX(pool, tnode, next_operator_id(), descs));
+            }
             RETURN_IF_ERROR(cur_pipe->add_operator(op));
 
             const auto downstream_pipeline_id = cur_pipe->id();
@@ -997,7 +1005,12 @@ Status PipelineXFragmentContext::_create_operator(ObjectPool* pool, const TPlanN
             _dag[downstream_pipeline_id].push_back(cur_pipe->id());
 
             DataSinkOperatorXPtr sink;
-            sink.reset(new AggSinkOperatorX<>(pool, next_sink_operator_id(), tnode, descs));
+            if (_runtime_state->enable_agg_spill() && !tnode.agg_node.grouping_exprs.empty()) {
+                sink.reset(new PartitionedAggSinkOperatorX<>(pool, next_sink_operator_id(), tnode,
+                                                             descs, false));
+            } else {
+                sink.reset(new AggSinkOperatorX<>(pool, next_sink_operator_id(), tnode, descs));
+            }
             sink->set_dests_id({op->operator_id()});
             RETURN_IF_ERROR(cur_pipe->set_sink(sink));
             RETURN_IF_ERROR(cur_pipe->sink_x()->init(tnode, _runtime_state.get()));

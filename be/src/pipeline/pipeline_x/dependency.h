@@ -327,18 +327,39 @@ public:
         }
     }
 
+    Status reset_hash_table() {
+        return std::visit(
+                [&](auto&& agg_method) {
+                    auto& hash_table = *agg_method.hash_table;
+                    using HashTableType = std::decay_t<decltype(hash_table)>;
+
+                    agg_method.reset();
+
+                    hash_table.for_each_mapped([&](auto& mapped) {
+                        if (mapped) {
+                            static_cast<void>(_destroy_agg_status(mapped));
+                            mapped = nullptr;
+                        }
+                    });
+
+                    aggregate_data_container.reset(new vectorized::AggregateDataContainer(
+                            sizeof(typename HashTableType::key_type),
+                            ((total_size_of_aggregate_states + align_aggregate_states - 1) /
+                             align_aggregate_states) *
+                                    align_aggregate_states));
+                    agg_method.hash_table.reset(new HashTableType());
+                    agg_arena_pool.reset(new vectorized::Arena);
+                    return Status::OK();
+                },
+                agg_data->method_variant);
+    }
+
     static int _get_slot_column_id(const vectorized::AggFnEvaluator* evaluator) {
         auto ctxs = evaluator->input_exprs_ctxs();
         CHECK(ctxs.size() == 1 && ctxs[0]->root()->is_slot_ref())
                 << "input_exprs_ctxs is invalid, input_exprs_ctx[0]="
                 << ctxs[0]->root()->debug_string();
         return ((vectorized::VSlotRef*)ctxs[0]->root().get())->column_id();
-    }
-
-    void init_spill_partition_param(size_t spill_partition_count_bits) {
-        partition_count_bits_ = spill_partition_count_bits;
-        partition_count_ = (1 << spill_partition_count_bits);
-        max_partition_index_ = partition_count_ - 1;
     }
 
     template <bool limit, bool for_spill = false>
@@ -438,46 +459,6 @@ public:
         return Status::OK();
     }
 
-    Status reset_hash_table() {
-        return std::visit(
-                [&](auto&& agg_method) {
-                    auto& hash_table = *agg_method.hash_table;
-                    using HashTableType = std::decay_t<decltype(hash_table)>;
-
-                    agg_method.reset();
-
-                    hash_table.for_each_mapped([&](auto& mapped) {
-                        if (mapped) {
-                            static_cast<void>(_destroy_agg_status(mapped));
-                            mapped = nullptr;
-                        }
-                    });
-
-                    agg_method.hash_table.reset(new HashTableType());
-                    return Status::OK();
-                },
-                agg_data->method_variant);
-    }
-
-    Status reset_agg_data() {
-        return std::visit(
-                [&](auto&& agg_method) {
-                    auto& hash_table = *agg_method.hash_table;
-                    using HashTableType = std::decay_t<decltype(hash_table)>;
-
-                    agg_method.reset();
-
-                    aggregate_data_container = std::make_unique<vectorized::AggregateDataContainer>(
-                            sizeof(typename HashTableType::key_type),
-                            ((total_size_of_aggregate_states + align_aggregate_states - 1) /
-                             align_aggregate_states) *
-                                    align_aggregate_states);
-                    agg_arena_pool = std::make_unique<vectorized::Arena>();
-                    return Status::OK();
-                },
-                agg_data->method_variant);
-    }
-
     void clear();
 
     size_t _get_hash_table_size() const;
@@ -509,21 +490,10 @@ public:
     bool agg_data_created_without_key = false;
 
     std::vector<char> _deserialize_buffer;
-    size_t read_cursor_ {};
-    std::vector<vectorized::SpillStreamSPtr> spilled_streams_;
-    size_t partition_count_bits_;
-    size_t partition_count_;
-    size_t max_partition_index_;
-    Status sink_status_;
-
-    size_t get_partition_index(size_t hash_value) const {
-        return (hash_value >> (32 - partition_count_bits_)) & max_partition_index_;
-    }
 
     int64_t _limit = -1; // -1: no limit
     bool _should_limit_output = false;
     bool _reach_limit = false;
-    bool _enable_spill = false;
 
 private:
     Status _create_agg_status(vectorized::AggregateDataPtr data);
@@ -568,26 +538,13 @@ private:
     }
 };
 
+struct AggSpillPartition;
 struct PartitionedAggSharedState : public BasicSharedState {
 public:
-    PartitionedAggSharedState() { shared_state_ = std::make_unique<AggSharedState>(); }
+    PartitionedAggSharedState() {}
     ~PartitionedAggSharedState() override = default;
 
-    void init_spill_params(size_t spill_partition_count_bits) {
-        partition_count_bits_ = spill_partition_count_bits;
-        partition_count_ = (1 << spill_partition_count_bits);
-        max_partition_index_ = partition_count_ - 1;
-    }
-
-    size_t read_cursor_ {};
-    std::vector<vectorized::SpillStreamSPtr> spilled_streams_;
-    size_t partition_count_bits_;
-    size_t partition_count_;
-    size_t max_partition_index_;
-
-    size_t get_index(size_t hash_value) const {
-        return (hash_value >> (32 - partition_count_bits_)) & max_partition_index_;
-    }
+    void init_spill_params(size_t spill_partition_count_bits, AggSharedState* agg_shared_state);
 
     Status prepare_merge_partition_aggregation_data() {
         // return shared_state_->prepare_merge_partition_aggregation_data();
@@ -595,13 +552,130 @@ public:
     }
 
     Status merge_spilt_partition_aggregation_data(vectorized::Block* block) {
-        return shared_state_->merge_with_serialized_key_helper<false, true>(block);
+        // return shared_state_->merge_with_serialized_key_helper<false, true>(block);
+        return Status::OK();
     }
+    void clear();
 
-private:
-    std::unique_ptr<AggSharedState> shared_state_;
+    AggSharedState* _agg_shared_state = nullptr;
+    std::map<int, std::shared_ptr<BasicSharedState>> _shared_states;
+    std::vector<DependencySPtr> _upstream_deps;
+    std::vector<DependencySPtr> _downstream_deps;
+
+    size_t partition_count_bits_;
+    size_t partition_count_;
+    size_t max_partition_index_;
+    Status sink_status_;
+    std::deque<std::shared_ptr<AggSpillPartition>> spill_partitions_;
+
+    size_t get_partition_index(size_t hash_value) const {
+        return (hash_value >> (32 - partition_count_bits_)) & max_partition_index_;
+    }
 };
 
+struct AggSpillPartition {
+    AggSpillPartition(PartitionedAggSharedState* parent) : _parent(parent) {}
+
+    void init();
+
+    Status prepare_spill_stream(RuntimeState* state, int operator_id, RuntimeProfile* profile);
+
+    template <typename HashTableCtxType, typename KeyType>
+    Status to_block(HashTableCtxType& context, std::vector<KeyType>& keys,
+                    std::vector<vectorized::AggregateDataPtr>& values,
+                    const vectorized::AggregateDataPtr null_key_data) {
+        context.insert_keys_into_columns(keys, key_columns_, keys.size());
+
+        if (null_key_data) {
+            // only one key of group by support wrap null key
+            // here need additional processing logic on the null key / value
+            CHECK(key_columns_.size() == 1);
+            CHECK(key_columns_[0]->is_nullable());
+            key_columns_[0]->insert_data(nullptr, 0);
+
+            values.emplace_back(null_key_data);
+        }
+
+        for (size_t i = 0; i < _parent->_agg_shared_state->aggregate_evaluators.size(); ++i) {
+            _parent->_agg_shared_state->aggregate_evaluators[i]->function()->serialize_to_column(
+                    values, _parent->_agg_shared_state->offsets_of_aggregate_states[i],
+                    value_columns_[i], values.size());
+        }
+
+        vectorized::ColumnsWithTypeAndName key_columns_with_schema;
+        for (int i = 0; i < key_columns_.size(); ++i) {
+            key_columns_with_schema.emplace_back(
+                    std::move(key_columns_[i]),
+                    _parent->_agg_shared_state->probe_expr_ctxs[i]->root()->data_type(),
+                    _parent->_agg_shared_state->probe_expr_ctxs[i]->root()->expr_name());
+        }
+        key_block_ = key_columns_with_schema;
+
+        vectorized::ColumnsWithTypeAndName value_columns_with_schema;
+        for (int i = 0; i < value_columns_.size(); ++i) {
+            value_columns_with_schema.emplace_back(
+                    std::move(value_columns_[i]), value_data_types_[i],
+                    _parent->_agg_shared_state->aggregate_evaluators[i]->function()->get_name());
+        }
+        value_block_ = value_columns_with_schema;
+
+        for (const auto& column : key_block_.get_columns_with_type_and_name()) {
+            block_.insert(column);
+        }
+        for (const auto& column : value_block_.get_columns_with_type_and_name()) {
+            block_.insert(column);
+        }
+        return Status::OK();
+    }
+
+    Status wait_spill() {
+        DCHECK(spilling_stream_);
+        auto status = spilling_stream_->wait_spill();
+        _reset_tmp_data();
+        return status;
+    }
+
+    void _reset_tmp_data() {
+        block_.clear();
+        key_columns_.clear();
+        value_columns_.clear();
+        key_block_.clear_column_data();
+        value_block_.clear_column_data();
+        key_columns_ = key_block_.mutate_columns();
+        value_columns_ = value_block_.mutate_columns();
+    }
+    void close();
+
+    Status reset_spilling() {
+        _reset_tmp_data();
+        key_columns_.clear();
+        value_columns_.clear();
+        init();
+        if (spilling_stream_) {
+            auto status = spilling_stream_->spill_eof();
+            spilling_stream_.reset();
+            return status;
+        }
+        return Status::OK();
+    }
+
+    vectorized::SpillStreamSPtr spilling_stream() const { return spilling_stream_; }
+    const vectorized::Block& get_spill_block() const { return block_; }
+
+    PartitionedAggSharedState* _parent = nullptr;
+
+    std::deque<vectorized::SpillStreamSPtr> spill_streams_;
+
+    // tmp members during spilling
+    vectorized::SpillStreamSPtr spilling_stream_;
+    vectorized::MutableColumns key_columns_;
+    vectorized::MutableColumns value_columns_;
+    vectorized::DataTypes value_data_types_;
+    vectorized::Block block_;
+    vectorized::Block key_block_;
+    vectorized::Block value_block_;
+};
+using AggSpillPartitionSPtr = std::shared_ptr<AggSpillPartition>;
 struct SortSharedState : public BasicSharedState {
 public:
     void update_spill_block_batch_size(const vectorized::Block* block) {
