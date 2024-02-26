@@ -270,6 +270,7 @@ Status FullSorter::_do_sort() {
             auto tmp_cursor_impl =
                     std::make_unique<MergeSortCursorImpl>(desc_block, _sort_description);
             MergeSortBlockCursor block_cursor(tmp_cursor_impl.get());
+            // handle spill
             if (!block_cursor.totally_greater(_block_priority_queue.top())) {
                 static_cast<void>(_state->add_sorted_block(desc_block));
                 _block_priority_queue.emplace(_pool->add(

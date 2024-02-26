@@ -30,11 +30,16 @@ namespace doris::pipeline {
 PartitionedAggLocalState::PartitionedAggLocalState(RuntimeState* state, OperatorXBase* parent)
         : Base(state, parent) {}
 
-Status PartitionedAggLocalState::init(RuntimeState* state, LocalStateInfo& info) {
-    RETURN_IF_ERROR(Base::init(state, info));
-    return Status::OK();
-}
 Status PartitionedAggLocalState::close(RuntimeState* state) {
+    if (_closed) {
+        return Status::OK();
+    }
+    {
+        std::unique_lock<std::mutex> lk(_merge_spill_lock);
+        if (_is_merging) {
+            _merge_spill_cv.wait(lk);
+        }
+    }
     return Base::close(state);
 }
 PartitionedAggSourceOperatorX ::PartitionedAggSourceOperatorX(ObjectPool* pool,
@@ -112,9 +117,6 @@ Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
             {},
             0,
             dep};
-    LOG(INFO) << "agg node source, id: " << Base::_parent->id()
-              << ", operator id: " << parent._agg_source_operator->operator_id()
-              << ", setup in mem agg op";
     auto* agg_shared_state =
             _shared_state->_shared_states[parent._agg_source_operator->operator_id()].get();
     DCHECK(agg_shared_state);
@@ -132,45 +134,44 @@ Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
 }
 
 Status PartitionedAggLocalState::initiate_merge_spill_partition_agg_data(RuntimeState* state) {
-    {
-        std::unique_lock<std::mutex> lk(_merge_spill_lock);
-        DCHECK(!_is_merging);
-        _is_merging = true;
-    }
+    DCHECK(!_is_merging);
     _in_memory_agg_op_shared_state->aggregate_data_container->init_once();
     if (_in_memory_agg_op_shared_state->aggregate_data_container->iterator !=
                 _in_memory_agg_op_shared_state->aggregate_data_container->end() ||
         _shared_state->spill_partitions_.empty()) {
-        {
-            std::unique_lock<std::mutex> lk(_merge_spill_lock);
-            _is_merging = false;
-            _merge_spill_cv.notify_all();
-        }
         return Status::OK();
     }
+
+    _is_merging = true;
+    LOG(INFO) << "agg node " << _parent->node_id() << " operator " << _parent->operator_id()
+              << " merge spilled agg data";
 
     RETURN_IF_ERROR(_in_memory_agg_op_shared_state->reset_hash_table());
     _dependency->Dependency::block();
 
     RETURN_IF_ERROR(
             ExecEnv::GetInstance()->spill_stream_mgr()->get_async_task_thread_pool()->submit_func(
-                    [this] {
+                    [this, state] {
                         Defer defer {[&]() {
-                            if (!_status.ok() || _shared_state->spill_partitions_.empty()) {
-                                LOG(WARNING) << "agg node id: " << _parent->node_id()
-                                             << ", operator id: " << _parent->operator_id()
-                                             << " merge spilled agg data finished: " << _status;
+                            if (!_status.ok()) {
+                                LOG(WARNING) << "agg node " << _parent->node_id() << " operator "
+                                             << _parent->operator_id()
+                                             << " merge spilled agg data error: " << _status;
+                            } else if (_shared_state->spill_partitions_.empty()) {
+                                LOG(INFO) << "agg node " << _parent->node_id() << " operator "
+                                          << _parent->operator_id()
+                                          << " merge spilled agg data finish";
                             }
                             _in_memory_agg_op_shared_state->aggregate_data_container->init_once();
                             {
                                 std::unique_lock<std::mutex> lk(_merge_spill_lock);
                                 _is_merging = false;
                                 _dependency->Dependency::set_ready();
-                                _merge_spill_cv.notify_all();
+                                _merge_spill_cv.notify_one();
                             }
                         }};
                         bool has_agg_data = false;
-                        while (!_closed && !has_agg_data &&
+                        while (!state->is_cancelled() && !has_agg_data &&
                                !_shared_state->spill_partitions_.empty()) {
                             for (auto& stream :
                                  _shared_state->spill_partitions_[0]->spill_streams_) {

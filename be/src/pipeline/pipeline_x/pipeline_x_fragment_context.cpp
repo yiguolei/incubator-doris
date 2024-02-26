@@ -25,8 +25,6 @@
 #include <runtime/result_buffer_mgr.h>
 #include <stdlib.h>
 
-#include "pipeline/exec/partitioned_aggregation_sink_operator.h"
-#include "pipeline/exec/partitioned_aggregation_source_operator.h"
 // IWYU pragma: no_include <bits/chrono.h>
 #include <chrono> // IWYU pragma: keep
 #include <map>
@@ -68,6 +66,8 @@
 #include "pipeline/exec/olap_table_sink_v2_operator.h"
 #include "pipeline/exec/partition_sort_sink_operator.h"
 #include "pipeline/exec/partition_sort_source_operator.h"
+#include "pipeline/exec/partitioned_aggregation_sink_operator.h"
+#include "pipeline/exec/partitioned_aggregation_source_operator.h"
 #include "pipeline/exec/partitioned_hash_join_probe_operator.h"
 #include "pipeline/exec/partitioned_hash_join_sink_operator.h"
 #include "pipeline/exec/repeat_operator.h"
@@ -81,6 +81,8 @@
 #include "pipeline/exec/set_source_operator.h"
 #include "pipeline/exec/sort_sink_operator.h"
 #include "pipeline/exec/sort_source_operator.h"
+#include "pipeline/exec/spill_sort_sink_operator.h"
+#include "pipeline/exec/spill_sort_source_operator.h"
 #include "pipeline/exec/streaming_aggregation_sink_operator.h"
 #include "pipeline/exec/streaming_aggregation_source_operator.h"
 #include "pipeline/exec/table_function_operator.h"
@@ -1110,7 +1112,11 @@ Status PipelineXFragmentContext::_create_operator(ObjectPool* pool, const TPlanN
         break;
     }
     case TPlanNodeType::SORT_NODE: {
-        op.reset(new SortSourceOperatorX(pool, tnode, next_operator_id(), descs));
+        if (_runtime_state->enable_sort_spill()) {
+            op.reset(new SpillSortSourceOperatorX(pool, tnode, next_operator_id(), descs));
+        } else {
+            op.reset(new SortSourceOperatorX(pool, tnode, next_operator_id(), descs));
+        }
         RETURN_IF_ERROR(cur_pipe->add_operator(op));
 
         const auto downstream_pipeline_id = cur_pipe->id();
@@ -1121,7 +1127,11 @@ Status PipelineXFragmentContext::_create_operator(ObjectPool* pool, const TPlanN
         _dag[downstream_pipeline_id].push_back(cur_pipe->id());
 
         DataSinkOperatorXPtr sink;
-        sink.reset(new SortSinkOperatorX(pool, next_sink_operator_id(), tnode, descs));
+        if (_runtime_state->enable_sort_spill()) {
+            sink.reset(new SpillSortSinkOperatorX(pool, next_sink_operator_id(), tnode, descs));
+        } else {
+            sink.reset(new SortSinkOperatorX(pool, next_sink_operator_id(), tnode, descs));
+        }
         sink->set_dests_id({op->operator_id()});
         RETURN_IF_ERROR(cur_pipe->set_sink(sink));
         RETURN_IF_ERROR(cur_pipe->sink_x()->init(tnode, _runtime_state.get()));

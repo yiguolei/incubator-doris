@@ -1,0 +1,249 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+#include "common/status.h"
+#include "sort_source_operator.h"
+#include "spill_sort_source_operator.h"
+#include "vec/spill/spill_stream_manager.h"
+
+namespace doris::pipeline {
+SpillSortLocalState::SpillSortLocalState(RuntimeState* state, OperatorXBase* parent)
+        : Base(state, parent) {
+    if (state->external_sort_bytes_threshold() > 0) {
+        _external_sort_bytes_threshold = state->external_sort_bytes_threshold();
+    }
+}
+
+Status SpillSortLocalState::close(RuntimeState* state) {
+    if (_closed) {
+        return Status::OK();
+    }
+    {
+        std::unique_lock<std::mutex> lk(_merge_spill_lock);
+        if (_is_merging) {
+            _merge_spill_cv.wait(lk);
+        }
+    }
+    RETURN_IF_ERROR(Base::close(state));
+    for (auto& stream : _current_merging_streams) {
+        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+    }
+    _current_merging_streams.clear();
+    return Status::OK();
+}
+int SpillSortLocalState::_calc_spill_blocks_to_merge() const {
+    int count = _external_sort_bytes_threshold / SpillSortSharedState::SORT_BLOCK_SPILL_BATCH_BYTES;
+    return std::max(2, count);
+}
+Status SpillSortLocalState::initiate_merge_sort_spill_streams(RuntimeState* state) {
+    auto& parent = Base::_parent->template cast<Parent>();
+    LOG(INFO) << "sort node " << _parent->node_id() << " operator " << _parent->operator_id()
+              << " merge spill data";
+    DCHECK(!_is_merging);
+    _is_merging = true;
+    _dependency->Dependency::block();
+
+    Status status;
+    Defer defer {[&]() {
+        if (!status.ok()) {
+            _is_merging = false;
+            _dependency->Dependency::set_ready();
+        }
+    }};
+    status = ExecEnv::GetInstance()->spill_stream_mgr()->get_async_task_thread_pool()->submit_func(
+            [this, state, &parent] {
+                Defer defer {[&]() {
+                    if (!_status.ok()) {
+                        LOG(WARNING)
+                                << "sort node " << _parent->node_id() << " operator "
+                                << _parent->operator_id() << " merge spill data error: " << _status;
+                    } else {
+                        LOG(WARNING) << "sort node " << _parent->node_id() << " operator "
+                                     << _parent->operator_id() << " merge spill data finish";
+                    }
+                    {
+                        std::unique_lock<std::mutex> lk(_merge_spill_lock);
+                        _is_merging = false;
+                        _dependency->Dependency::set_ready();
+                        _merge_spill_cv.notify_one();
+                    }
+                }};
+                vectorized::Block merge_sorted_block;
+                vectorized::SpillStreamSPtr tmp_stream;
+                while (true) {
+                    int max_stream_count = _calc_spill_blocks_to_merge();
+                    LOG(INFO) << "sort node " << _parent->id() << " operator "
+                              << _parent->operator_id() << " merge spill streams, streams count: "
+                              << _shared_state->_sorted_streams.size()
+                              << ", curren merge max stream count: " << max_stream_count;
+                    _status = _create_intermediate_merger(
+                            max_stream_count, parent._sort_source_operator->get_sort_description(
+                                                      _runtime_state.get()));
+                    RETURN_IF_ERROR(_status);
+
+                    // all the remaining streams can be merged in a run
+                    if (_shared_state->_sorted_streams.empty()) {
+                        return Status::OK();
+                    }
+
+                    {
+                        _status = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
+                                tmp_stream, print_id(state->query_id()), "sort", _parent->id(),
+                                _shared_state->_spill_block_batch_row_count,
+                                SpillSortSharedState::SORT_BLOCK_SPILL_BATCH_BYTES, profile());
+                        RETURN_IF_ERROR(_status);
+                        _status = tmp_stream->prepare_spill();
+                        Defer defer {[&]() { tmp_stream->end_spill(_status); }};
+                        RETURN_IF_ERROR(_status);
+                        _shared_state->_sorted_streams.emplace_back(tmp_stream);
+
+                        bool eos = false;
+                        while (!eos && !state->is_cancelled()) {
+                            merge_sorted_block.clear_column_data();
+                            _status = _merger->get_next(&merge_sorted_block, &eos);
+                            RETURN_IF_ERROR(_status);
+                            _status = tmp_stream->spill_block(merge_sorted_block, eos);
+                            RETURN_IF_ERROR(_status);
+                        }
+                    }
+                    for (auto& stream : _current_merging_streams) {
+                        (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                                stream);
+                    }
+                    _current_merging_streams.clear();
+                }
+                DCHECK(false);
+                return Status::OK();
+            });
+    RETURN_IF_ERROR(status);
+    return Status::WaitForIO("Merging spilt agg data");
+}
+
+Status SpillSortLocalState::_create_intermediate_merger(
+        int num_blocks, const vectorized::SortDescription& sort_description) {
+    std::vector<vectorized::BlockSupplier> child_block_suppliers;
+    _merger = std::make_unique<vectorized::VSortedRunMerger>(
+            sort_description, _shared_state->_spill_block_batch_row_count,
+            _in_memory_sort_shared_state->sorter->limit(),
+            _in_memory_sort_shared_state->sorter->offset(), profile());
+
+    _current_merging_streams.clear();
+    for (int i = 0; i < num_blocks && !_shared_state->_sorted_streams.empty(); ++i) {
+        auto stream = _shared_state->_sorted_streams.front();
+        _current_merging_streams.emplace_back(stream);
+        child_block_suppliers.emplace_back(
+                std::bind(std::mem_fn(&vectorized::SpillStream::read_next_block_sync), stream.get(),
+                          std::placeholders::_1, std::placeholders::_2));
+
+        _shared_state->_sorted_streams.pop_front();
+    }
+    RETURN_IF_ERROR(_merger->prepare(child_block_suppliers));
+    return Status::OK();
+}
+Status SpillSortLocalState::setup_in_memory_sort_op(RuntimeState* state) {
+    _runtime_state = RuntimeState::create_unique(
+            nullptr, state->fragment_instance_id(), state->query_id(), state->fragment_id(),
+            state->query_options(), TQueryGlobals {}, state->exec_env(), state->get_query_ctx());
+    _runtime_state->set_query_mem_tracker(state->query_mem_tracker());
+    _runtime_state->set_task_execution_context(state->get_task_execution_context().lock());
+    _runtime_state->set_be_number(state->be_number());
+
+    _runtime_state->set_desc_tbl(&state->desc_tbl());
+    _runtime_state->resize_op_id_to_local_state(state->max_operator_id());
+    _runtime_state->set_pipeline_x_runtime_filter_mgr(state->runtime_filter_mgr());
+
+    auto& parent = Base::_parent->template cast<Parent>();
+
+    auto dep = parent._sort_source_operator->get_dependency(
+            const_cast<QueryContext*>(_dependency->_query_ctx), _shared_state->_shared_states);
+    LocalStateInfo state_info {
+            _runtime_profile.get(),
+            {},
+            _shared_state->_upstream_deps,
+            _shared_state->_shared_states[parent._sort_source_operator->operator_id()].get(),
+            {},
+            0,
+            dep};
+    LOG(INFO) << "agg node source, id: " << Base::_parent->id()
+              << ", operator id: " << parent._sort_source_operator->operator_id()
+              << ", setup in mem agg op";
+    auto* agg_shared_state =
+            _shared_state->_shared_states[parent._sort_source_operator->operator_id()].get();
+    DCHECK(agg_shared_state);
+
+    RETURN_IF_ERROR(
+            parent._sort_source_operator->setup_local_state(_runtime_state.get(), state_info));
+
+    _in_memory_sort_shared_state =
+            parent._sort_source_operator->get_shared_state(_runtime_state.get());
+
+    auto* source_local_state =
+            _runtime_state->get_local_state(parent._sort_source_operator->operator_id());
+    DCHECK(source_local_state != nullptr);
+    return source_local_state->open(state);
+}
+SpillSortSourceOperatorX::SpillSortSourceOperatorX(ObjectPool* pool, const TPlanNode& tnode,
+                                                   int operator_id, const DescriptorTbl& descs)
+        : Base(pool, tnode, operator_id, descs) {
+    _sort_source_operator = std::make_unique<SortSourceOperatorX>(pool, tnode, operator_id, descs);
+}
+Status SpillSortSourceOperatorX::init(const TPlanNode& tnode, RuntimeState* state) {
+    RETURN_IF_ERROR(OperatorXBase::init(tnode, state));
+    return _sort_source_operator->init(tnode, state);
+}
+
+Status SpillSortSourceOperatorX::prepare(RuntimeState* state) {
+    RETURN_IF_ERROR(OperatorXBase::prepare(state));
+    return _sort_source_operator->prepare(state);
+}
+
+Status SpillSortSourceOperatorX::open(RuntimeState* state) {
+    RETURN_IF_ERROR(OperatorXBase::open(state));
+    return _sort_source_operator->open(state);
+}
+
+Status SpillSortSourceOperatorX::close(RuntimeState* state) {
+    RETURN_IF_ERROR(OperatorXBase::close(state));
+    return _sort_source_operator->close(state);
+}
+
+Status SpillSortSourceOperatorX::get_block(RuntimeState* state, vectorized::Block* block,
+                                           SourceState& source_state) {
+    auto& local_state = get_local_state(state);
+    RETURN_IF_ERROR(local_state._status);
+
+    if (local_state._need_setup_in_memory_op) {
+        local_state._need_setup_in_memory_op = false;
+        RETURN_IF_ERROR(local_state.setup_in_memory_sort_op(state));
+    }
+    if (!local_state.Base::_shared_state->_enable_spill) {
+        return _sort_source_operator->get_block(local_state._runtime_state.get(), block,
+                                                source_state);
+    } else {
+        if (!local_state._merger) {
+            return local_state.initiate_merge_sort_spill_streams(state);
+        } else {
+            bool eos = false;
+            RETURN_IF_ERROR(local_state._merger->get_next(block, &eos));
+            if (eos) {
+                source_state = SourceState::FINISHED;
+            }
+        }
+    }
+    return Status::OK();
+}
+} // namespace doris::pipeline

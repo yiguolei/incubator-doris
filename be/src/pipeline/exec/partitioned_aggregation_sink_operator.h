@@ -175,9 +175,9 @@ public:
 
     SourceState _source_state = SourceState::DEPEND_ON_SOURCE;
     std::shared_ptr<Dependency> _finish_dependency;
-    bool is_spilling_ = false;
-    std::mutex spill_lock_;
-    std::condition_variable spill_cv_;
+    bool _is_spilling = false;
+    std::mutex _spill_lock;
+    std::condition_variable _spill_cv;
 };
 
 template <typename LocalStateType>

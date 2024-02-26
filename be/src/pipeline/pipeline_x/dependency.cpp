@@ -336,10 +336,10 @@ void PartitionedAggSharedState::clear() {
         partition->close();
     }
 }
-void SortSharedState::clear() {
-    for (auto& stream : sorted_streams_) {
+void SpillSortSharedState::clear() {
+    for (auto& stream : _sorted_streams) {
         (void)ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
     }
-    sorted_streams_.clear();
+    _sorted_streams.clear();
 }
 } // namespace doris::pipeline

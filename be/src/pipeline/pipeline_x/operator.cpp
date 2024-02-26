@@ -63,6 +63,8 @@
 #include "pipeline/exec/set_source_operator.h"
 #include "pipeline/exec/sort_sink_operator.h"
 #include "pipeline/exec/sort_source_operator.h"
+#include "pipeline/exec/spill_sort_sink_operator.h"
+#include "pipeline/exec/spill_sort_source_operator.h"
 #include "pipeline/exec/streaming_aggregation_sink_operator.h"
 #include "pipeline/exec/streaming_aggregation_source_operator.h"
 #include "pipeline/exec/table_function_operator.h"
@@ -604,6 +606,7 @@ DECLARE_OPERATOR_X(OlapTableSinkLocalState)
 DECLARE_OPERATOR_X(OlapTableSinkV2LocalState)
 DECLARE_OPERATOR_X(AnalyticSinkLocalState)
 DECLARE_OPERATOR_X(SortSinkLocalState)
+DECLARE_OPERATOR_X(SpillSortSinkLocalState)
 DECLARE_OPERATOR_X(LocalExchangeSinkLocalState)
 DECLARE_OPERATOR_X(BlockingAggSinkLocalState)
 DECLARE_OPERATOR_X(PartitionedAggSinkLocalState)
@@ -630,6 +633,7 @@ DECLARE_OPERATOR_X(FileScanLocalState)
 DECLARE_OPERATOR_X(EsScanLocalState)
 DECLARE_OPERATOR_X(AnalyticLocalState)
 DECLARE_OPERATOR_X(SortLocalState)
+DECLARE_OPERATOR_X(SpillSortLocalState)
 DECLARE_OPERATOR_X(AggLocalState)
 DECLARE_OPERATOR_X(PartitionedAggLocalState)
 DECLARE_OPERATOR_X(TableFunctionLocalState)
@@ -662,6 +666,7 @@ template class StatefulOperatorX<TableFunctionLocalState>;
 
 template class PipelineXSinkLocalState<SharedHashTableDependency>;
 template class PipelineXSinkLocalState<SortSinkDependency>;
+template class PipelineXSinkLocalState<SpillSortSinkDependency>;
 template class PipelineXSinkLocalState<NestedLoopJoinBuildSinkDependency>;
 template class PipelineXSinkLocalState<AnalyticSinkDependency>;
 template class PipelineXSinkLocalState<AggSinkDependency>;
@@ -681,6 +686,7 @@ template class PipelineXSinkLocalState<PartitionedAggSinkDependency>;
 
 template class PipelineXLocalState<HashJoinProbeDependency>;
 template class PipelineXLocalState<SortSourceDependency>;
+template class PipelineXLocalState<SpillSortSourceDependency>;
 template class PipelineXLocalState<NestedLoopJoinProbeDependency>;
 template class PipelineXLocalState<AnalyticSourceDependency>;
 template class PipelineXLocalState<AggSourceDependency>;

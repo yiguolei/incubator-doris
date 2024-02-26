@@ -146,7 +146,7 @@ public:
     virtual bool is_spilled() const { return false; }
 
     // for topn runtime predicate
-    const SortDescription& get_sort_description() { return _sort_description; }
+    const SortDescription& get_sort_description() const { return _sort_description; }
     virtual Field get_top_value() { return Field {Field::Types::Null}; }
 
     virtual Status merge_sort_read_for_spill(RuntimeState* state, doris::vectorized::Block* block,

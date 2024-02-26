@@ -223,10 +223,8 @@ Status StorageEngine::_init_store_map() {
     SpinLock error_msg_lock;
     std::string error_msg;
     for (const auto& path : _options.store_paths) {
-        std::string spill_dir = fmt::format("{}/{}", path.path, SPILL_DIR_PREFIX);
-        std::string spill_gc_dir = fmt::format("{}/{}", path.path, SPILL_GC_DIR_PREFIX);
-        auto store = std::make_shared<DataDir>(*this, path.path, spill_dir, spill_gc_dir,
-                                               path.capacity_bytes, path.storage_medium);
+        auto store = std::make_shared<DataDir>(*this, path.path, path.capacity_bytes,
+                                               path.storage_medium);
         threads.emplace_back([store = store.get(), &error_msg_lock, &error_msg]() {
             auto st = store->init();
             if (!st.ok()) {
@@ -256,8 +254,6 @@ Status StorageEngine::_init_store_map() {
 }
 
 Status StorageEngine::_init_spill_store_map() {
-    std::vector<std::thread> threads;
-    SpinLock error_msg_lock;
     std::string error_msg;
     for (const auto& path : _options.spill_store_paths) {
         auto data_dir = _store_map.find(path.path);
@@ -266,25 +262,15 @@ Status StorageEngine::_init_spill_store_map() {
             _spill_store_map.emplace(path.path, data_dir->second);
             continue;
         }
-        std::string spill_dir = fmt::format("{}/{}", path.path, SPILL_DIR_PREFIX);
-        std::string spill_gc_dir = fmt::format("{}/{}", path.path, SPILL_GC_DIR_PREFIX);
-        auto store = std::make_shared<DataDir>(*this, path.path, spill_dir, spill_gc_dir,
-                                               path.capacity_bytes, path.storage_medium);
-        threads.emplace_back([store = store.get(), &error_msg_lock, &error_msg]() {
-            auto st = store->init();
-            if (!st.ok()) {
-                {
-                    std::lock_guard<SpinLock> l(error_msg_lock);
-                    error_msg.append(st.to_string() + ";");
-                }
-                LOG(WARNING) << "Store load failed, status=" << st.to_string()
-                             << ", path=" << store->path();
-            }
-        });
+        auto store = std::make_shared<DataDir>(*this, path.path, path.capacity_bytes,
+                                               path.storage_medium);
+        auto st = store->init();
+        if (!st.ok()) {
+            error_msg = st.to_string();
+            LOG(WARNING) << "Store load failed, status=" << error_msg << ", path=" << store->path();
+            break;
+        }
         _spill_store_map.emplace(store->path(), std::move(store));
-    }
-    for (auto& thread : threads) {
-        thread.join();
     }
 
     // All store paths MUST init successfully
@@ -719,6 +705,7 @@ void StorageEngine::stop() {
     THREAD_JOIN(_cache_clean_thread);
     THREAD_JOIN(_tablet_checkpoint_tasks_producer_thread);
     THREAD_JOIN(_async_publish_thread);
+    THREAD_JOIN(_spill_gc_thread);
     THREAD_JOIN(_cold_data_compaction_producer_thread);
     THREAD_JOIN(_cooldown_tasks_producer_thread);
 #undef THREAD_JOIN

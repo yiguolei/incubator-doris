@@ -44,9 +44,9 @@ Status PartitionedAggSinkLocalState::open(RuntimeState* state) {
 }
 Status PartitionedAggSinkLocalState::close(RuntimeState* state, Status exec_status) {
     {
-        std::unique_lock<std::mutex> lk(spill_lock_);
-        if (is_spilling_) {
-            spill_cv_.wait(lk);
+        std::unique_lock<std::mutex> lk(_spill_lock);
+        if (_is_spilling) {
+            _spill_cv.wait(lk);
         }
     }
     return Status::OK();
@@ -99,11 +99,9 @@ template <typename LocalStateType>
 Status PartitionedAggSinkOperatorX<LocalStateType>::sink(doris::RuntimeState* state,
                                                          vectorized::Block* in_block,
                                                          SourceState source_state) {
-    LOG(INFO) << "agg node id: " << id() << ", operator id: " << operator_id()
-              << " sink status: " << (int)source_state;
     auto& local_state = get_local_state(state);
     COUNTER_UPDATE(local_state.rows_input_counter(), (int64_t)in_block->rows());
-    RETURN_IF_ERROR(local_state.Base::_shared_state->sink_status_);
+    RETURN_IF_ERROR(local_state.Base::_shared_state->_sink_status);
     local_state._source_state = source_state;
     auto* runtime_state = local_state._runtime_state.get();
     RETURN_IF_ERROR(
@@ -112,8 +110,6 @@ Status PartitionedAggSinkOperatorX<LocalStateType>::sink(doris::RuntimeState* st
         if (revocable_mem_size(state) > 0) {
             RETURN_IF_ERROR(revoke_memory(state));
         } else {
-            LOG(INFO) << "agg node id: " << id() << ", operator id: " << operator_id()
-                      << ", sink finish, set ready to read";
             local_state._dependency->set_ready_to_read();
         }
     }
@@ -128,13 +124,13 @@ Status PartitionedAggSinkOperatorX<LocalStateType>::revoke_memory(RuntimeState* 
 template <typename LocalStateType>
 size_t PartitionedAggSinkOperatorX<LocalStateType>::revocable_mem_size(RuntimeState* state) const {
     auto& local_state = get_local_state(state);
-    if (!local_state.Base::_shared_state->sink_status_.ok()) {
+    if (!local_state.Base::_shared_state->_sink_status.ok()) {
         return UINT64_MAX;
     }
     auto* runtime_state = local_state._runtime_state.get();
     auto size = _agg_sink_operator->get_revocable_mem_size(runtime_state);
-    LOG(INFO) << "agg node id: " << id() << ", operator id: " << operator_id()
-              << ", revocable mem size: " << size;
+    // LOG(INFO) << "agg node id: " << id() << ", operator id: " << operator_id()
+    //           << ", revocable mem size: " << size;
     return size;
 }
 
@@ -153,8 +149,6 @@ Status PartitionedAggSinkLocalState::setup_in_memory_agg_op(RuntimeState* state)
     _runtime_state->set_pipeline_x_runtime_filter_mgr(state->runtime_filter_mgr());
 
     auto& parent = Base::_parent->template cast<Parent>();
-    LOG(INFO) << "agg node id: " << parent.id() << ", operator id: " << Base::_parent->operator_id()
-              << ", setup in mem agg op";
     parent._agg_sink_operator->get_dependency(Base::_shared_state->_downstream_deps,
                                               Base::_shared_state->_shared_states,
                                               const_cast<QueryContext*>(_dependency->_query_ctx));
@@ -172,55 +166,65 @@ Status PartitionedAggSinkLocalState::setup_in_memory_agg_op(RuntimeState* state)
 }
 
 Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
-    LOG(INFO) << "agg node id: " << Base::_parent->id()
-              << ", operator id: " << Base::_parent->operator_id() << " revoke_memory"
+    LOG(INFO) << "agg node " << Base::_parent->id() << " operator " << Base::_parent->operator_id()
+              << " revoke_memory"
               << ", source status: " << (int)_source_state;
-    RETURN_IF_ERROR(Base::_shared_state->sink_status_);
-    {
-        std::unique_lock<std::mutex> lk(spill_lock_);
-        DCHECK(!is_spilling_);
-        is_spilling_ = true;
-    }
+    RETURN_IF_ERROR(Base::_shared_state->_sink_status);
+    DCHECK(!_is_spilling);
+    _is_spilling = true;
 
     // TODO: spill thread may set_ready before the task::execute thread put the task to blocked state
     if (_source_state != SourceState::FINISHED) {
         Base::_dependency->Dependency::block();
     }
     auto& parent = Base::_parent->template cast<Parent>();
-    return ExecEnv::GetInstance()->spill_stream_mgr()->get_async_task_thread_pool()->submit_func(
+    Status status;
+    Defer defer {[&]() {
+        if (!status.ok()) {
+            _is_spilling = false;
+            if (_source_state != SourceState::FINISHED) {
+                Base::_dependency->Dependency::set_ready();
+            }
+        }
+    }};
+    status = ExecEnv::GetInstance()->spill_stream_mgr()->get_async_task_thread_pool()->submit_func(
             [this, &parent, state] {
                 Defer defer {[&]() {
-                    if (!Base::_shared_state->sink_status_.ok() ||
-                        _source_state == SourceState::FINISHED) {
-                        LOG(WARNING) << "agg node id: " << Base::_parent->id()
-                                     << ", operator id: " << Base::_parent->operator_id()
-                                     << " revoke_memory end: " << Base::_shared_state->sink_status_;
+                    if (!Base::_shared_state->_sink_status.ok()) {
+                        LOG(WARNING)
+                                << "agg node " << Base::_parent->id() << " operator "
+                                << Base::_parent->operator_id()
+                                << " revoke_memory error: " << Base::_shared_state->_sink_status;
+                    } else {
+                        LOG(INFO) << "agg node " << Base::_parent->id() << " operator "
+                                  << Base::_parent->operator_id() << " revoke_memory finish";
                     }
                     {
-                        std::unique_lock<std::mutex> lk(spill_lock_);
+                        std::unique_lock<std::mutex> lk(_spill_lock);
                         if (_source_state == SourceState::FINISHED) {
                             Base::_dependency->set_ready_to_read();
                             _finish_dependency->set_ready();
                         } else {
                             Base::_dependency->Dependency::set_ready();
                         }
-                        is_spilling_ = false;
-                        spill_cv_.notify_one();
+                        _is_spilling = false;
+                        _spill_cv.notify_one();
                     }
                 }};
                 auto* runtime_state = _runtime_state.get();
                 auto* agg_data = parent._agg_sink_operator->get_agg_data(runtime_state);
-                Base::_shared_state->sink_status_ = std::visit(
+                Base::_shared_state->_sink_status = std::visit(
                         [&](auto&& agg_method) -> Status {
                             auto& hash_table = *agg_method.hash_table;
                             return spill_hash_table2(state, agg_method, hash_table);
                         },
                         agg_data->method_variant);
-                RETURN_IF_ERROR(Base::_shared_state->sink_status_);
-                Base::_shared_state->sink_status_ =
+                RETURN_IF_ERROR(Base::_shared_state->_sink_status);
+                Base::_shared_state->_sink_status =
                         parent._agg_sink_operator->reset_hash_table(runtime_state);
-                return Base::_shared_state->sink_status_;
+                return Base::_shared_state->_sink_status;
             });
+    return status;
 }
 
 template class PartitionedAggSinkOperatorX<PartitionedAggSinkLocalState>;

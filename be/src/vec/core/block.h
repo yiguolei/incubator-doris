@@ -123,13 +123,6 @@ public:
         std::swap(data, new_data);
     }
 
-    Status resize(size_t rows) {
-        for (auto& column : data) {
-            column.column->assume_mutable()->resize(rows);
-        }
-        return Status::OK();
-    }
-
     void initialize_index_by_name();
 
     /// References are invalidated after calling functions above.
@@ -575,19 +568,6 @@ public:
 
     /// remove the column with the specified name
     void erase(const String& name);
-
-    Status reserve(int rows) {
-        for (auto& column : _columns) {
-            RETURN_IF_CATCH_EXCEPTION(column->reserve(rows));
-        }
-        return Status::OK();
-    }
-    Status resize(size_t rows) {
-        for (auto& column : _columns) {
-            column->resize(rows);
-        }
-        return Status::OK();
-    }
 
     std::string dump_data(size_t row_limit = 100) const;
 

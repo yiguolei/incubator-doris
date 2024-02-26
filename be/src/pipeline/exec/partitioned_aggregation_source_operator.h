@@ -40,15 +40,8 @@ public:
 
     friend class PartitionedAggSourceOperatorX;
     friend class PartitionedAggLocalState;
-
-    void block() override {
-        // if (_is_streaming_agg_state()) {
-        Dependency::block();
-        // }
-    }
 };
 
-class PartitionedAggSourceOperatorX;
 class PartitionedAggLocalState final : public PipelineXLocalState<PartitionedAggSourceDependency> {
 public:
     ENABLE_FACTORY_CREATOR(PartitionedAggLocalState);
@@ -57,7 +50,6 @@ public:
     PartitionedAggLocalState(RuntimeState* state, OperatorXBase* parent);
     ~PartitionedAggLocalState() override = default;
 
-    Status init(RuntimeState* state, LocalStateInfo& info) override;
     Status close(RuntimeState* state) override;
 
     Status initiate_merge_spill_partition_agg_data(RuntimeState* state);

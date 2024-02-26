@@ -63,19 +63,9 @@ class SortSinkLocalState : public PipelineXSinkLocalState<SortSinkDependency> {
 public:
     using Base = PipelineXSinkLocalState<SortSinkDependency>;
     SortSinkLocalState(DataSinkOperatorXBase* parent, RuntimeState* state)
-            : PipelineXSinkLocalState<SortSinkDependency>(parent, state) {
-        finish_dependency_ = std::make_shared<FinishDependency>(
-                parent->operator_id(), parent->node_id(), parent->get_name() + "_FINISH_DEPENDENCY",
-                state->get_query_ctx());
-    }
+            : PipelineXSinkLocalState<SortSinkDependency>(parent, state) {}
 
     Status init(RuntimeState* state, LocalSinkStateInfo& info) override;
-
-    Status close(RuntimeState* state, Status exec_status) override;
-
-    Dependency* finishdependency() override { return finish_dependency_.get(); }
-
-    Status revoke_memory(RuntimeState* state);
 
 private:
     friend class SortSinkOperatorX;
@@ -87,12 +77,6 @@ private:
 
     // topn top value
     vectorized::Field old_top {vectorized::Field::Types::Null};
-
-    SourceState _source_state;
-    vectorized::SpillStreamSPtr spilling_stream_;
-    std::shared_ptr<Dependency> finish_dependency_;
-    std::mutex spill_lock_;
-    std::condition_variable spill_cv_;
 };
 
 class SortSinkOperatorX final : public DataSinkOperatorX<SortSinkLocalState> {
@@ -121,9 +105,21 @@ public:
         }
         return DataSinkOperatorX<SortSinkLocalState>::required_data_distribution();
     }
-    size_t revocable_mem_size(RuntimeState* state) const override;
 
-    Status revoke_memory(RuntimeState* state) override;
+    bool is_full_sort() const { return _algorithm == SortAlgorithm::FULL_SORT; }
+
+    size_t get_revocable_mem_size(RuntimeState* state) const;
+
+    SortSharedState* get_shared_state(RuntimeState* state) {
+        auto& local_state = get_local_state(state);
+        return local_state.Base::_shared_state;
+    }
+
+    Status prepare_for_spill(RuntimeState* state);
+
+    Status merge_sort_read_for_spill(RuntimeState* state, doris::vectorized::Block* block,
+                                     int batch_size, bool* eos);
+    void reset(RuntimeState* state);
 
 private:
     friend class SortSinkLocalState;
@@ -148,8 +144,6 @@ private:
     const bool _is_colocate = false;
     const bool _is_analytic_sort = false;
     const std::vector<TExpr> _partition_exprs;
-
-    bool _enable_spill = false;
 };
 
 } // namespace pipeline

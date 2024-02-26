@@ -24,6 +24,7 @@
 #include "common/status.h"
 #include "operator.h"
 #include "pipeline/pipeline_x/operator.h"
+#include "vec/core/sort_description.h"
 #include "vec/exec/vsort_node.h"
 
 namespace doris {
@@ -63,22 +64,8 @@ public:
     SortLocalState(RuntimeState* state, OperatorXBase* parent);
     ~SortLocalState() override = default;
 
-    Status close(RuntimeState* state) override;
-
-    Status initiate_merge_sort_spill_streams(RuntimeState* state);
-
 private:
-    int _calc_spill_blocks_to_merge() const;
-    Status _create_intermediate_merger(int num_blocks,
-                                       const vectorized::SortDescription& sort_description);
     friend class SortSourceOperatorX;
-    Status status_;
-    int64_t external_sort_bytes_threshold_ = 134217728; // 128M
-    std::vector<vectorized::SpillStreamSPtr> current_merging_streams_;
-    std::unique_ptr<vectorized::VSortedRunMerger> merger_;
-    bool is_merging_ = false;
-    std::mutex merge_spill_lock_;
-    std::condition_variable merge_spill_cv_;
 };
 
 class SortSourceOperatorX final : public OperatorX<SortLocalState> {
@@ -89,6 +76,13 @@ public:
                      SourceState& source_state) override;
 
     bool is_source() const override { return true; }
+
+    SortSharedState* get_shared_state(RuntimeState* state) {
+        auto& local_state = get_local_state(state);
+        return local_state.Base::_shared_state;
+    }
+
+    const vectorized::SortDescription& get_sort_description(RuntimeState* state) const;
 
 private:
     friend class SortLocalState;
