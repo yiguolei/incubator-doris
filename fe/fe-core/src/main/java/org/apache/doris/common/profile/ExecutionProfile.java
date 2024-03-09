@@ -224,6 +224,8 @@ public class ExecutionProfile {
     }
 
     public void addToProfileAsChild(RuntimeProfile rootProfile) {
+        LOG.info("root profile {}", rootProfile.getName());
+        LOG.info("executionProfile profile {}", executionProfile.getName());
         rootProfile.addChild(executionProfile);
     }
 

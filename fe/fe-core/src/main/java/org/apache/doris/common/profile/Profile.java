@@ -65,6 +65,7 @@ public class Profile {
             return;
         }
         this.executionProfile = executionProfile;
+        LOG.info("exeuction1 {}", this.executionProfile.getExecutionProfile().getName());
         this.executionProfile.addToProfileAsChild(rootProfile);
         this.aggregatedProfile = new AggregatedProfile(rootProfile, executionProfile);
     }

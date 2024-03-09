@@ -623,12 +623,16 @@ public class RuntimeProfile {
 
         childLock.writeLock().lock();
         try {
+            LOG.info("child name {}", child.name);
             if (childMap.containsKey(child.name)) {
                 childList.removeIf(e -> e.first.name.equals(child.name));
             }
             this.childMap.put(child.name, child);
             Pair<RuntimeProfile, Boolean> pair = Pair.of(child, true);
             this.childList.add(pair);
+        } catch (Throwable e) {
+            LOG.info("aaa", e);
+            throw e;
         } finally {
             childLock.writeLock().unlock();
         }
