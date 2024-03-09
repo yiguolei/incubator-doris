@@ -67,6 +67,7 @@ public class Profile {
         this.executionProfile = executionProfile;
         LOG.info("exeuction1 {}", this.executionProfile.getExecutionProfile().getName());
         this.executionProfile.addToProfileAsChild(rootProfile);
+        LOG.info("execution2 finished");
         this.aggregatedProfile = new AggregatedProfile(rootProfile, executionProfile);
     }
 
