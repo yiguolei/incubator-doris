@@ -1588,6 +1588,7 @@ public class StmtExecutor {
                 planner, context.getStatsErrorEstimator());
             QeProcessorImpl.INSTANCE.registerQuery(context.queryId(),
                     new QeProcessorImpl.QueryInfo(context, originStmt.originStmt, coord));
+            LOG.info("execution profile name: {}", coord.getExecutionProfile().getExecutionProfile().getName());
             profile.setExecutionProfile(coord.getExecutionProfile());
             coordBase = coord;
         }
