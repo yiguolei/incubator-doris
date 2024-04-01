@@ -505,14 +505,14 @@ Status AggregationNode::get_next(RuntimeState* state, Block* block, bool* eos) {
         if (_preagg_block.rows() != 0) {
             RETURN_IF_ERROR(_executor.pre_agg(&_preagg_block, block));
         } else {
-            RETURN_IF_ERROR(_executor.get_result(state, block, eos));
+            RETURN_IF_ERROR_OR_CATCH_EXCEPTION(_executor.get_result(state, block, eos));
         }
         // pre stream agg need use _num_row_return to decide whether to do pre stream agg
         _num_rows_returned += block->rows();
         _make_nullable_output_key(block);
         COUNTER_SET(_rows_returned_counter, _num_rows_returned);
     } else {
-        RETURN_IF_ERROR(_executor.get_result(state, block, eos));
+        RETURN_IF_ERROR_OR_CATCH_EXCEPTION(_executor.get_result(state, block, eos));
         _make_nullable_output_key(block);
         // dispose the having clause, should not be execute in prestreaming agg
         RETURN_IF_ERROR(VExprContext::filter_block(_vconjunct_ctx_ptr, block, block->columns()));
