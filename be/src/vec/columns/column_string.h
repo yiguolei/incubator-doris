@@ -22,6 +22,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <string>
 
 #include "vec/columns/column.h"
 #include "vec/columns/column_impl.h"
@@ -63,9 +64,9 @@ private:
 
     void ALWAYS_INLINE check_chars_length(size_t total_length, size_t element_number) const {
         if (UNLIKELY(total_length > MAX_STRING_SIZE)) {
-            if (doris::enable_thread_catch_bad_alloc > 0) {
+            if (doris::enable_thread_catch_bad_alloc_num > 0) {
                 throw std::runtime_error("could not allocate too large memory " +
-                                         to_string(total_length));
+                                         std::to_string(total_length));
             } else {
                 LOG(FATAL) << "string column length is too large: total_length=" << total_length
                            << " ,element_number=" << element_number;

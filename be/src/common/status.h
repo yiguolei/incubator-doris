@@ -20,7 +20,7 @@
 
 namespace doris {
 
-inline thread_local int enable_thread_catch_bad_alloc = 0;
+inline thread_local int enable_thread_catch_bad_alloc_num = 0;
 class PStatus;
 
 namespace ErrorCode {
@@ -550,20 +550,20 @@ inline std::string Status::to_string() const {
         }                                                          \
     } while (false);
 
-#define RETURN_IF_ERROR_OR_CATCH_EXCEPTION(stmt)                             \
-    do {                                                                     \
-        try {                                                                \
-            doris::enable_thread_catch_bad_alloc++;                          \
-            Defer defer {[&]() { doris::enable_thread_catch_bad_alloc--; }}; \
-            {                                                                \
-                Status _status_ = (stmt);                                    \
-                if (UNLIKELY(!_status_.ok())) {                              \
-                    return _status_;                                         \
-                }                                                            \
-            }                                                                \
-        } catch (const std::runtime_error& e) {                              \
-            return Status::InternalError(e.what());                          \
-        }                                                                    \
+#define RETURN_IF_ERROR_OR_CATCH_EXCEPTION(stmt)                                 \
+    do {                                                                         \
+        try {                                                                    \
+            doris::enable_thread_catch_bad_alloc_num++;                          \
+            Defer defer {[&]() { doris::enable_thread_catch_bad_alloc_num--; }}; \
+            {                                                                    \
+                Status _status_ = (stmt);                                        \
+                if (UNLIKELY(!_status_.ok())) {                                  \
+                    return _status_;                                             \
+                }                                                                \
+            }                                                                    \
+        } catch (const std::runtime_error& e) {                                  \
+            return Status::InternalError(e.what());                              \
+        }                                                                        \
     } while (0)
 
 } // namespace doris
