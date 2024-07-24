@@ -74,6 +74,7 @@ import org.apache.doris.proto.Types;
 import org.apache.doris.proto.Types.PUniqueId;
 import org.apache.doris.qe.ConnectContext.ConnectType;
 import org.apache.doris.qe.QueryStatisticsItem.FragmentInstanceInfo;
+import org.apache.doris.resource.AdmissionControl;
 import org.apache.doris.resource.workloadgroup.QueryQueue;
 import org.apache.doris.resource.workloadgroup.QueueToken;
 import org.apache.doris.rpc.BackendServiceProxy;
@@ -781,6 +782,7 @@ public class Coordinator implements CoordInterface {
             int backendIdx = 0;
             int profileFragmentId = 0;
             beToPipelineExecCtxs.clear();
+            Map<Long, Backend> runningBackends = Maps.newHashMap();
             // fragment:backend
             List<Pair<PlanFragmentId, Long>> backendFragments = Lists.newArrayList();
             // If #fragments >=2, use twoPhaseExecution with exec_plan_fragments_prepare and exec_plan_fragments_start,
@@ -833,6 +835,7 @@ public class Coordinator implements CoordInterface {
                     }
 
                     PipelineExecContexts ctxs = beToPipelineExecCtxs.get(pipelineExecContext.backend.getId());
+                    runningBackends.put(pipelineExecContext.backend.getId(), pipelineExecContext.backend);
                     if (ctxs == null) {
                         ctxs = new PipelineExecContexts(pipelineExecContext.backend.getId(),
                                 pipelineExecContext.brpcAddress, twoPhaseExecution,
@@ -866,6 +869,26 @@ public class Coordinator implements CoordInterface {
 
                 profileFragmentId += 1;
             } // end for fragments
+            if (context != null) {
+                if (context.getSessionVariable().enableRTResourceCheckBeforeQuery) {
+                    AdmissionControl admissionControl = Env.getCurrentEnv().getAdmissionControl();
+                    boolean isResourceAvailable = false;
+                    int retryNum = 0;
+                    while (!isResourceAvailable && this.timeoutDeadline - System.currentTimeMillis() > 0) {
+                        isResourceAvailable = admissionControl.checkWorkloadGroupResourceUsage(
+                                runningBackends.values(), null, this.timeoutDeadline - System.currentTimeMillis());
+                        ++retryNum;
+                        if (!isResourceAvailable && this.timeoutDeadline - System.currentTimeMillis() > 0) {
+                            // If resource on BE is not available, then should not try too quickly, it will not
+                            // be available very soon.
+                            Thread.sleep(Math.max(300 * retryNum, 5000));
+                        }
+                    }
+                    if (!isResourceAvailable) {
+                        throw new UserException("Resource on Backend not available after try " + retryNum + "times");
+                    }
+                }
+            }
 
             // Init the mark done in order to track the finished state of the query
             fragmentsDoneLatch = new MarkedCountDownLatch<>(backendFragments.size());

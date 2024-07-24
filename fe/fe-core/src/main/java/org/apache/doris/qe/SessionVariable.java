@@ -618,6 +618,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_ES_PARALLEL_SCROLL = "enable_es_parallel_scroll";
 
+    public static final String ENABLE_RT_RESOURCE_CHECK_BEFORE_QUERY = "enable_rt_resource_check_before_query";
+
     public static final List<String> DEBUG_VARIABLES = ImmutableList.of(
             SKIP_DELETE_PREDICATE,
             SKIP_DELETE_BITMAP,
@@ -755,6 +757,11 @@ public class SessionVariable implements Serializable, Writable {
             "查询是否绕开WorkloadGroup的限制，目前仅支持绕开查询排队的逻辑",
             "whether bypass workload group's limitation, currently only support bypass query queue"})
     public boolean bypassWorkloadGroup = false;
+
+    @VariableMgr.VarAttr(name = ENABLE_RT_RESOURCE_CHECK_BEFORE_QUERY, needForward = true, description = {
+            "在查询开始执行之前，是否实时的检查所有的BE上的资源可用",
+            "Check whether all the resources on the BE are available in real time before the query is executed"})
+    public boolean enableRTResourceCheckBeforeQuery = false;
 
     @VariableMgr.VarAttr(name = MAX_COLUMN_READER_NUM)
     public int maxColumnReaderNum = 20000;
