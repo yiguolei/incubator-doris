@@ -92,6 +92,8 @@ public abstract class JdbcClient {
                 return new JdbcDB2Client(jdbcClientConfig);
             case JdbcResource.GBASE:
                 return new JdbcGbaseClient(jdbcClientConfig);
+            case JdbcResource.DAMENG:
+                return new JdbcDaMengClient(jdbcClientConfig);
             default:
                 throw new IllegalArgumentException("Unsupported DB type: " + dbType);
         }

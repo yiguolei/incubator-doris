@@ -104,6 +104,7 @@ public class JdbcTable extends Table {
         tempMap.put("oceanbase_oracle", TOdbcTableType.OCEANBASE_ORACLE);
         tempMap.put("db2", TOdbcTableType.DB2);
         tempMap.put("gbase", TOdbcTableType.GBASE);
+        tempMap.put("dameng", TOdbcTableType.DAMENG);
         TABLE_TYPE_MAP = Collections.unmodifiableMap(tempMap);
     }
 
@@ -495,6 +496,7 @@ public class JdbcTable extends Table {
                 return formatName(name, "\"", "\"", false, false);
             case ORACLE:
             case DB2:
+            case DAMENG:
                 return formatName(name, "\"", "\"", true, false);
             default:
                 return name;

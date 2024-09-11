@@ -402,7 +402,8 @@ enum TOdbcTableType {
     OCEANBASE_ORACLE,
     NEBULA, // Deprecated
     DB2,
-    GBASE
+    GBASE,
+    DAMENG
 }
 
 struct TJdbcExecutorCtorParams {
