@@ -337,6 +337,13 @@ public:
 
     bool low_memory_mode() { return _low_memory_mode; }
 
+    void register_writer(std::weak_ptr<MemTableWriter> writer) {
+        std::lock_guard<std::mutex> l(_memtable_writer_lock);
+        _writers.push_back(writer);
+    }
+
+    void get_load_mem_usage(int64_t* active_bytes, int64_t* queue_bytes, int64_t* flush_bytes) {}
+
     void update_paused_reason(const Status& st) {
         std::lock_guard l(_paused_mutex);
         if (_paused_reason.is<ErrorCode::QUERY_MEMORY_EXCEEDED>()) {
@@ -418,6 +425,8 @@ private:
     std::atomic<bool> _low_memory_mode = false;
     int64_t _user_set_mem_limit = 0;
     std::atomic<int64_t> _expected_mem_limit = 0;
+    std::mutex _memtable_writer_lock;
+    std::vector<std::weak_ptr<MemTableWriter>> _writers;
 
     std::mutex _profile_mutex;
     timespec _query_arrival_timestamp;
