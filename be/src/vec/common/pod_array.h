@@ -264,15 +264,6 @@ public:
 
     const char* raw_data() const { return c_start; }
 
-    template <typename... TAllocatorParams>
-    void push_back_raw(const char* ptr, TAllocatorParams&&... allocator_params) {
-        if (UNLIKELY(c_end == c_end_of_storage))
-            reserve_for_next_size(std::forward<TAllocatorParams>(allocator_params)...);
-
-        memcpy(c_end, ptr, ELEMENT_SIZE);
-        c_end += byte_size(1);
-    }
-
     void protect() {
 #ifndef NDEBUG
         protect_impl(PROT_READ);
@@ -400,7 +391,7 @@ public:
         }
         this->c_end = this->c_start + this->byte_size(n);
     }
-
+    /*
     template <typename U, typename... TAllocatorParams>
     void push_back(U&& x, TAllocatorParams&&... allocator_params) {
         if (UNLIKELY(this->c_end == nullptr || this->c_end + sizeof(T) > this->c_end_of_storage)) {
@@ -410,19 +401,7 @@ public:
         new (t_end()) T(std::forward<U>(x));
         this->c_end += this->byte_size(1);
     }
-
-    template <typename U, typename... TAllocatorParams>
-    void add_num_element(U&& x, uint32_t num, TAllocatorParams&&... allocator_params) {
-        if (num != 0) {
-            const auto new_end = this->c_end + this->byte_size(num);
-            if (UNLIKELY(new_end > this->c_end_of_storage)) {
-                this->reserve(this->size() + num);
-            }
-            std::fill(t_end(), t_end() + num, x);
-            this->c_end = new_end;
-        }
-    }
-
+*/
     template <typename U, typename... TAllocatorParams>
     void add_num_element_without_reserve(U&& x, uint32_t num,
                                          TAllocatorParams&&... allocator_params) {
@@ -472,18 +451,6 @@ public:
         insert_prepare(from_begin, from_end, std::forward<TAllocatorParams>(allocator_params)...);
 
         insert_assume_reserved(from_begin, from_end);
-    }
-
-    /// Works under assumption, that it's possible to read up to 15 excessive bytes after `from_end` and this PODArray is padded.
-    template <typename It1, typename It2, typename... TAllocatorParams>
-    void insert_small_allow_read_write_overflow15(It1 from_begin, It2 from_end,
-                                                  TAllocatorParams&&... allocator_params) {
-        static_assert(pad_right_ >= 15);
-        insert_prepare(from_begin, from_end, std::forward<TAllocatorParams>(allocator_params)...);
-        size_t bytes_to_copy = this->byte_size(from_end - from_begin);
-        memcpy_small_allow_read_write_overflow15(
-                this->c_end, reinterpret_cast<const void*>(&*from_begin), bytes_to_copy);
-        this->c_end += bytes_to_copy;
     }
 
     template <typename It1, typename It2>

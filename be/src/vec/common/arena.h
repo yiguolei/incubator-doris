@@ -184,24 +184,6 @@ public:
         } while (true);
     }
 
-    template <typename T>
-    T* alloc() {
-        return reinterpret_cast<T*>(aligned_alloc(sizeof(T), alignof(T)));
-    }
-
-    /** Rollback just performed allocation.
-      * Must pass size not more that was just allocated.
-	  * Return the resulting head pointer, so that the caller can assert that
-	  * the allocation it intended to roll back was indeed the last one.
-      */
-    void* rollback(size_t size) {
-        DCHECK(head != nullptr);
-
-        head->pos -= size;
-        ASAN_POISON_MEMORY_REGION(head->pos, size + pad_right);
-        return head->pos;
-    }
-
     /** Begin or expand a contiguous range of memory.
       * 'range_start' is the start of range. If nullptr, a new range is
       * allocated.
