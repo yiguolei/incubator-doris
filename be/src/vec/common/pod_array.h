@@ -165,6 +165,9 @@ protected:
 
         unprotect();
 
+        LOG(INFO) << "PODArray Alloc Size=" << PrettyPrinter::print(allocated_bytes(), TUnit::BYTES)
+                  << ", usage_ratio:" << (c_end - c_start) * 1.0 / allocated_bytes();
+
         TAllocator::free(c_start - pad_left, allocated_bytes());
     }
 
