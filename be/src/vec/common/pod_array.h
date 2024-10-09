@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "common/compiler_util.h" // IWYU pragma: keep
+#include "common/status.h"
 #include "util/pretty_printer.h"
 #include "vec/common/allocator.h" // IWYU pragma: keep
 #include "vec/common/memcpy_small.h"
@@ -165,7 +166,9 @@ protected:
         if (c_start == null) return;
 
         unprotect();
-
+        if ((c_end - c_start) * 1.0 / allocated_bytes() < 0.1 && allocated_bytes() > 1000 * 1024) {
+            LOG(INFO) << "podarray " << Status::MemoryAllocFailed("");
+        }
         LOG(INFO) << "PODArray Alloc Size=" << PrettyPrinter::print(allocated_bytes(), TUnit::BYTES)
                   << ", usage_ratio:" << (c_end - c_start) * 1.0 / allocated_bytes();
 
