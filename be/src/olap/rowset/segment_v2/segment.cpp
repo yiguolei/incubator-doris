@@ -145,10 +145,6 @@ Segment::Segment(uint32_t segment_id, RowsetId rowset_id, TabletSchemaSPtr table
     g_total_segment_num << 1;
 }
 
-Segment::~Segment() {
-    g_total_segment_num << -1;
-}
-
 io::UInt128Wrapper Segment::file_cache_key(std::string_view rowset_id, uint32_t seg_id) {
     return io::BlockFileCache::hash(fmt::format("{}_{}.dat", rowset_id, seg_id));
 }

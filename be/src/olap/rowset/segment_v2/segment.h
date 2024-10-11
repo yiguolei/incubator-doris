@@ -90,7 +90,7 @@ public:
         return file_cache_key(_rowset_id.to_string(), _segment_id);
     }
 
-    ~Segment();
+    ~Segment() = default;
 
     Status new_iterator(SchemaSPtr schema, const StorageReadOptions& read_options,
                         std::unique_ptr<RowwiseIterator>* iter);
