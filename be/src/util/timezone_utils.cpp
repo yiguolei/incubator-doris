@@ -44,6 +44,7 @@ namespace fs = std::filesystem;
 
 namespace doris {
 
+#include "common/compile_check_begin.h"
 namespace vectorized {
 using ZoneList = std::unordered_map<std::string, cctz::time_zone>;
 }
@@ -59,7 +60,7 @@ static const char* tzdir = "/usr/share/zoneinfo"; // default value, may change b
 void TimezoneUtils::clear_timezone_caches() {
     lower_zone_cache_->clear();
 }
-int TimezoneUtils::cache_size() {
+size_t TimezoneUtils::cache_size() {
     return lower_zone_cache_->size();
 }
 

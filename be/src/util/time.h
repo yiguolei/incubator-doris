@@ -35,6 +35,7 @@
 /// Utilities for collecting timings.
 namespace doris {
 
+#include "common/compile_check_begin.h"
 /// Returns a value representing a point in time that is unaffected by daylight savings or
 /// manual adjustments to the system clock. This should not be assumed to be a Unix
 /// time. Typically the value corresponds to elapsed time since the system booted. See
@@ -64,7 +65,7 @@ inline int64_t MonotonicSeconds() {
 }
 
 inline double GetMonoTimeSecondsAsDouble() {
-    return GetMonoTimeMicros() / static_cast<double>(MICROS_PER_SEC);
+    return static_cast<double>(GetMonoTimeMicros()) / static_cast<double>(MICROS_PER_SEC);
 }
 
 // Returns the time since the Epoch measured in microseconds.
@@ -134,4 +135,5 @@ std::string ToStringFromUnixMicros(int64_t us, TimePrecision p = TimePrecision::
 /// Converts input microseconds-since-epoch to date-time string in UTC time zone.
 std::string ToUtcStringFromUnixMicros(int64_t us, TimePrecision p = TimePrecision::Microsecond);
 
+#include "common/compile_check_end.h"
 } // namespace doris

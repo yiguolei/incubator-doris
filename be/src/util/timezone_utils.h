@@ -26,6 +26,7 @@ class time_zone;
 
 namespace doris {
 
+#include "common/compile_check_begin.h"
 // When BE start, we call load_timezones_to_cache to fill lower_zone_cache_ with lower case timezone name as key
 // for compatibility. then when we `find_cctz_time_zone`, just convert to lower case and find in cache. if miss,
 // use parse_tz_offset_string to try to parse as offset format string.
@@ -41,10 +42,12 @@ public:
 private:
     // for ut only
     static void clear_timezone_caches();
-    static int cache_size();
+    static size_t cache_size();
 
     static void load_offsets_to_cache();
 
     static bool parse_tz_offset_string(const std::string& timezone, cctz::time_zone& ctz);
 };
+
+#include "common/compile_check_end.h"
 } // namespace doris

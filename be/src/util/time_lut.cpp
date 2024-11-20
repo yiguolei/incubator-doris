@@ -21,12 +21,14 @@
 #include "vec/runtime/vdatetime_value.h"
 
 namespace doris {
+
+#include "common/compile_check_begin.h"
 TimeLUTImpl::TimeLUTImpl() {
     init_time_lut();
 }
 
 void TimeLUTImpl::init_time_lut() {
-    for (uint32_t y = LUT_START_YEAR; y < LUT_END_YEAR; y++) {
+    for (uint16_t y = LUT_START_YEAR; y < LUT_END_YEAR; y++) {
         uint16_t tmp_year = 0;
         for (uint8_t m = 0; m < NUM_MONTHS; m++) {
             for (uint8_t i = 0; i < NUM_DAYS; i++) {
@@ -40,14 +42,14 @@ void TimeLUTImpl::init_time_lut() {
     }
 }
 
-uint8_t calc_week(uint16_t year, uint8_t month, uint8_t day, bool monday_first, bool week_year,
+uint8_t calc_week(uint32_t year, uint32_t month, uint32_t day, bool monday_first, bool week_year,
                   bool first_weekday, uint16_t* to_year) {
-    uint64_t day_nr = calc_daynr(year, month, day);
-    uint64_t daynr_first_day = calc_daynr(year, 1, 1);
+    uint32_t day_nr = calc_daynr(year, month, day);
+    uint32_t daynr_first_day = calc_daynr(year, 1, 1);
     uint8_t weekday_first_day = calc_weekday(daynr_first_day, !monday_first);
 
     int days = 0;
-    *to_year = year;
+    *to_year = cast_set<uint16_t>(year);
 
     // Check weather the first days of this year belongs to last year
     if (month == 1 && day <= (7 - weekday_first_day)) {
@@ -80,7 +82,7 @@ uint8_t calc_week(uint16_t year, uint8_t month, uint8_t day, bool monday_first, 
         }
     }
 
-    return days / 7 + 1;
+    return (uint8_t)(days / 7 + 1);
 }
 
 uint32_t calc_days_in_year(uint32_t year) {
@@ -92,10 +94,10 @@ bool is_leap(uint32_t year) {
 }
 
 uint8_t calc_weekday(uint64_t day_nr, bool is_sunday_first_day) {
-    return (day_nr + 5L + (is_sunday_first_day ? 1L : 0L)) % 7;
+    return (uint8_t)((day_nr + 5L + (is_sunday_first_day ? 1L : 0L)) % 7);
 }
 
-uint32_t calc_daynr(uint16_t year, uint8_t month, uint8_t day) {
+uint32_t calc_daynr(uint32_t year, uint32_t month, uint32_t day) {
     // date_day_offet_dict range from [1900-01-01, 2039-12-31]
     if (date_day_offset_dict::can_speed_up_calc_daynr(year) &&
         LIKELY(date_day_offset_dict::get_dict_init())) {
@@ -124,7 +126,7 @@ uint32_t calc_daynr(uint16_t year, uint8_t month, uint8_t day) {
     return delsum + y / 4 - y / 100 + y / 400;
 }
 
-uint32_t year_week(uint16_t yy, uint8_t month, uint8_t day) {
+uint32_t year_week(uint32_t yy, uint32_t month, uint32_t day) {
     //not covered by year_week_table, calculate at runtime
     uint16_t to_year = 0;
     // The range of the week in the year_week is 1-53, so the mode WEEK_YEAR is always true.

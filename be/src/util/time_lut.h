@@ -22,17 +22,20 @@
 
 #include <atomic>
 
+// The input parameter in these methods is larger than actual used to AVOID
+// too many compile warnings.
 namespace doris {
 
-constexpr uint32_t LUT_START_YEAR = 1950;
-constexpr uint32_t LUT_END_YEAR = 2030;
+#include "common/compile_check_begin.h"
+constexpr uint16_t LUT_START_YEAR = 1950;
+constexpr uint16_t LUT_END_YEAR = 2030;
 
-constexpr uint32_t NUM_MONTHS = 12;
-constexpr uint32_t NUM_DAYS = 31;
+constexpr uint8_t NUM_MONTHS = 12;
+constexpr uint8_t NUM_DAYS = 31;
 
-uint32_t year_week(uint16_t yy, uint8_t month, uint8_t day);
+uint32_t year_week(uint32_t yy, uint32_t month, uint32_t day);
 
-uint32_t calc_daynr(uint16_t year, uint8_t month, uint8_t day);
+uint32_t calc_daynr(uint32_t year, uint32_t month, uint32_t day);
 
 uint8_t calc_weekday(uint64_t day_nr, bool is_sunday_first_day);
 
@@ -40,7 +43,7 @@ bool is_leap(uint32_t year);
 
 uint32_t calc_days_in_year(uint32_t year);
 
-uint8_t calc_week(uint16_t yy, uint8_t month, uint8_t day, bool monday_first, bool week_year,
+uint8_t calc_week(uint32_t yy, uint32_t month, uint32_t day, bool monday_first, bool week_year,
                   bool first_weekday, uint16_t* to_year);
 
 class TimeLUTImpl {
@@ -72,4 +75,5 @@ private:
     std::atomic<const TimeLUTImpl*> _impl;
 };
 
+#include "common/compile_check_end.h"
 } // namespace doris

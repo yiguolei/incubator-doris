@@ -35,6 +35,7 @@
 using namespace doris;
 using namespace std::chrono;
 
+#include "common/compile_check_begin.h"
 void doris::SleepForMs(const int64_t duration_ms) {
     std::this_thread::sleep_for(milliseconds(duration_ms));
 }
