@@ -435,8 +435,6 @@ public:
     template <Types::Which which>
     struct EnumToType;
 
-    Field() : which(Types::Null) {}
-
     // set Types::Null explictly and avoid other types
     Field(Types::Which w) : which(w) { DCHECK_EQ(Types::Null, which); }
 
