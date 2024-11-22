@@ -435,11 +435,6 @@ public:
     template <Types::Which which>
     struct EnumToType;
 
-    static bool is_decimal(Types::Which which) {
-        return (which >= Types::Decimal32 && which <= Types::Decimal128V2) ||
-               which == Types::Decimal128V3 || which == Types::Decimal256;
-    }
-
     Field() : which(Types::Null) {}
 
     // set Types::Null explictly and avoid other types
