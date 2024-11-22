@@ -581,7 +581,7 @@ static char* append_string(const char* from, char* to) {
 static char* append_with_prefix(const char* str, size_t str_len, char prefix, size_t target_len,
                                 char* to) {
     // full_len is the lower bound. if less, use prefix to pad. if greater, accept all.
-    size_t diff = target_len - str_len;
+    ssize_t diff = target_len - str_len;
     // use prefix to pad
     while (diff-- > 0) { // won't be INT_MIN. it's ok
         *to++ = prefix;
