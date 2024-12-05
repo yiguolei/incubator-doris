@@ -65,6 +65,8 @@ private:
     // The controller's init value is nullptr, it means the resource context will ignore this controller.
     std::shared_ptr<WorkloadGroupController> _workload_group_controller = nullptr;
     std::shared_ptr<MemoryController> _memory_controller = nullptr;
+    std::shared_ptr<WorkloadGroupController> _workload_group_controller = nullptr;
+    std::shared_ptr<IOController> _io_controller = nullptr;
 };
 
 } // namespace doris
