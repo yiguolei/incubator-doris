@@ -72,10 +72,15 @@ HudiJniReader::HudiJniReader(const TFileScanRangeParams& scan_params,
         }
     }
 
-    // set spark jni scanner as default
-    // TODO: add hadoop jni scanner after hadoop client is ready
-    _jni_connector = std::make_unique<JniConnector>("org/apache/doris/hudi/HudiJniScanner", params,
-                                                    required_fields);
+    if (_hudi_params.hudi_jni_scanner == "hadoop") {
+        _jni_connector = std::make_unique<JniConnector>(
+                "org/apache/doris/hudi/HadoopHudiJniScanner", params, required_fields);
+    } else if (_hudi_params.hudi_jni_scanner == "spark") {
+        _jni_connector = std::make_unique<JniConnector>("org/apache/doris/hudi/HudiJniScanner",
+                                                        params, required_fields);
+    } else {
+        DCHECK(false) << "Unsupported hudi jni scanner: " << _hudi_params.hudi_jni_scanner;
+    }
 }
 
 Status HudiJniReader::get_next_block(Block* block, size_t* read_rows, bool* eof) {
