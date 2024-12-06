@@ -30,30 +30,15 @@
 
 namespace doris {
 
-class WorkloadGroupController {
+// Any task that allow cancel should implement this class.
+class ResourceReclaimer {
 public:
-    WorkloadGroupController() = default;
-    virtual ~WorkloadGroupController() = default;
-
-    virtual Status bind_workload_group() = 0;
-    virtual WorkloadGroupPtr workload_group() = 0;
-};
-
-class IOController {
-    class IOStats {};
-};
-
-class CPUController {
-    class CPUStats {};
-};
-
-class NetworkController {
-    class NetStats {};
+    virtual Status cancel(Status cancel_reason) { return Status::OK(); }
 };
 
 // Every task should have its own resource context. And BE may adjust the resource
 // context during running.
-// ResourceContext will bind to the running thread's thread local when the task is running.
+// Workload group will hold the resource context and do some control work.
 class ResourceContext : public std::enable_shared_from_this<ResourceContext> {
     ENABLE_FACTORY_CREATOR(ResourceContext);
 
@@ -61,12 +46,16 @@ public:
     ResourceContext() = default;
     virtual ~ResourceContext() = default;
 
+    void set_workload_group() {
+        // update all child context's workload group property
+    }
+
 private:
     // The controller's init value is nullptr, it means the resource context will ignore this controller.
-    std::shared_ptr<WorkloadGroupController> _workload_group_controller = nullptr;
-    std::shared_ptr<MemoryController> _memory_controller = nullptr;
-    std::shared_ptr<WorkloadGroupController> _workload_group_controller = nullptr;
-    std::shared_ptr<IOController> _io_controller = nullptr;
+    std::shared_ptr<CPUContext> _cpu_context = nullptr;
+    std::shared_ptr<MemoryContext> _memory_context = nullptr;
+    std::shared_ptr<IOContext> _io_context = nullptr;
+    std::shared_ptr<ResourceReclaimer> _reclaimer = nullptr;
 };
 
 } // namespace doris

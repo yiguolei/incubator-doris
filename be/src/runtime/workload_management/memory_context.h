@@ -30,43 +30,44 @@
 
 namespace doris {
 
-class MemoryController : public std::enable_shared_from_this<MemoryController> {
-    ENABLE_FACTORY_CREATOR(MemoryController);
+class MemoryContext : public std::enable_shared_from_this<MemoryContext> {
+    ENABLE_FACTORY_CREATOR(MemoryContext);
 
 public:
     // Used to collect memory execution stats.
-    class Stats {
+    class MemoryStats {
     public:
-        Stats() = default;
-        virtual ~Stats() = default;
-
-        void reset();
+        MemoryStats() = default;
+        virtual ~MemoryStats() = default;
         std::string debug_string();
         int64_t revoke_attempts() { return revoke_attempts_; }
         int64_t revoke_wait_time_ms() { return revoke_wait_time_ms_; }
         int64_t revoked_bytes() { return revoked_bytes_; }
-
-        void incr_revoke_attempts(int64_t delta) { revoke_attempts_ + delta; }
-        void incr_revoke_wait_time_ms(int64_t delta) { return revoke_wait_time_ms_ + delta; }
-        void incr_revoked_bytes(int64_t delta) { return revoked_bytes_ + delta; }
+        int64_t max_peak_memory_bytes() { return max_peak_memory_bytes_; }
+        int64_t current_used_memory_bytes() { return current_used_memory_bytes_; }
 
     private:
+        // Maximum memory peak for all backends.
+        // only set once by result sink when closing.
+        std::atomic<int64_t> max_peak_memory_bytes_ = 0;
+        std::atomic<int64_t> current_used_memory_bytes_ = 0;
         // The total number of times that the revoke method is called.
         std::atomic<int64_t> revoke_attempts_ = 0;
-
         // The time that waiting for revoke finished.
         std::atomic<int64_t> revoke_wait_time_ms_ = 0;
-
         // The revoked bytes
         std::atomic<int64_t> revoked_bytes_ = 0;
     };
 
 public:
-    MemoryController(std::shared_ptr<MemtrackerLimiter> memtracker)
+    MemoryContext(std::shared_ptr<MemtrackerLimiter> memtracker)
             : memtracker_limiter_(memtracker) {}
 
-    virtual ~MemoryController() = default;
+    virtual ~MemoryContext() = default;
 
+    MemtrackerLimiter* get_memtracker_limiter() {}
+
+    // Following method is related with spill disk.
     // Compute the number of bytes could be released.
     virtual int64_t revokable_bytes() { return 0; }
 
@@ -78,13 +79,6 @@ public:
     virtual Status enter_arbitration(Status reason) { return Status::OK(); }
 
     virtual Status leave_arbitration(Status reason) { return Status::OK(); }
-
-    // Return related workload group if exists, maybe return null if not bind
-    // to a workload group.
-    virtual WorkloadGroupPtr workload_group();
-
-    // Cancel the related task
-    virtual Status cancel(Status cancel_reason) { return Status::OK(); }
 
 private:
     // std::weak_ptr<WorkloadGroup> workload_group_;
