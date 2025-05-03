@@ -189,7 +189,7 @@ public:
                           const std::vector<TUniqueId>& fragment_instance_ids);
     Status init(const TDataSink& tsink) override;
 
-    RuntimeState* state() { return _state; }
+    //RuntimeState* state() { return _state; }
 
     Status prepare(RuntimeState* state) override;
 
