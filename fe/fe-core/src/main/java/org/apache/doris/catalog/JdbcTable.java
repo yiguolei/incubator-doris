@@ -105,6 +105,7 @@ public class JdbcTable extends Table {
         tempMap.put("db2", TOdbcTableType.DB2);
         tempMap.put("gbase", TOdbcTableType.GBASE);
         tempMap.put("dameng", TOdbcTableType.DAMENG);
+        tempMap.put("kingbase", TOdbcTableType.KINGBASE);
         TABLE_TYPE_MAP = Collections.unmodifiableMap(tempMap);
     }
 
@@ -493,6 +494,7 @@ public class JdbcTable extends Table {
             case PRESTO:
             case OCEANBASE_ORACLE:
             case SAP_HANA:
+            case KINGBASE:
                 return formatName(name, "\"", "\"", false, false);
             case ORACLE:
             case DB2:
@@ -519,6 +521,7 @@ public class JdbcTable extends Table {
             case ORACLE:
             case SAP_HANA:
             case DB2:
+            case KINGBASE:
                 return formatNameWithRemoteName(remoteName, "\"", "\"");
             default:
                 return remoteName;

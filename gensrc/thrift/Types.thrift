@@ -403,7 +403,8 @@ enum TOdbcTableType {
     NEBULA, // Deprecated
     DB2,
     GBASE,
-    DAMENG
+    DAMENG,
+    KINGBASE
 }
 
 struct TJdbcExecutorCtorParams {
