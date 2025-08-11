@@ -27,7 +27,7 @@ suite("three_level_nestedtypes_with_s3data", "p2") {
     sql """ set max_scan_key_num = 48 """
     sql """ set max_pushdown_conditions_per_column=1024 """
 
-    def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/datalake"
+    def dataFilePath = "s3://${bucket}/regression/datalake"
 //    def dataFilePath = "/mnt/disk1/wangqiannan/export/tl/three_level"
     def table_names = [
             "three_level_array_array_array",
@@ -127,6 +127,7 @@ suite("three_level_nestedtypes_with_s3data", "p2") {
             "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "column_separator"="|",
                     "provider" = "${getS3Provider()}",
@@ -137,6 +138,7 @@ suite("three_level_nestedtypes_with_s3data", "p2") {
             "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "provider" = "${getS3Provider()}",
                     "read_json_by_line"="true") order by k1; """

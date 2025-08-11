@@ -27,7 +27,7 @@ suite("one_level_nestedtypes_with_s3data") {
     sql """ set max_scan_key_num = 48 """
     sql """ set max_pushdown_conditions_per_column=1024 """
 
-    def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/datalake"
+    def dataFilePath = "s3://${bucket}/regression/datalake"
 //    def dataFilePath = "/mnt/disk1/wangqiannan/export/ol"
     def table_names = ["test_array_one_level", "test_map_one_level", "test_struct_one_level"]
 
@@ -93,6 +93,7 @@ suite("one_level_nestedtypes_with_s3data") {
                 "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "provider" = "${getS3Provider()}",
                     "column_separator"="|",
@@ -103,6 +104,7 @@ suite("one_level_nestedtypes_with_s3data") {
             "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "column_separator"="|",
                     "provider" = "${getS3Provider()}",
@@ -112,6 +114,7 @@ suite("one_level_nestedtypes_with_s3data") {
                 "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "provider" = "${getS3Provider()}",
                     "read_json_by_line"="true") order by k1 limit 10; """
@@ -121,6 +124,7 @@ suite("one_level_nestedtypes_with_s3data") {
             "uri" = "${uri_file}",
                     "s3.access_key"= "${ak}",
                     "s3.secret_key" = "${sk}",
+                    "s3.endpoint" = "${getS3Endpoint()}",
                     "format" = "${format}",
                     "provider" = "${getS3Provider()}",
                     "read_json_by_line"="true"); """

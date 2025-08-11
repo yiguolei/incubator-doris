@@ -30,8 +30,7 @@ suite("test_nestedtypes_csv_insert_into_with_s3", "p0") {
     String s3_endpoint = getS3Endpoint()
     String bucket = context.config.otherConfigs.get("s3BucketName");
 
-
-    def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/datalake"
+    def dataFilePath = "s3://${bucket}/regression/datalake"
 
     ArrayList<String> csv_as_json = ["${dataFilePath}/as_as_json.csv", "${dataFilePath}/arrarr_as_json.csv",
                                      "${dataFilePath}/map_as_json.csv","${dataFilePath}/arrmap_as_json.csv",
@@ -203,6 +202,7 @@ suite("test_nestedtypes_csv_insert_into_with_s3", "p0") {
          select * from s3("uri" = "${csv_as_json[i]}",
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "provider" = "${getS3Provider()}",
                 "format" = "csv") order by c1 limit 1;
             """
@@ -211,6 +211,7 @@ suite("test_nestedtypes_csv_insert_into_with_s3", "p0") {
         insert into ${table_names[i]} select * from s3("uri" = "${csv_as_json[i]}",
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "provider" = "${getS3Provider()}",
                 "format" = "csv");
              """
@@ -227,6 +228,8 @@ suite("test_nestedtypes_csv_insert_into_with_s3", "p0") {
             "uri" = "${csv_as_json[i]}",
             "s3.access_key"= "${ak}",
             "s3.secret_key" = "${sk}",
+            "s3.endpoint" = "${getS3Endpoint()}",
+            "provider" = "${getS3Provider()}",
             "format" = "csv") order by c1 limit 1;
             """
 
@@ -236,6 +239,8 @@ suite("test_nestedtypes_csv_insert_into_with_s3", "p0") {
                 "uri" = "${csv_as_json[i]}",
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
+                "s3.endpoint" = "${getS3Endpoint()}",
+                "provider" = "${getS3Provider()}",
                 "format" = "csv");"""
 
         qt_sql_arr_csv_as_json_doris """ select c_bool,c_bigint,c_decimalv3,c_date, c_datev2,c_datetime,c_datetimev2 from ${table_names[i]} order by k1 limit 1; """

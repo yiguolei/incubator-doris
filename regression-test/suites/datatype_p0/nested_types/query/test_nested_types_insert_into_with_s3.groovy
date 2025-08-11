@@ -31,7 +31,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
 
 
     // prepare orc/parquet data for backends
-    def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/datalake"
+    def dataFilePath = "s3://${bucket}/regression/datalake"
 
     ArrayList<String> orcFiles = ["${dataFilePath}/as.orc", "${dataFilePath}/aa.orc", "${dataFilePath}/am.orc", "${dataFilePath}/map1.orc",
                              "${dataFilePath}/map_arr.orc"]
@@ -204,6 +204,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
                 "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "orc") order by k1 limit 1;
             """
 
@@ -212,6 +213,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
                 "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "orc")
              """
 
@@ -230,6 +232,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
                 "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "parquet") order by k1 limit 1;
             """
 
@@ -238,6 +241,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
                 "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "parquet") order by k1 limit 1;
              """
 
@@ -252,6 +256,7 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
                 "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "orc") order by k1 limit 1;
             """
 
@@ -261,6 +266,8 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                "uri" = "${orcFiles[i]}",
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
+                "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "orc");"""
 
         qt_sql_arr_orc_doris """ select c_bool,c_bigint,c_decimalv3,c_datetimev2 from ${table_names[i]} order by k1 limit 1; """
@@ -274,6 +281,8 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
             "uri" = "${parquetFiles[i]}",
             "s3.access_key"= "${ak}",
             "s3.secret_key" = "${sk}",
+            "provider" = "${getS3Provider()}",
+            "s3.endpoint" = "${getS3Endpoint()}",
             "format" = "parquet") order by k1 limit 1;
             """
 
@@ -283,6 +292,8 @@ suite("test_nested_types_insert_into_with_s3", "p0") {
                 "uri" = "${parquetFiles[i]}",
                 "s3.access_key"= "${ak}",
                 "s3.secret_key" = "${sk}",
+                "provider" = "${getS3Provider()}",
+                "s3.endpoint" = "${getS3Endpoint()}",
                 "format" = "parquet");"""
 
         qt_sql_arr_parquet_doris """ select c_bool,c_bigint,c_decimalv3,c_datetimev2 from ${table_names[i]} order by k1 limit 1; """

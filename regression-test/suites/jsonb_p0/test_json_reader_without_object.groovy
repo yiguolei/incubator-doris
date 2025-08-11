@@ -27,7 +27,7 @@ suite("test_json_reader_without_object", "p0") {
     sql """ set max_scan_key_num = 48 """
     sql """ set max_pushdown_conditions_per_column=1024 """
 
-    def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/jsondata"
+    def dataFilePath = "s3://${bucket}/regression/datalake"
     def dataSimpleNumber = "json_reader_without_object.json"
     def dataSimpleArray = "json_reader_without_object_array.json"
 
@@ -37,6 +37,7 @@ suite("test_json_reader_without_object", "p0") {
                                 "uri" = "${dataFilePath}/${dataSimpleNumber}",
                                     "s3.access_key"= "${ak}",
                                     "s3.secret_key" = "${sk}",
+                                    "s3.endpoint" = "${getS3Endpoint()}",
                                     "format" = "json",
                                     "provider" = "${getS3Provider()}",
                                     "read_json_by_line"="true"); """
@@ -48,6 +49,7 @@ suite("test_json_reader_without_object", "p0") {
                                 "uri" = "${dataFilePath}/${dataSimpleArray}",
                                     "s3.access_key"= "${ak}",
                                     "s3.secret_key" = "${sk}",
+                                    "s3.endpoint" = "${getS3Endpoint()}",
                                     "format" = "json",
                                     "provider" = "${getS3Provider()}",
                                     "strip_outer_array" = "true",
