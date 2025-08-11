@@ -96,17 +96,17 @@ suite("test_schema_change_with_group_commit", "docker") {
 
         sql """ alter table ${tableName3} modify column k4 string NULL"""
 
-        Awaitility.await().atMost(30, TimeUnit.SECONDS).pollDelay(10, TimeUnit.MILLISECONDS).pollInterval(10, TimeUnit.MILLISECONDS).until(
-                {
-                    String res = getJobState(tableName3)
-                    if (res == "FINISHED" || res == "CANCELLED") {
-                        assertEquals("FINISHED", res)
-                        return true
-                    }
-                    execStreamLoad()
-                    return false
-                }
-        )
+        def retry = 0
+        while (retry < 30) {
+            sleep(2000)
+            def jobStateResult = sql """ SHOW ALTER TABLE COLUMN WHERE IndexName='${tableName3}' ORDER BY createtime DESC LIMIT 1 """
+            logger.info("alter state: " + jobStateResult + ", retry: " + retry)
+            if (jobStateResult[0][9] == "FINISHED" || jobStateResult[0][9] == "CANCELLED") {
+                assertEquals("FINISHED", jobStateResult[0][9])
+                break
+            }
+            retry++
+        }
     }
 
 }
