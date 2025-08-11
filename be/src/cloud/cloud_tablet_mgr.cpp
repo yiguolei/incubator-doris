@@ -376,9 +376,10 @@ Status CloudTabletMgr::get_topn_tablets_to_compact(
         // regardless of whether there is a load job recently.
         bool is_recent_failure = now - t->last_cumu_compaction_failure_time() < config::min_compaction_failure_interval_ms;
         bool is_recent_no_suitable_version = now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms;
+        int32_t max_version_config = t->max_version_config();
         bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
                && now - t->last_cumu_compaction_success_time_ms < config::cumu_compaction_interval_s * 1000
-               && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
+               && t->fetch_add_approximate_num_rowsets(0) < max_version_config / 2);
         g_cumu_compaction_not_frozen_tablet_num << !is_frozen;
         return is_recent_failure || is_recent_no_suitable_version || is_frozen;
     };

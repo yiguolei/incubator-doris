@@ -29,6 +29,7 @@
 #include "common/logging.h"
 #include "common/status.h"
 #include "olap/calc_delete_bitmap_executor.h"
+#include "olap/cumulative_compaction_time_series_policy.h"
 #include "olap/delete_bitmap_calculator.h"
 #include "olap/iterators.h"
 #include "olap/memtable.h"
@@ -1711,6 +1712,13 @@ void TabletReadSource::fill_delete_predicates() {
             }) |
             std::views::filter([](const auto& rs_meta) { return rs_meta->has_delete_predicate(); });
     delete_predicates = {delete_pred_view.begin(), delete_pred_view.end()};
+}
+
+int32_t BaseTablet::max_version_config() {
+    int32_t max_version = tablet_meta()->compaction_policy() == CUMULATIVE_TIME_SERIES_POLICY
+                                  ? config::time_series_max_tablet_version_num
+                                  : config::max_tablet_version_num;
+    return max_version;
 }
 
 } // namespace doris
