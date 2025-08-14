@@ -87,6 +87,15 @@ else
     echo "/mnt/scripts/tpch1.db exist, continue !"
 fi
 
+# paimon data file is small and update frequently, so we download it every time
+rm -rf "/mnt/scripts/paimon1"
+echo "/mnt/scripts/paimon1 does not exist"
+cd /mnt/scripts/
+curl -O https://s3BucketName.s3Endpoint/regression/datalake/pipeline_data/paimon1.tar.gz
+tar -zxf paimon1.tar.gz
+rm -rf paimon1.tar.gz
+cd -
+
 # download tvf_data
 if [[ ! -d "/mnt/scripts/tvf_data" ]]; then
     echo "/mnt/scripts/tvf_data does not exist"
@@ -115,6 +124,10 @@ hadoop fs -copyFromLocal -f /mnt/scripts/tpch1.db /user/doris/ &
 hadoop_put_pids+=($!)
 
 ## put paimon1
+if [[ -z "$(ls /mnt/scripts/paimon1)" ]]; then
+    echo "paimon1 does not exist"
+    exit 1
+fi
 hadoop fs -copyFromLocal -f /mnt/scripts/paimon1 /user/doris/ &
 hadoop_put_pids+=($!)
 
