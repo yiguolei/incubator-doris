@@ -30,6 +30,7 @@ ROW FORMAT SERDE
 STORED AS TEXTFILE
 LOCATION '/user/doris/preinstalled_data/csv/csv_json_table_simple';
 
+<<<<<<< HEAD
 CREATE TABLE open_csv_table_null_format (
   id INT,
   name STRING
@@ -55,6 +56,8 @@ WITH SERDEPROPERTIES (
 STORED AS TEXTFILE
 LOCATION '/user/doris/preinstalled_data/csv/open_csv_complex_type';
 
+=======
+>>>>>>> 3.0.7-rc01
 create database if not exists openx_json;
 use openx_json;
 

@@ -188,7 +188,8 @@ CompactionSubmitRegistry::TabletSet& CompactionSubmitRegistry::_get_tablet_set(
 static int32_t get_cumu_compaction_threads_num(size_t data_dirs_num) {
     int32_t threads_num = config::max_cumu_compaction_threads;
     if (threads_num == -1) {
-        threads_num = data_dirs_num;
+        int num_cores = doris::CpuInfo::num_cores();
+        threads_num = std::max<size_t>(data_dirs_num, num_cores / 6);
     }
     threads_num = threads_num <= 0 ? 1 : threads_num;
     return threads_num;
@@ -663,6 +664,7 @@ void StorageEngine::_compaction_tasks_producer_callback() {
 
     int64_t interval = config::generate_compaction_tasks_interval_ms;
     do {
+        int64_t cur_time = UnixMillis();
         if (!config::disable_auto_compaction &&
             (!config::enable_compaction_pause_on_high_memory ||
              !GlobalMemoryArbitrator::is_exceed_soft_mem_limit(GB_EXCHANGE_BYTE))) {
@@ -716,6 +718,17 @@ void StorageEngine::_compaction_tasks_producer_callback() {
         } else {
             interval = 5000; // 5s to check disable_auto_compaction
         }
+
+        // wait some seconds for ut test
+        {
+            std ::vector<std ::any> args {};
+            args.emplace_back(1);
+            doris ::SyncPoint ::get_instance()->process(
+                    "StorageEngine::_compaction_tasks_producer_callback", std ::move(args));
+        }
+        int64_t end_time = UnixMillis();
+        DorisMetrics::instance()->compaction_producer_callback_a_round_time->set_value(end_time -
+                                                                                       cur_time);
     } while (!_stop_background_threads_latch.wait_for(std::chrono::milliseconds(interval)));
 }
 

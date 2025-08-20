@@ -62,6 +62,7 @@ import org.apache.doris.nereids.trees.plans.AggMode;
 import org.apache.doris.nereids.trees.plans.AggPhase;
 import org.apache.doris.nereids.trees.plans.GroupPlan;
 import org.apache.doris.nereids.trees.plans.Plan;
+import org.apache.doris.nereids.trees.plans.algebra.Aggregate;
 import org.apache.doris.nereids.trees.plans.algebra.Project;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFileScan;
@@ -421,6 +422,7 @@ public class AggregateStrategies implements ImplementationRuleFactory {
                         return couldConvertToMulti(agg);
                     })
                     .when(agg -> agg.supportAggregatePhase(AggregatePhase.FOUR))
+                    .whenNot(Aggregate::mustUseMultiDistinctAgg)
                     .thenApplyMulti(ctx -> {
                         Function<List<Expression>, RequireProperties> secondPhaseRequireGroupByAndDistinctHash =
                                 groupByAndDistinct -> RequireProperties.of(
@@ -917,7 +919,16 @@ public class AggregateStrategies implements ImplementationRuleFactory {
     private List<PhysicalHashAggregate<Plan>> onePhaseAggregateWithoutDistinct(
             LogicalAggregate<? extends Plan> logicalAgg, ConnectContext connectContext) {
         RequireProperties requireGather = RequireProperties.of(PhysicalProperties.GATHER);
-        AggregateParam inputToResultParam = AggregateParam.LOCAL_RESULT;
+        boolean canBeBanned = true;
+        for (AggregateFunction aggregateFunction : logicalAgg.getAggregateFunctions()) {
+            if (aggregateFunction.forceSkipRegulator(AggregatePhase.ONE)) {
+                canBeBanned = false;
+                break;
+            }
+        }
+        AggregateParam inputToResultParam = new AggregateParam(
+                AggregateParam.LOCAL_RESULT.aggPhase, AggregateParam.LOCAL_RESULT.aggMode, canBeBanned
+        );
         List<NamedExpression> newOutput = ExpressionUtils.rewriteDownShortCircuit(
                 logicalAgg.getOutputExpressions(), outputChild -> {
                     if (outputChild instanceof AggregateFunction) {
@@ -933,8 +944,11 @@ public class AggregateStrategies implements ImplementationRuleFactory {
 
         if (logicalAgg.getGroupByExpressions().isEmpty()) {
             // TODO: usually bad, disable it until we could do better cost computation.
-            // return ImmutableList.of(gatherLocalAgg);
-            return ImmutableList.of();
+            if (!canBeBanned) {
+                return ImmutableList.of(gatherLocalAgg);
+            } else {
+                return ImmutableList.of();
+            }
         } else {
             RequireProperties requireHash = RequireProperties.of(
                     PhysicalProperties.createHash(logicalAgg.getGroupByExpressions(), ShuffleType.REQUIRE));
@@ -2086,10 +2100,12 @@ public class AggregateStrategies implements ImplementationRuleFactory {
             if (func.arity() <= 1) {
                 continue;
             }
-            for (int i = 1; i < func.arity(); i++) {
-                // think about group_concat(distinct col_1, ',')
-                if (!(func.child(i) instanceof OrderExpression) && !func.child(i).getInputSlots().isEmpty()) {
-                    return false;
+            if (func instanceof Count) {
+                for (int i = 1; i < func.arity(); i++) {
+                    // think about group_concat(distinct col_1, ',')
+                    if (!(func.child(i) instanceof OrderExpression) && !func.child(i).getInputSlots().isEmpty()) {
+                        return false;
+                    }
                 }
             }
         }

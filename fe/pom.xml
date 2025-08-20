@@ -224,7 +224,7 @@ under the License.
     <properties>
         <doris.hive.catalog.shade.version>2.1.4</doris.hive.catalog.shade.version>
         <avro.version>1.11.4</avro.version>
-        <parquet.version>1.13.1</parquet.version>
+        <parquet.version>1.15.2</parquet.version>
         <spark.version>3.4.3</spark.version>
         <hudi.version>0.15.0</hudi.version>
         <obs.dependency.scope>compile</obs.dependency.scope>
@@ -376,7 +376,7 @@ under the License.
         <jakarta.annotation-api.version>2.1.1</jakarta.annotation-api.version>
         <asm.version>9.4</asm.version>
         <airlift.concurrent.version>202</airlift.concurrent.version>
-        <azure.sdk.version>1.2.30</azure.sdk.version>
+        <azure.sdk.version>1.2.36</azure.sdk.version>
         <azure.sdk.batch.version>12.22.0</azure.sdk.batch.version>
         <semver4j.version>5.3.0</semver4j.version>
         <aliyun-sdk-oss.version>3.15.0</aliyun-sdk-oss.version>

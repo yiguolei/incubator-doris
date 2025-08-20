@@ -47,6 +47,8 @@ CONF_Int64(fdb_txn_timeout_ms, "10000");
 CONF_Int64(brpc_max_body_size, "3147483648");
 CONF_Int64(brpc_socket_max_unwritten_bytes, "1073741824");
 
+CONF_String(bvar_max_dump_multi_dimension_metric_num, "5000");
+
 // logging
 CONF_String(log_dir, "./log/");
 CONF_String(log_level, "info"); // info warn error fatal
@@ -87,6 +89,8 @@ CONF_Strings(recycle_whitelist, ""); // Comma seprated list
 CONF_Strings(recycle_blacklist, ""); // Comma seprated list
 // IO worker thread pool concurrency: object list, delete
 CONF_mInt32(instance_recycler_worker_pool_size, "32");
+// The worker pool size for http api `statistics_recycle` worker pool
+CONF_mInt32(instance_recycler_statistics_recycle_worker_pool_size, "5");
 CONF_Bool(enable_checker, "false");
 // The parallelism for parallel recycle operation
 // s3_producer_pool recycle_tablet_pool, delete single object in this pool
@@ -102,6 +106,8 @@ CONF_mInt64(delete_bitmap_storage_optimize_check_version_gap, "1000");
 CONF_mInt32(scan_instances_interval_seconds, "60"); // 1min
 // interval for check object
 CONF_mInt32(check_object_interval_seconds, "43200"); // 12hours
+// enable recycler metrics statistics
+CONF_Bool(enable_recycler_stats_metrics, "false");
 
 CONF_mInt64(check_recycle_task_interval_seconds, "600"); // 10min
 CONF_mInt64(recycler_sleep_before_scheduling_seconds, "60");
@@ -285,6 +291,9 @@ CONF_Bool(enable_loopback_address_for_ms, "false");
 // Comma seprated list: recycler_storage_vault_white_list="aaa,bbb,ccc"
 CONF_Strings(recycler_storage_vault_white_list, "");
 
+// for get_delete_bitmap_update_lock
+CONF_mBool(enable_batch_get_mow_tablet_stats_and_meta, "true");
+
 // aws sdk log level
 //    Off = 0,
 //    Fatal = 1,
@@ -293,7 +302,17 @@ CONF_Strings(recycler_storage_vault_white_list, "");
 //    Info = 4,
 //    Debug = 5,
 //    Trace = 6
-CONF_Int32(aws_log_level, "2");
+CONF_Int32(aws_log_level, "3");
+CONF_Validator(aws_log_level, [](const int config) -> bool { return config >= 0 && config <= 6; });
+
+// azure sdk log level
+//    Verbose = 1,
+//    Informational = 2,
+//    Warning = 3,
+//    Error = 4
+CONF_Int32(azure_log_level, "3");
+CONF_Validator(azure_log_level,
+               [](const int config) -> bool { return config >= 1 && config <= 4; });
 
 // ca_cert_file is in this path by default, Normally no modification is required
 // ca cert default path is different from different OS
@@ -301,4 +320,5 @@ CONF_mString(ca_cert_file_paths,
              "/etc/pki/tls/certs/ca-bundle.crt;/etc/ssl/certs/ca-certificates.crt;"
              "/etc/ssl/ca-bundle.pem");
 
+CONF_Bool(enable_check_fe_drop_in_safe_time, "true");
 } // namespace doris::cloud::config

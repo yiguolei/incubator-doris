@@ -35,6 +35,7 @@ import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.FeConstants;
 import org.apache.doris.common.Pair;
+import org.apache.doris.common.ThreadPoolManager;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.Version;
 import org.apache.doris.common.io.Text;
@@ -72,9 +73,9 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.gson.annotations.SerializedName;
-import lombok.Data;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -93,12 +94,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.stream.Collectors;
 
 /**
  * The abstract class for all types of external catalogs.
  */
-@Data
 public abstract class ExternalCatalog
         implements CatalogIf<ExternalDatabase<? extends ExternalTable>>, Writable, GsonPostProcessable {
     private static final Logger LOG = LogManager.getLogger(ExternalCatalog.class);
@@ -116,11 +117,18 @@ public abstract class ExternalCatalog
 
     // https://help.aliyun.com/zh/emr/emr-on-ecs/user-guide/use-rootpolicy-to-access-oss-hdfs?spm=a2c4g.11186623.help-menu-search-28066.d_0
     public static final String OOS_ROOT_POLICY = "oss.root_policy";
+    public static final String SCHEMA_CACHE_TTL_SECOND = "schema.cache.ttl-second";
+    // -1 means cache with no ttl
+    public static final int CACHE_NO_TTL = -1;
+    // 0 means cache is disabled; >0 means cache with ttl;
+    public static final int CACHE_TTL_DISABLE_CACHE = 0;
 
     // Properties that should not be shown in the `show create catalog` result
     public static final Set<String> HIDDEN_PROPERTIES = Sets.newHashSet(
             CREATE_TIME,
             USE_META_CACHE);
+
+    protected static final int ICEBERG_CATALOG_EXECUTOR_THREAD_NUM = Runtime.getRuntime().availableProcessors();
 
     // Unique id of this catalog, will be assigned after catalog is loaded.
     @SerializedName(value = "id")
@@ -162,9 +170,12 @@ public abstract class ExternalCatalog
     protected Optional<Boolean> useMetaCache = Optional.empty();
     protected MetaCache<ExternalDatabase<? extends ExternalTable>> metaCache;
     protected PreExecutionAuthenticator preExecutionAuthenticator;
+    protected ThreadPoolExecutor threadPoolWithPreAuth;
 
     private volatile Configuration cachedConf = null;
     private byte[] confLock = new byte[0];
+
+    private volatile boolean isInitializing = false;
 
     public ExternalCatalog() {
     }
@@ -211,14 +222,13 @@ public abstract class ExternalCatalog
     }
 
     /**
-     * set some default properties when creating catalog
+     * Lists all database names in this catalog.
      *
      * @return list of database names in this catalog
      */
     protected List<String> listDatabaseNames() {
         if (metadataOps == null) {
-            throw new UnsupportedOperationException("Unsupported operation: "
-                    + "listDatabaseNames from remote client when init catalog with " + logType.name());
+            throw new UnsupportedOperationException("List databases is not supported for catalog: " + getName());
         } else {
             return metadataOps.listDatabaseNames();
         }
@@ -289,38 +299,46 @@ public abstract class ExternalCatalog
      * So you have to make sure the client of third system is initialized before any method was called.
      */
     public final synchronized void makeSureInitialized() {
-        initLocalObjects();
-        if (!initialized) {
-            if (useMetaCache.get()) {
-                if (metaCache == null) {
-                    metaCache = Env.getCurrentEnv().getExtMetaCacheMgr().buildMetaCache(
-                            name,
-                            OptionalLong.of(86400L),
-                            OptionalLong.of(Config.external_cache_expire_time_minutes_after_access * 60L),
-                            Config.max_meta_object_cache_num,
-                            ignored -> getFilteredDatabaseNames(),
-                            localDbName -> Optional.ofNullable(
-                                    buildDbForInit(null, localDbName, Util.genIdByName(name, localDbName), logType,
-                                            true)),
-                            (key, value, cause) -> value.ifPresent(v -> v.setUnInitialized(invalidCacheInInit)));
-                }
-                setLastUpdateTime(System.currentTimeMillis());
-            } else {
-                if (!Env.getCurrentEnv().isMaster()) {
-                    // Forward to master and wait the journal to replay.
-                    int waitTimeOut = ConnectContext.get() == null ? 300 : ConnectContext.get().getExecTimeout();
-                    MasterCatalogExecutor remoteExecutor = new MasterCatalogExecutor(waitTimeOut * 1000);
-                    try {
-                        remoteExecutor.forward(id, -1);
-                    } catch (Exception e) {
-                        Util.logAndThrowRuntimeException(LOG,
-                                String.format("failed to forward init catalog %s operation to master.", name), e);
+        if (isInitializing) {
+            return;
+        }
+        isInitializing = true;
+        try {
+            initLocalObjects();
+            if (!initialized) {
+                if (useMetaCache.get()) {
+                    if (metaCache == null) {
+                        metaCache = Env.getCurrentEnv().getExtMetaCacheMgr().buildMetaCache(
+                                name,
+                                OptionalLong.of(86400L),
+                                OptionalLong.of(Config.external_cache_expire_time_minutes_after_access * 60L),
+                                Config.max_meta_object_cache_num,
+                                ignored -> getFilteredDatabaseNames(),
+                                localDbName -> Optional.ofNullable(
+                                        buildDbForInit(null, localDbName, Util.genIdByName(name, localDbName), logType,
+                                                true)),
+                                (key, value, cause) -> value.ifPresent(v -> v.setUnInitialized(invalidCacheInInit)));
                     }
-                    return;
+                    setLastUpdateTime(System.currentTimeMillis());
+                } else {
+                    if (!Env.getCurrentEnv().isMaster()) {
+                        // Forward to master and wait the journal to replay.
+                        int waitTimeOut = ConnectContext.get() == null ? 300 : ConnectContext.get().getExecTimeout();
+                        MasterCatalogExecutor remoteExecutor = new MasterCatalogExecutor(waitTimeOut * 1000);
+                        try {
+                            remoteExecutor.forward(id, -1);
+                        } catch (Exception e) {
+                            Util.logAndThrowRuntimeException(LOG,
+                                    String.format("failed to forward init catalog %s operation to master.", name), e);
+                        }
+                        return;
+                    }
+                    init();
                 }
-                init();
+                initialized = true;
             }
-            initialized = true;
+        } finally {
+            isInitializing = false;
         }
     }
 
@@ -338,10 +356,10 @@ public abstract class ExternalCatalog
     // check if all required properties are set when creating catalog
     public void checkProperties() throws DdlException {
         // check refresh parameter of catalog
-        Map<String, String> properties = getCatalogProperty().getProperties();
+        Map<String, String> properties = catalogProperty.getProperties();
         if (properties.containsKey(CatalogMgr.METADATA_REFRESH_INTERVAL_SEC)) {
             try {
-                Integer metadataRefreshIntervalSec = Integer.valueOf(
+                int metadataRefreshIntervalSec = Integer.parseInt(
                         properties.get(CatalogMgr.METADATA_REFRESH_INTERVAL_SEC));
                 if (metadataRefreshIntervalSec < 0) {
                     throw new DdlException("Invalid properties: " + CatalogMgr.METADATA_REFRESH_INTERVAL_SEC);
@@ -351,11 +369,13 @@ public abstract class ExternalCatalog
             }
         }
 
-        // if (properties.getOrDefault(ExternalCatalog.USE_META_CACHE, "true").equals("false")) {
-        //     LOG.warn("force to set use_meta_cache to true for catalog: {} when creating", name);
-        //     getCatalogProperty().addProperty(ExternalCatalog.USE_META_CACHE, "true");
-        //     useMetaCache = Optional.of(true);
-        // }
+        // check schema.cache.ttl-second parameter
+        String schemaCacheTtlSecond = catalogProperty.getOrDefault(SCHEMA_CACHE_TTL_SECOND, null);
+        if (java.util.Objects.nonNull(schemaCacheTtlSecond) && NumberUtils.toInt(schemaCacheTtlSecond, CACHE_NO_TTL)
+                < CACHE_TTL_DISABLE_CACHE) {
+            throw new DdlException(
+                    "The parameter " + SCHEMA_CACHE_TTL_SECOND + " is wrong, value is " + schemaCacheTtlSecond);
+        }
     }
 
     /**
@@ -369,7 +389,7 @@ public abstract class ExternalCatalog
      * isDryRun: if true, it will try to create the custom access controller, but will not add it to the access manager.
      */
     public void initAccessController(boolean isDryRun) {
-        Map<String, String> properties = getCatalogProperty().getProperties();
+        Map<String, String> properties = catalogProperty.getProperties();
         // 1. get access controller class name
         String className = properties.getOrDefault(CatalogMgr.ACCESS_CONTROLLER_CLASS_PROP, "");
         if (Strings.isNullOrEmpty(className)) {
@@ -529,7 +549,7 @@ public abstract class ExternalCatalog
      * @param invalidCache if {@code true}, the catalog cache will be invalidated
      *                     and reloaded during the refresh process.
      */
-    public void resetToUninitialized(boolean invalidCache) {
+    public synchronized void resetToUninitialized(boolean invalidCache) {
         this.objectCreated = false;
         this.initialized = false;
         synchronized (this.propLock) {
@@ -759,6 +779,9 @@ public abstract class ExternalCatalog
         if (null != transactionManager) {
             transactionManager = null;
         }
+        if (threadPoolWithPreAuth != null) {
+            ThreadPoolManager.shutdownExecutorService(threadPoolWithPreAuth);
+        }
         CatalogIf.super.onClose();
     }
 
@@ -979,12 +1002,19 @@ public abstract class ExternalCatalog
         dbNameToId.put(ClusterNamespace.getNameFromFullName(db.getFullName()), db.getId());
     }
 
+    /**
+     * Set the initialized status for testing purposes only.
+     * This method should only be used in test cases.
+     */
+    public void setInitializedForTest(boolean initialized) {
+        this.initialized = initialized;
+    }
+
     @Override
     public void createDb(CreateDbStmt stmt) throws DdlException {
         makeSureInitialized();
         if (metadataOps == null) {
-            LOG.warn("createDb not implemented");
-            return;
+            throw new DdlException("Create database is not supported for catalog: " + getName());
         }
         try {
             metadataOps.createDb(stmt);
@@ -998,8 +1028,7 @@ public abstract class ExternalCatalog
     public void dropDb(DropDbStmt stmt) throws DdlException {
         makeSureInitialized();
         if (metadataOps == null) {
-            LOG.warn("dropDb not implemented");
-            return;
+            throw new DdlException("Drop database is not supported for catalog: " + getName());
         }
         try {
             metadataOps.dropDb(stmt);
@@ -1013,8 +1042,7 @@ public abstract class ExternalCatalog
     public boolean createTable(CreateTableStmt stmt) throws UserException {
         makeSureInitialized();
         if (metadataOps == null) {
-            LOG.warn("createTable not implemented");
-            return false;
+            throw new DdlException("Create table is not supported for catalog: " + getName());
         }
         try {
             return metadataOps.createTable(stmt);
@@ -1028,8 +1056,7 @@ public abstract class ExternalCatalog
     public void dropTable(DropTableStmt stmt) throws DdlException {
         makeSureInitialized();
         if (metadataOps == null) {
-            LOG.warn("dropTable not implemented");
-            return;
+            throw new DdlException("Drop table is not supported for catalog: " + getName());
         }
         try {
             metadataOps.dropTable(stmt);
@@ -1159,6 +1186,22 @@ public abstract class ExternalCatalog
         return preExecutionAuthenticator;
     }
 
+    public Optional<Boolean> getUseMetaCache() {
+        return useMetaCache;
+    }
+
+    public CatalogProperty getCatalogProperty() {
+        return catalogProperty;
+    }
+
+    public Map<Pair<String, String>, String> getTableAutoAnalyzePolicy() {
+        return tableAutoAnalyzePolicy;
+    }
+
+    public TransactionManager getTransactionManager() {
+        return transactionManager;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -1174,5 +1217,18 @@ public abstract class ExternalCatalog
     @Override
     public int hashCode() {
         return Objects.hashCode(name);
+    }
+
+    @Override
+    public void notifyPropertiesUpdated(Map<String, String> updatedProps) {
+        CatalogIf.super.notifyPropertiesUpdated(updatedProps);
+        String schemaCacheTtl = updatedProps.getOrDefault(SCHEMA_CACHE_TTL_SECOND, null);
+        if (java.util.Objects.nonNull(schemaCacheTtl)) {
+            Env.getCurrentEnv().getExtMetaCacheMgr().invalidSchemaCache(id);
+        }
+    }
+
+    public ThreadPoolExecutor getThreadPoolExecutor() {
+        return threadPoolWithPreAuth;
     }
 }

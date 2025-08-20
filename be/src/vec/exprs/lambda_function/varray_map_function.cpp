@@ -159,20 +159,20 @@ public:
             }
 
             // here is the array column
-            const ColumnArray& col_array = assert_cast<const ColumnArray&>(*column_array);
+            const auto& col_array = assert_cast<const ColumnArray&>(*column_array);
             const auto& col_type = assert_cast<const DataTypeArray&>(*type_array);
 
             if (i == 0) {
                 nested_array_column_rows = col_array.get_data_ptr()->size();
                 first_array_offsets = col_array.get_offsets_ptr();
-                auto& off_data = assert_cast<const ColumnArray::ColumnOffsets&>(
+                const auto& off_data = assert_cast<const ColumnArray::ColumnOffsets&>(
                         col_array.get_offsets_column());
                 array_column_offset = off_data.clone_resized(col_array.get_offsets_column().size());
                 args.offsets_ptr = &col_array.get_offsets();
             } else {
                 // select array_map((x,y)->x+y,c_array1,[0,1,2,3]) from array_test2;
                 // c_array1: [0,1,2,3,4,5,6,7,8,9]
-                auto& array_offsets =
+                const auto& array_offsets =
                         assert_cast<const ColumnArray::ColumnOffsets&>(*first_array_offsets)
                                 .get_data();
                 if (nested_array_column_rows != col_array.get_data_ptr()->size() ||
@@ -192,15 +192,49 @@ public:
             data_types.push_back(col_type.get_nested_type());
         }
 
+        ColumnWithTypeAndName result_arr;
+        // if column_array is NULL, we know the array_data_column will not write any data,
+        // so the column is empty. eg : (x) -> concat('|',x + "1"). if still execute the lambda function, will cause the bolck rows are not equal
+        // the x column is empty, but "|" is const literal, size of column is 1, so the block rows is 1, but the x column is empty, will be coredump.
+        if (std::any_of(lambda_datas.begin(), lambda_datas.end(),
+                        [](const auto& v) { return v->empty(); })) {
+            DataTypePtr nested_type;
+            bool is_nullable = result_type->is_nullable();
+            if (is_nullable) {
+                nested_type =
+                        assert_cast<const DataTypeNullable*>(result_type.get())->get_nested_type();
+            } else {
+                nested_type = result_type;
+            }
+            auto empty_nested_column = assert_cast<const DataTypeArray*>(nested_type.get())
+                                               ->get_nested_type()
+                                               ->create_column();
+            auto result_array_column = ColumnArray::create(std::move(empty_nested_column),
+                                                           std::move(array_column_offset));
+
+            if (is_nullable) {
+                result_arr = {ColumnNullable::create(std::move(result_array_column),
+                                                     std::move(outside_null_map)),
+                              result_type, "Result"};
+            } else {
+                result_arr = {std::move(result_array_column), result_type, "Result"};
+            }
+
+            block->insert(result_arr);
+            *result_column_id = block->columns() - 1;
+            return Status::OK();
+        }
+
         ColumnPtr result_col = nullptr;
         DataTypePtr res_type;
         std::string res_name;
 
         //process first row
         args.array_start = (*args.offsets_ptr)[args.current_row_idx - 1];
-        args.cur_size = (*args.offsets_ptr)[args.current_row_idx] - args.array_start;
-
-        while (args.current_row_idx < block->rows()) {
+        args.cur_size = (*args.offsets_ptr).size()
+                                ? (*args.offsets_ptr)[args.current_row_idx] - args.array_start
+                                : 0;
+        do {
             Block lambda_block;
             for (int i = 0; i < names.size(); i++) {
                 ColumnWithTypeAndName data_column;
@@ -220,7 +254,7 @@ public:
                 long current_step =
                         std::min(max_step, (long)(args.cur_size - args.current_offset_in_array));
                 size_t pos = args.array_start + args.current_offset_in_array;
-                for (int i = 0; i < arguments.size(); ++i) {
+                for (int i = 0; i < arguments.size() && current_step > 0; ++i) {
                     columns[gap + i]->insert_range_from(*lambda_datas[i], pos, current_step);
                 }
                 args.current_offset_in_array += current_step;
@@ -256,10 +290,9 @@ public:
                 MutableColumnPtr column = (*std::move(result_col)).mutate();
                 column->insert_range_from(*res_col, 0, res_col->size());
             }
-        }
+        } while (args.current_row_idx < block->rows());
 
         //4. get the result column after execution, reassemble it into a new array column, and return.
-        ColumnWithTypeAndName result_arr;
         if (result_type->is_nullable()) {
             if (res_type->is_nullable()) {
                 result_arr = {

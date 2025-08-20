@@ -30,7 +30,7 @@ set -eo pipefail
 build_version_prefix="selectdb"
 build_version_major=4
 build_version_minor=0
-build_version_patch=6
+build_version_patch=7
 build_version_hotfix=0
 build_version_rc_version=""
 

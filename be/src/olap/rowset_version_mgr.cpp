@@ -1,3 +1,23 @@
+<<<<<<< HEAD
+=======
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+>>>>>>> 3.0.7-rc01
 #include <brpc/controller.h>
 #include <bthread/bthread.h>
 #include <bthread/countdown_event.h>
@@ -74,7 +94,11 @@ static bvar::LatencyRecorder g_remote_fetch_tablet_rowsets_latency("remote_fetch
         if (skip_by_option && !options.enable_fetch_rowsets_from_peers) {
             return version_path;
         }
+<<<<<<< HEAD
         if (tablet_id != -1 && (tablet_id == _tablet_meta->tablet_id()) || tablet_id == -2) {
+=======
+        if ((tablet_id != -1 && tablet_id == _tablet_meta->tablet_id()) || tablet_id == -2) {
+>>>>>>> 3.0.7-rc01
             return ResultError(Status::Error<VERSION_ALREADY_MERGED>("version already merged"));
         }
     });

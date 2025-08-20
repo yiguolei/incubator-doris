@@ -81,11 +81,6 @@ public class HMSExternalCatalog extends ExternalCatalog {
     // from remoteTable object.
     public static final String GET_SCHEMA_FROM_TABLE = "get_schema_from_table";
 
-    // -1 means cache with no ttl
-    public static final int CACHE_NO_TTL = -1;
-    // 0 means cache is disabled; >0 means cache with ttl;
-    public static final int CACHE_TTL_DISABLE_CACHE = 0;
-
     private static final int FILE_SYSTEM_EXECUTOR_THREAD_NUM = 16;
     private ThreadPoolExecutor fileSystemExecutor;
 
@@ -193,6 +188,12 @@ public class HMSExternalCatalog extends ExternalCatalog {
                     String.valueOf(Config.hive_metastore_client_timeout_second));
         }
         HiveMetadataOps hiveOps = ExternalMetadataOperations.newHiveMetadataOps(hiveConf, jdbcClientConfig, this);
+        threadPoolWithPreAuth = ThreadPoolManager.newDaemonFixedThreadPoolWithPreAuth(
+                ICEBERG_CATALOG_EXECUTOR_THREAD_NUM,
+                Integer.MAX_VALUE,
+                String.format("hms_iceberg_catalog_%s_executor_pool", name),
+                true,
+                preExecutionAuthenticator);
         FileSystemProvider fileSystemProvider = new FileSystemProviderImpl(Env.getCurrentEnv().getExtMetaCacheMgr(),
                 this.bindBrokerName(), this.catalogProperty.getHadoopProperties());
         this.fileSystemExecutor = ThreadPoolManager.newDaemonFixedThreadPool(FILE_SYSTEM_EXECUTOR_THREAD_NUM,
@@ -203,7 +204,7 @@ public class HMSExternalCatalog extends ExternalCatalog {
     }
 
     @Override
-    public void resetToUninitialized(boolean invalidCache) {
+    public synchronized void resetToUninitialized(boolean invalidCache) {
         super.resetToUninitialized(invalidCache);
         if (metadataOps != null) {
             metadataOps.close();

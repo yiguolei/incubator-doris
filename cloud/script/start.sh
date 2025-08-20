@@ -96,7 +96,56 @@ lib_path="${DORIS_HOME}/lib"
 bin="${DORIS_HOME}/lib/${process}"
 export LD_LIBRARY_PATH="${lib_path}:${LD_LIBRARY_PATH}"
 
+<<<<<<< HEAD
 chmod 550 "${DORIS_HOME}/lib/${process}"
+=======
+chmod 550 "${DORIS_HOME}/lib/doris_cloud"
+
+if [[ -z "${JAVA_HOME}" ]]; then
+    echo "The JAVA_HOME environment variable is not defined correctly"
+    echo "This environment variable is needed to run this program"
+    echo "NB: JAVA_HOME should point to a JDK not a JRE"
+    echo "You can set it in doris_cloud.conf"
+    exit 1
+fi
+
+if [[ -d "${DORIS_HOME}/lib/hadoop_hdfs/" ]]; then
+    # add hadoop libs
+    for f in "${DORIS_HOME}/lib/hadoop_hdfs/common"/*.jar; do
+        DORIS_CLASSPATH="${DORIS_CLASSPATH}:${f}"
+    done
+    for f in "${DORIS_HOME}/lib/hadoop_hdfs/common/lib"/*.jar; do
+        DORIS_CLASSPATH="${DORIS_CLASSPATH}:${f}"
+    done
+    for f in "${DORIS_HOME}/lib/hadoop_hdfs/hdfs"/*.jar; do
+        DORIS_CLASSPATH="${DORIS_CLASSPATH}:${f}"
+    done
+    for f in "${DORIS_HOME}/lib/hadoop_hdfs/hdfs/lib"/*.jar; do
+        DORIS_CLASSPATH="${DORIS_CLASSPATH}:${f}"
+    done
+fi
+
+export CLASSPATH="${DORIS_CLASSPATH}"
+
+export LD_LIBRARY_PATH="${JAVA_HOME}/lib/server:${LD_LIBRARY_PATH}"
+
+# filter known leak
+export LSAN_OPTIONS=suppressions=${DORIS_HOME}/conf/lsan_suppr.conf
+export ASAN_OPTIONS=suppressions=${DORIS_HOME}/conf/asan_suppr.conf
+export UBSAN_OPTIONS=suppressions=${DORIS_HOME}/conf/ubsan_suppr.conf
+
+## set asan and ubsan env to generate core file
+## detect_container_overflow=0, https://github.com/google/sanitizers/issues/193
+export ASAN_OPTIONS=symbolize=1:abort_on_error=1:disable_coredump=0:unmap_shadow_on_exit=1:detect_container_overflow=0:check_malloc_usable_size=0:${ASAN_OPTIONS}
+export UBSAN_OPTIONS=print_stacktrace=1:${UBSAN_OPTIONS}
+
+## set libhdfs3 conf
+if [[ -f "${DORIS_HOME}/conf/hdfs-site.xml" ]]; then
+    export LIBHDFS3_CONF="${DORIS_HOME}/conf/hdfs-site.xml"
+fi
+
+# echo "LIBHDFS3_CONF=${LIBHDFS3_CONF}"
+>>>>>>> 3.0.7-rc01
 
 # to enable dump jeprof heap stats prodigally, change `prof_active:false` to `prof_active:true` or curl http://be_host:be_webport/jeheap/prof/true
 # to control the dump interval change `lg_prof_interval` to a specific value, it is pow/exponent of 2 in size of bytes, default 34 means 2 ** 34 = 16GB

@@ -36,14 +36,18 @@ public class ShowCloudWarmUpStmt extends ShowStmt implements NotFallbackInParser
 
     private static final ImmutableList<String> WARM_UP_JOB_TITLE_NAMES = new ImmutableList.Builder<String>()
             .add("JobId")
-            .add("ComputeGroup")
+            .add("SrcComputeGroup")
+            .add("DstComputeGroup")
             .add("Status")
             .add("Type")
+            .add("SyncMode")
             .add("CreateTime")
+            .add("StartTime")
             .add("FinishBatch")
             .add("AllBatch")
             .add("FinishTime")
             .add("ErrMsg")
+            .add("Tables")
             .build();
 
     public ShowCloudWarmUpStmt(Expr whereClause) {

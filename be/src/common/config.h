@@ -355,7 +355,6 @@ DECLARE_Int32(doris_max_remote_scanner_thread_pool_thread_num);
 DECLARE_Int32(doris_scanner_thread_pool_queue_size);
 // default thrift client connect timeout(in seconds)
 DECLARE_mInt32(thrift_connect_timeout_seconds);
-DECLARE_mInt32(fetch_rpc_timeout_seconds);
 // default thrift client retry interval (in milliseconds)
 DECLARE_mInt64(thrift_client_retry_interval_ms);
 // max message size of thrift request
@@ -488,6 +487,7 @@ DECLARE_mInt32(max_single_replica_compaction_threads);
 DECLARE_Bool(enable_base_compaction_idle_sched);
 DECLARE_mInt64(base_compaction_min_rowset_num);
 DECLARE_mInt64(base_compaction_max_compaction_score);
+DECLARE_mInt64(mow_base_compaction_max_compaction_score);
 DECLARE_mDouble(base_compaction_min_data_ratio);
 DECLARE_mInt64(base_compaction_dup_key_max_file_size_mbytes);
 
@@ -713,6 +713,8 @@ DECLARE_mInt32(memory_gc_sleep_time_ms);
 DECLARE_mInt64(write_buffer_size);
 // max buffer size used in memtable for the aggregated table, default 400MB
 DECLARE_mInt64(write_buffer_size_for_agg);
+
+DECLARE_mInt64(min_write_buffer_size_for_partial_update);
 // max parallel flush task per memtable writer
 DECLARE_mInt32(memtable_flush_running_count_limit);
 
@@ -887,6 +889,13 @@ DECLARE_mInt32(zone_map_row_num_threshold);
 //    Trace = 6
 DECLARE_Int32(aws_log_level);
 
+// azure sdk log level
+//    Verbose = 1,
+//    Informational = 2,
+//    Warning = 3,
+//    Error = 4
+DECLARE_Int32(azure_log_level);
+
 // the buffer size when read data from remote storage like s3
 DECLARE_mInt32(remote_storage_read_buffer_mb);
 
@@ -966,6 +975,9 @@ DECLARE_mString(kafka_debug);
 // If you meet the error describe in https://github.com/edenhill/librdkafka/issues/3608
 // Change this size to 0 to fix it temporarily.
 DECLARE_mInt32(routine_load_consumer_pool_size);
+
+// the timeout of condition variable wait in blocking_get and blocking_put
+DECLARE_mInt32(blocking_queue_cv_wait_timeout_ms);
 
 // Used in single-stream-multi-table load. When receive a batch of messages from kafka,
 // if the size of batch is more than this threshold, we will request plans for all related tables.
@@ -1142,6 +1154,7 @@ DECLARE_mBool(enbale_dump_error_file);
 DECLARE_mInt64(file_cache_error_log_limit_bytes);
 DECLARE_mInt64(cache_lock_wait_long_tail_threshold_us);
 DECLARE_mInt64(cache_lock_held_long_tail_threshold_us);
+
 // Base compaction may retrieve and produce some less frequently accessed data,
 // potentially affecting the file cache hit rate.
 // This configuration determines whether to retain the output within the file cache.
@@ -1155,6 +1168,10 @@ DECLARE_mBool(enable_reader_dryrun_when_download_file_cache);
 DECLARE_mInt64(file_cache_background_monitor_interval_ms);
 DECLARE_mInt64(file_cache_background_ttl_gc_interval_ms);
 DECLARE_mInt64(file_cache_background_ttl_gc_batch);
+DECLARE_Int32(file_cache_downloader_thread_num_min);
+DECLARE_Int32(file_cache_downloader_thread_num_max);
+
+DECLARE_mBool(enable_reader_dryrun_when_download_file_cache);
 
 // inverted index searcher cache
 // cache entry stay time after lookup
@@ -1217,6 +1234,8 @@ DECLARE_mInt32(schema_cache_sweep_time_sec);
 DECLARE_Int32(segment_cache_capacity);
 DECLARE_Int32(segment_cache_fd_percentage);
 DECLARE_Int32(segment_cache_memory_percentage);
+DECLARE_Bool(enable_segment_cache_prune);
+
 DECLARE_mInt32(estimated_mem_per_column_reader);
 
 // enable binlog
@@ -1575,6 +1594,17 @@ DECLARE_mBool(enable_compaction_pause_on_high_memory);
 
 DECLARE_mBool(enable_fetch_rowsets_from_peer_replicas);
 DECLARE_mBool(enable_calc_delete_bitmap_between_segments_concurrently);
+
+DECLARE_mBool(enable_fetch_rowsets_from_peer_replicas);
+// the max length of segments key bounds, in bytes
+// ATTENTION: as long as this conf has ever been enabled, cluster downgrade and backup recovery will no longer be supported.
+DECLARE_mInt32(segments_key_bounds_truncation_threshold);
+// ATTENTION: for test only, use random segments key bounds truncation threshold every time
+DECLARE_mBool(random_segments_key_bounds_truncation);
+
+DECLARE_mBool(enable_auto_clone_on_compaction_missing_version);
+
+DECLARE_mBool(enable_auto_clone_on_mow_publish_missing_version);
 
 #ifdef BE_TEST
 // test s3

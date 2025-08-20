@@ -205,7 +205,8 @@ unsupportedOtherStatement
     | UNLOCK TABLES                                                                 #unlockTables
     | WARM UP (CLUSTER | COMPUTE GROUP) destination=identifier WITH
         ((CLUSTER | COMPUTE GROUP) source=identifier |
-            (warmUpItem (AND warmUpItem)*)) FORCE?                                  #warmUpCluster
+            (warmUpItem (AND warmUpItem)*)) FORCE?
+            properties=propertyClause?                                              #warmUpCluster
     | BACKUP SNAPSHOT label=multipartIdentifier TO repo=identifier
         ((ON | EXCLUDE) LEFT_PAREN baseTableRef (COMMA baseTableRef)* RIGHT_PAREN)?
         properties=propertyClause?                                                  #backup
@@ -1378,7 +1379,7 @@ stepPartitionDef
     ;
 
 inPartitionDef
-    : PARTITION (IF NOT EXISTS)? partitionName=identifier (VALUES IN ((LEFT_PAREN partitionValueLists+=partitionValueList
+    : PARTITION (IF NOT EXISTS)? partitionName=identifier ((VALUES IN)? ((LEFT_PAREN partitionValueLists+=partitionValueList
         (COMMA partitionValueLists+=partitionValueList)* RIGHT_PAREN) | constants=partitionValueList))?
     ;
     
@@ -1455,7 +1456,8 @@ rowConstructorItem
 
 predicate
     : NOT? kind=BETWEEN lower=valueExpression AND upper=valueExpression
-    | NOT? kind=(LIKE | REGEXP | RLIKE) pattern=valueExpression
+    | NOT? kind=(REGEXP | RLIKE) pattern=valueExpression
+    | NOT? kind=LIKE pattern=valueExpression (ESCAPE escape=valueExpression)?
     | NOT? kind=(MATCH | MATCH_ANY | MATCH_ALL | MATCH_PHRASE | MATCH_PHRASE_PREFIX | MATCH_REGEXP | MATCH_PHRASE_EDGE) pattern=valueExpression
     | NOT? kind=IN LEFT_PAREN query RIGHT_PAREN
     | NOT? kind=IN LEFT_PAREN expression (COMMA expression)* RIGHT_PAREN
@@ -1893,6 +1895,7 @@ nonReserved
     | ENGINE
     | ENGINES
     | ERRORS
+    | ESCAPE
     | EVENTS
     | EVERY
     | EXCLUDE

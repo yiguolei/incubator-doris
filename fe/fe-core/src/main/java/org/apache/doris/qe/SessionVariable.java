@@ -410,6 +410,8 @@ public class SessionVariable implements Serializable, Writable {
     public static final String ENABLE_UNICODE_NAME_SUPPORT = "enable_unicode_name_support";
 
     public static final String GROUP_CONCAT_MAX_LEN = "group_concat_max_len";
+    public static final String USE_ONE_PHASE_AGG_FOR_GROUP_CONCAT_WITH_ORDER
+            = "use_one_phase_agg_for_group_concat_with_order";
 
     public static final String ENABLE_TWO_PHASE_READ_OPT = "enable_two_phase_read_opt";
     public static final String TOPN_OPT_LIMIT_THRESHOLD = "topn_opt_limit_threshold";
@@ -616,6 +618,9 @@ public class SessionVariable implements Serializable, Writable {
     public static final String ENABLE_SYNC_MV_COST_BASED_REWRITE
             = "enable_sync_mv_cost_based_rewrite";
 
+    public static final String MATERIALIZED_VIEW_REWRITE_DURATION_THRESHOLD_MS
+            = "materialized_view_rewrite_duration_threshold_ms";
+
     public static final String MATERIALIZED_VIEW_RELATION_MAPPING_MAX_COUNT
             = "materialized_view_relation_mapping_max_count";
 
@@ -714,7 +719,15 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_SCHEMA_SCAN_FROM_MASTER_FE = "enable_schema_scan_from_master_fe";
 
+<<<<<<< HEAD
+=======
+    public static final String SHOW_COLUMN_COMMENT_IN_DESCRIBE = "show_column_comment_in_describe";
+
+>>>>>>> 3.0.7-rc01
     public static final String SQL_CONVERTOR_CONFIG = "sql_convertor_config";
+
+    public static final String PREFER_UDF_OVER_BUILTIN = "prefer_udf_over_builtin";
+    public static final String ENABLE_ADD_INDEX_FOR_NEW_DATA = "enable_add_index_for_new_data";
 
     /**
      * If set false, user couldn't submit analyze SQL and FE won't allocate any related resources.
@@ -893,7 +906,7 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = SQL_AUTO_IS_NULL)
     public boolean sqlAutoIsNull = false;
 
-    @VariableMgr.VarAttr(name = SQL_SELECT_LIMIT)
+    @VariableMgr.VarAttr(name = SQL_SELECT_LIMIT, needForward = true)
     private long sqlSelectLimit = Long.MAX_VALUE;
 
     // this is used to make c3p0 library happy
@@ -1622,6 +1635,17 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = GROUP_CONCAT_MAX_LEN)
     public long groupConcatMaxLen = 2147483646;
 
+    @VariableMgr.VarAttr(
+            name = USE_ONE_PHASE_AGG_FOR_GROUP_CONCAT_WITH_ORDER,
+            needForward = true,
+            fuzzy = true,
+            description = {
+                    "允许使用一阶段聚合来执行带有order的group_concat函数",
+                    "Enable to use one stage aggregation to execute the group_concat function with order"
+            }
+    )
+    public boolean useOnePhaseAggForGroupConcatWithOrder = false;
+
     // Whether enable two phase read optimization
     // 1. read related rowids along with necessary column data
     // 2. spawn fetch RPC to other nodes to get related data by sorted rowids
@@ -2107,6 +2131,12 @@ public class SessionVariable implements Serializable, Writable {
                     "Whether enable cost based rewrite for sync mv"})
     public boolean enableSyncMvCostBasedRewrite = true;
 
+    @VariableMgr.VarAttr(name = MATERIALIZED_VIEW_REWRITE_DURATION_THRESHOLD_MS, needForward = true,
+            description = {"物化视图透明改写允许的最长耗时，超过此时长不再进行透明改写",
+                    "The maximum duration allowed for transparent rewriting of materialized views; "
+                            + "if this duration is exceeded, transparent rewriting will no longer be performed."})
+    public long materializedViewRewriteDurationThresholdMs = 1000L;
+
     @VariableMgr.VarAttr(name = CREATE_TABLE_PARTITION_MAX_NUM, needForward = true,
             description = {"建表时创建分区的最大数量",
                     "The maximum number of partitions created during table creation"})
@@ -2443,12 +2473,29 @@ public class SessionVariable implements Serializable, Writable {
     })
     public boolean enableSchemaScanFromMasterFe = true;
 
+<<<<<<< HEAD
+=======
+    @VariableMgr.VarAttr(name = SHOW_COLUMN_COMMENT_IN_DESCRIBE, needForward = true,
+            description = {
+                    "是否在 DESCRIBE TABLE 语句中显示列注释",
+                    "whether to show column comments in DESCRIBE TABLE statement"
+            })
+    public boolean showColumnCommentInDescribe = false;
+
+>>>>>>> 3.0.7-rc01
     @VariableMgr.VarAttr(name = SQL_CONVERTOR_CONFIG, needForward = true,
             description = {
                     "SQL 转换器的相关配置，使用 Json 格式。以 {} 为根元素。",
                     "SQL convertor config, use Json format. The root element is {}"
             })
     public String sqlConvertorConfig = "{}";
+
+    @VariableMgr.VarAttr(name = PREFER_UDF_OVER_BUILTIN, needForward = true,
+            description = {
+                    "是否优先查找 UDF 而不是内置函数",
+                    "Whether to prefer UDF over builtin functions"
+            })
+    public boolean preferUdfOverBuiltin = false;
 
     public void setEnableEsParallelScroll(boolean enableESParallelScroll) {
         this.enableESParallelScroll = enableESParallelScroll;
@@ -2469,6 +2516,14 @@ public class SessionVariable implements Serializable, Writable {
     public boolean isEnableSortSpill() {
         return enableSortSpill;
     }
+
+    @VariableMgr.VarAttr(name = ENABLE_ADD_INDEX_FOR_NEW_DATA, needForward = true, description = {
+            "是否启用仅对新数据生效的索引添加模式，开启时新建索引只对后续写入的数据生效，关闭时对全部数据重建索引",
+            "Whether to enable add index mode that only affects new data, "
+                    + "when enabled new indexes only affect subsequently written data, "
+                    + "when disabled rebuild indexes for all data"
+    })
+    public boolean enableAddIndexForNewData = false;
 
     // If this fe is in fuzzy mode, then will use initFuzzyModeVariables to generate some variables,
     // not the default value set in the code.
@@ -4451,10 +4506,16 @@ public class SessionVariable implements Serializable, Writable {
     public static boolean getEnableDecimal256() {
         ConnectContext connectContext = ConnectContext.get();
         if (connectContext == null) {
-            return false;
+            return VariableMgr.getDefaultSessionVariable().enableDecimal256;
         }
         SessionVariable sessionVariable = connectContext.getSessionVariable();
-        return connectContext.getState().isNereids() && sessionVariable.isEnableDecimal256();
+        if (!sessionVariable.isEnableDecimal256()) {
+            return false;
+        }
+        if (connectContext.getState().isQuery()) {
+            return connectContext.getState().isNereids();
+        }
+        return true;
     }
 
     public boolean isEnableDecimal256() {
@@ -4744,6 +4805,14 @@ public class SessionVariable implements Serializable, Writable {
                         + ", current support: ctas, delete_all_comment");
             }
         }
+    }
+
+    public boolean isEnableAddIndexForNewData() {
+        return enableAddIndexForNewData;
+    }
+
+    public void setEnableAddIndexForNewData(boolean enableAddIndexForNewData) {
+        this.enableAddIndexForNewData = enableAddIndexForNewData;
     }
 }
 

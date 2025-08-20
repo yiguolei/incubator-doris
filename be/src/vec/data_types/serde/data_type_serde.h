@@ -75,31 +75,6 @@ struct ColumnVectorBatch;
         ++*num_deserialized;                                                             \
     }
 
-#define INIT_MEMORY_FOR_ORC_WRITER()                                                 \
-    char* ptr = (char*)malloc(BUFFER_UNIT_SIZE);                                     \
-    if (!ptr) {                                                                      \
-        return Status::InternalError(                                                \
-                "malloc memory error when write largeint column data to orc file."); \
-    }                                                                                \
-    StringRef bufferRef;                                                             \
-    bufferRef.data = ptr;                                                            \
-    bufferRef.size = BUFFER_UNIT_SIZE;                                               \
-    size_t offset = 0;                                                               \
-    buffer_list.emplace_back(bufferRef);
-
-#define REALLOC_MEMORY_FOR_ORC_WRITER()                                                  \
-    while (bufferRef.size - BUFFER_RESERVED_SIZE < offset + len) {                       \
-        char* new_ptr = (char*)malloc(bufferRef.size + BUFFER_UNIT_SIZE);                \
-        if (!new_ptr) {                                                                  \
-            return Status::InternalError(                                                \
-                    "malloc memory error when write largeint column data to orc file."); \
-        }                                                                                \
-        memcpy(new_ptr, bufferRef.data, bufferRef.size);                                 \
-        free(const_cast<char*>(bufferRef.data));                                         \
-        bufferRef.data = new_ptr;                                                        \
-        bufferRef.size = bufferRef.size + BUFFER_UNIT_SIZE;                              \
-    }
-
 namespace doris {
 class PValues;
 class JsonbValue;
@@ -151,6 +126,8 @@ public:
          *  by dropping the "" or ''.
          */
         bool converted_from_string = false;
+
+        char quote_char = '"';
 
         char escape_char = 0;
         /**
@@ -271,6 +248,14 @@ public:
 
     virtual Status deserialize_one_cell_from_json(IColumn& column, Slice& slice,
                                                   const FormatOptions& options) const = 0;
+
+    // In some cases, CSV and JSON deserialization behaviors may differ
+    // so we provide a default implementation that uses JSON deserialization
+    virtual Status deserialize_one_cell_from_csv(IColumn& column, Slice& slice,
+                                                 const FormatOptions& options) const {
+        return deserialize_one_cell_from_json(column, slice, options);
+    }
+
     // deserialize text vector is to avoid virtual function call in complex type nested loop
     virtual Status deserialize_column_from_json_vector(IColumn& column, std::vector<Slice>& slices,
                                                        int* num_deserialized,

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <glog/logging.h>
 #include <rapidjson/allocators.h>
 #include <rapidjson/document.h>
 #include <rapidjson/encodings.h>
@@ -144,45 +145,7 @@ rapidjson::Value* match_value(const std::vector<JsonPath>& parsed_paths, rapidjs
         const std::string& col = parsed_paths[i].key;
         int index = parsed_paths[i].idx;
         if (LIKELY(!col.empty())) {
-            if (root->IsArray()) {
-                array_obj = static_cast<rapidjson::Value*>(
-                        mem_allocator.Malloc(sizeof(rapidjson::Value)));
-                array_obj->SetArray();
-                bool is_null = true;
-
-                // if array ,loop the array,find out all Objects,then find the results from the objects
-                for (int j = 0; j < root->Size(); j++) {
-                    rapidjson::Value* json_elem = &((*root)[j]);
-
-                    if (json_elem->IsArray() || json_elem->IsNull()) {
-                        continue;
-                    } else {
-                        if (!json_elem->IsObject()) {
-                            continue;
-                        }
-                        if (!json_elem->HasMember(col.c_str())) {
-                            if (is_insert_null) { // not found item, then insert a null object.
-                                is_null = false;
-                                rapidjson::Value nullObject(rapidjson::kNullType);
-                                array_obj->PushBack(nullObject, mem_allocator);
-                            }
-                            continue;
-                        }
-                        rapidjson::Value* obj = &((*json_elem)[col.c_str()]);
-                        if (obj->IsArray()) {
-                            is_null = false;
-                            for (int k = 0; k < obj->Size(); k++) {
-                                array_obj->PushBack((*obj)[k], mem_allocator);
-                            }
-                        } else if (!obj->IsNull()) {
-                            is_null = false;
-                            array_obj->PushBack(*obj, mem_allocator);
-                        }
-                    }
-                }
-
-                root = is_null ? &(array_obj->SetNull()) : array_obj;
-            } else if (root->IsObject()) {
+            if (root->IsObject()) {
                 if (!root->HasMember(col.c_str())) {
                     return nullptr;
                 } else {
@@ -233,8 +196,17 @@ rapidjson::Value* get_json_object(std::string_view json_string, std::string_view
 
     //Cannot use '\' as the last character, return NULL
     if (path_string.back() == '\\') {
-        document->SetNull();
-        return document;
+        return nullptr;
+    }
+
+    std::string fixed_string;
+    if (path_string.size() >= 2 && path_string[0] == '$' && path_string[1] != '.') {
+        // Boost tokenizer requires explicit "." after "$" to correctly extract JSON path tokens.
+        // Without this, expressions like "$[0].key" cannot be properly split.
+        // This commit ensures a "." is automatically added after "$" to maintain consistent token parsing behavior.
+        fixed_string = "$.";
+        fixed_string += path_string.substr(1);
+        path_string = fixed_string;
     }
 
     try {
@@ -251,13 +223,13 @@ rapidjson::Value* get_json_object(std::string_view json_string, std::string_view
         }
     } catch (boost::escaped_list_error&) {
         // meet unknown escape sequence, example '$.name\k'
-        return document;
+        return nullptr;
     }
 
     parsed_paths = &tmp_parsed_paths;
 
     if (!(*parsed_paths)[0].is_valid) {
-        return document;
+        return nullptr;
     }
 
     if (UNLIKELY((*parsed_paths).size() == 1)) {
@@ -272,8 +244,7 @@ rapidjson::Value* get_json_object(std::string_view json_string, std::string_view
     if (UNLIKELY(document->HasParseError())) {
         // VLOG_CRITICAL << "Error at offset " << document->GetErrorOffset() << ": "
         //         << GetParseError_En(document->GetParseError());
-        document->SetNull();
-        return document;
+        return nullptr;
     }
 
     return match_value(*parsed_paths, document, document->GetAllocator());
@@ -858,9 +829,10 @@ template <typename Name, bool remove_quotes>
 struct FunctionJsonExtractImpl {
     static constexpr auto name = Name::name;
 
-    static rapidjson::Value parse_json(const ColumnString* json_col, const ColumnString* path_col,
-                                       rapidjson::Document::AllocatorType& allocator, const int row,
-                                       const int col, std::vector<bool>& column_is_consts) {
+    static std::pair<bool, rapidjson::Value> parse_json(
+            const ColumnString* json_col, const ColumnString* path_col,
+            rapidjson::Document::AllocatorType& allocator, const int row, const int col,
+            std::vector<bool>& column_is_consts) {
         rapidjson::Value value;
         rapidjson::Document document;
 
@@ -869,10 +841,13 @@ struct FunctionJsonExtractImpl {
         const auto path = path_col->get_data_at(index_check_const(row, column_is_consts[col]));
         std::string_view path_string(path.data, path.size);
         auto* root = get_json_object<JSON_FUN_STRING>(json_string, path_string, &document);
+        bool found = false;
         if (root != nullptr) {
+            found = true;
             value.CopyFrom(*root, allocator);
         }
-        return value;
+
+        return {found, std::move(value)};
     }
 
     static rapidjson::Value* get_document(const ColumnString* path_col,
@@ -913,8 +888,9 @@ struct FunctionJsonExtractImpl {
         rapidjson::StringBuffer buf;
         rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
         const auto* json_col = data_columns[0];
-        auto insert_result_lambda = [&](rapidjson::Value& value, int row) {
-            if (value.IsNull()) {
+
+        auto insert_result_lambda = [&](rapidjson::Value& value, bool is_null, int row) {
+            if (is_null) {
                 null_map[row] = 1;
                 result_column.insert_default();
             } else {
@@ -935,12 +911,13 @@ struct FunctionJsonExtractImpl {
             }
         };
         if (data_columns.size() == 2) {
-            rapidjson::Value value;
             if (column_is_consts[1]) {
                 std::vector<JsonPath> parsed_paths;
                 auto* root = get_document(data_columns[1], &document, parsed_paths, 0,
                                           column_is_consts[1]);
                 for (size_t row = 0; row < input_rows_count; row++) {
+                    bool is_null = false;
+                    rapidjson::Value value;
                     if (root != nullptr) {
                         const auto& obj = json_col->get_data_at(row);
                         std::string_view json_string(obj.data, obj.size);
@@ -957,17 +934,18 @@ struct FunctionJsonExtractImpl {
                         if (root_val != nullptr) {
                             value.CopyFrom(*root_val, allocator);
                         } else {
-                            rapidjson::Value tmp;
-                            value.Swap(tmp);
+                            is_null = true;
                         }
+                    } else {
+                        is_null = true;
                     }
-                    insert_result_lambda(value, row);
+                    insert_result_lambda(value, is_null, row);
                 }
             } else {
                 for (size_t row = 0; row < input_rows_count; row++) {
-                    value = parse_json(json_col, data_columns[1], allocator, row, 1,
-                                       column_is_consts);
-                    insert_result_lambda(value, row);
+                    auto result = parse_json(json_col, data_columns[1], allocator, row, 1,
+                                             column_is_consts);
+                    insert_result_lambda(result.second, !result.first, row);
                 }
             }
 
@@ -977,12 +955,16 @@ struct FunctionJsonExtractImpl {
             value.Reserve(data_columns.size() - 1, allocator);
             for (size_t row = 0; row < input_rows_count; row++) {
                 value.Clear();
+                bool found_any = false;
                 for (size_t col = 1; col < data_columns.size(); ++col) {
-                    value.PushBack(parse_json(json_col, data_columns[col], allocator, row, col,
-                                              column_is_consts),
-                                   allocator);
+                    auto result = parse_json(json_col, data_columns[col], allocator, row, col,
+                                             column_is_consts);
+                    if (result.first) {
+                        found_any = true;
+                        value.PushBack(std::move(result.second), allocator);
+                    }
                 }
-                insert_result_lambda(value, row);
+                insert_result_lambda(value, !found_any, row);
             }
         }
     }
@@ -1113,137 +1095,6 @@ public:
                 vec_to[i] = 1;
             } else {
                 vec_to[i] = 0;
-            }
-        }
-
-        block.replace_by_position(result,
-                                  ColumnNullable::create(std::move(col_to), std::move(null_map)));
-
-        return Status::OK();
-    }
-};
-
-class FunctionJsonContains : public IFunction {
-public:
-    static constexpr auto name = "json_contains";
-    static FunctionPtr create() { return std::make_shared<FunctionJsonContains>(); }
-
-    String get_name() const override { return name; }
-
-    size_t get_number_of_arguments() const override { return 3; }
-
-    DataTypePtr get_return_type_impl(const DataTypes& arguments) const override {
-        return make_nullable(std::make_shared<DataTypeUInt8>());
-    }
-
-    DataTypes get_variadic_argument_types_impl() const override {
-        return {std::make_shared<DataTypeString>(), std::make_shared<DataTypeString>(),
-                std::make_shared<DataTypeString>()};
-    }
-
-    bool use_default_implementation_for_nulls() const override { return false; }
-
-    bool json_contains_object(const rapidjson::Value& target,
-                              const rapidjson::Value& search_value) const {
-        if (!target.IsObject() || !search_value.IsObject()) {
-            return false;
-        }
-
-        for (auto itr = search_value.MemberBegin(); itr != search_value.MemberEnd(); ++itr) {
-            if (!target.HasMember(itr->name) || !json_contains(target[itr->name], itr->value)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    bool json_contains_array(const rapidjson::Value& target,
-                             const rapidjson::Value& search_value) const {
-        if (!target.IsArray() || !search_value.IsArray()) {
-            return false;
-        }
-
-        for (auto itr = search_value.Begin(); itr != search_value.End(); ++itr) {
-            bool found = false;
-            for (auto target_itr = target.Begin(); target_itr != target.End(); ++target_itr) {
-                if (json_contains(*target_itr, *itr)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    bool json_contains(const rapidjson::Value& target, const rapidjson::Value& search_value) const {
-        if (target == search_value) {
-            return true;
-        }
-
-        if (target.IsObject() && search_value.IsObject()) {
-            return json_contains_object(target, search_value);
-        }
-
-        if (target.IsArray() && search_value.IsArray()) {
-            return json_contains_array(target, search_value);
-        }
-
-        return false;
-    }
-
-    Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
-                        size_t result, size_t input_rows_count) const override {
-        const IColumn& col_json = *(block.get_by_position(arguments[0]).column);
-        const IColumn& col_search = *(block.get_by_position(arguments[1]).column);
-        const IColumn& col_path = *(block.get_by_position(arguments[2]).column);
-
-        auto null_map = ColumnUInt8::create(input_rows_count, 0);
-
-        const ColumnString* col_json_string = check_and_get_column<ColumnString>(col_json);
-        const ColumnString* col_search_string = check_and_get_column<ColumnString>(col_search);
-        const ColumnString* col_path_string = check_and_get_column<ColumnString>(col_path);
-
-        if (!col_json_string || !col_search_string || !col_path_string) {
-            return Status::RuntimeError("Illegal column should be ColumnString");
-        }
-
-        auto col_to = ColumnVector<vectorized::UInt8>::create();
-        auto& vec_to = col_to->get_data();
-        size_t size = col_json.size();
-        vec_to.resize(size);
-
-        for (size_t i = 0; i < input_rows_count; ++i) {
-            if (col_json.is_null_at(i) || col_search.is_null_at(i) || col_path.is_null_at(i)) {
-                null_map->get_data()[i] = 1;
-                vec_to[i] = 0;
-                continue;
-            }
-
-            const auto& json_val = col_json_string->get_data_at(i);
-            const auto& search_val = col_search_string->get_data_at(i);
-            const auto& path_val = col_path_string->get_data_at(i);
-
-            std::string_view json_string(json_val.data, json_val.size);
-            std::string_view search_string(search_val.data, search_val.size);
-            std::string_view path_string(path_val.data, path_val.size);
-
-            rapidjson::Document document;
-            auto target_val = get_json_object<JSON_FUN_STRING>(json_string, path_string, &document);
-            if (target_val == nullptr || target_val->IsNull()) {
-                vec_to[i] = 0;
-            } else {
-                rapidjson::Document search_doc;
-                search_doc.Parse(search_string.data(), search_string.size());
-                if (json_contains(*target_val, search_doc)) {
-                    vec_to[i] = 1;
-                } else {
-                    vec_to[i] = 0;
-                }
             }
         }
 
@@ -1676,7 +1527,6 @@ void register_function_json(SimpleFunctionFactory& factory) {
             FunctionJsonNullable<FunctionJsonExtractImpl<JsonExtractNoQuotesName, true>>>();
 
     factory.register_function<FunctionJsonValid>();
-    factory.register_function<FunctionJsonContains>();
 
     factory.register_function<FunctionJsonModifyImpl<FunctionJsonInsert>>();
     factory.register_function<FunctionJsonModifyImpl<FunctionJsonReplace>>();

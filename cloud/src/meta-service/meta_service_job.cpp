@@ -29,11 +29,11 @@
 #include "common/logging.h"
 #include "common/util.h"
 #include "cpp/sync_point.h"
-#include "meta-service/keys.h"
 #include "meta-service/meta_service_helper.h"
 #include "meta-service/meta_service_tablet_stats.h"
-#include "meta-service/txn_kv.h"
-#include "meta-service/txn_kv_error.h"
+#include "meta-store/keys.h"
+#include "meta-store/txn_kv.h"
+#include "meta-store/txn_kv_error.h"
 #include "meta_service.h"
 
 // Empty string not is not processed
@@ -405,7 +405,7 @@ void MetaServiceImpl::start_tablet_job(::google::protobuf::RpcController* contro
                                        const StartTabletJobRequest* request,
                                        StartTabletJobResponse* response,
                                        ::google::protobuf::Closure* done) {
-    RPC_PREPROCESS(start_tablet_job);
+    RPC_PREPROCESS(start_tablet_job, get, put);
     std::string cloud_unique_id = request->cloud_unique_id();
     instance_id = get_instance_id(resource_mgr_, cloud_unique_id);
     if (instance_id.empty()) {
@@ -423,7 +423,6 @@ void MetaServiceImpl::start_tablet_job(::google::protobuf::RpcController* contro
         return;
     }
 
-    std::unique_ptr<Transaction> txn;
     TxnErrorCode err = txn_kv_->create_txn(&txn);
     if (err != TxnErrorCode::TXN_OK) {
         code = cast_as<ErrCategory::CREATE>(err);
@@ -452,17 +451,16 @@ void MetaServiceImpl::start_tablet_job(::google::protobuf::RpcController* contro
     }
 
     bool need_commit = false;
-    std::unique_ptr<int, std::function<void(int*)>> defer_commit(
-            (int*)0x01, [&ss, &txn, &code, &msg, &need_commit](int*) {
-                if (!need_commit) return;
-                TxnErrorCode err = txn->commit();
-                if (err != TxnErrorCode::TXN_OK) {
-                    code = cast_as<ErrCategory::COMMIT>(err);
-                    ss << "failed to commit job kv, err=" << err;
-                    msg = ss.str();
-                    return;
-                }
-            });
+    DORIS_CLOUD_DEFER {
+        if (!need_commit) return;
+        TxnErrorCode err = txn->commit();
+        if (err != TxnErrorCode::TXN_OK) {
+            code = cast_as<ErrCategory::COMMIT>(err);
+            ss << "failed to commit job kv, err=" << err;
+            msg = ss.str();
+            return;
+        }
+    };
 
     if (!request->job().compaction().empty()) {
         start_compaction_job(code, msg, ss, txn, request, response, instance_id, need_commit);
@@ -848,11 +846,10 @@ void process_compaction_job(MetaServiceCode& code, std::string& msg, std::string
 
     std::unique_ptr<RangeGetIterator> it;
     int num_rowsets = 0;
-    std::unique_ptr<int, std::function<void(int*)>> defer_log_range(
-            (int*)0x01, [&rs_start, &rs_end, &num_rowsets, &instance_id](int*) {
-                INSTANCE_LOG(INFO) << "get rowset meta, num_rowsets=" << num_rowsets << " range=["
-                                   << hex(rs_start) << "," << hex(rs_end) << "]";
-            });
+    DORIS_CLOUD_DEFER {
+        INSTANCE_LOG(INFO) << "get rowset meta, num_rowsets=" << num_rowsets << " range=["
+                           << hex(rs_start) << "," << hex(rs_end) << "]";
+    };
 
     auto rs_start1 = rs_start;
     do {
@@ -1187,6 +1184,21 @@ void process_schema_change_job(MetaServiceCode& code, std::string& msg, std::str
     new_tablet_meta.SerializeToString(&new_tablet_val);
     txn->put(new_tablet_key, new_tablet_val);
 
+    // process mow table, check lock
+    if (new_tablet_meta.enable_unique_key_merge_on_write()) {
+        bool success = check_and_remove_delete_bitmap_update_lock(
+                code, msg, ss, txn, instance_id, new_table_id, SCHEMA_CHANGE_DELETE_BITMAP_LOCK_ID,
+                schema_change.delete_bitmap_lock_initiator());
+        if (!success) {
+            return;
+        }
+
+        std::string pending_key = meta_pending_delete_bitmap_key({instance_id, new_tablet_id});
+        txn->remove(pending_key);
+        LOG(INFO) << "xxx sc remove delete bitmap pending key, pending_key=" << hex(pending_key)
+                  << " tablet_id=" << new_tablet_id << "job_id=" << schema_change.id();
+    }
+
     //==========================================================================
     //                move rowsets [2-alter_version] to recycle
     //==========================================================================
@@ -1321,16 +1333,6 @@ void process_schema_change_job(MetaServiceCode& code, std::string& msg, std::str
         return;
     }
 
-    // process mow table, check lock
-    if (new_tablet_meta.enable_unique_key_merge_on_write()) {
-        bool success = check_and_remove_delete_bitmap_update_lock(
-                code, msg, ss, txn, instance_id, new_table_id, SCHEMA_CHANGE_DELETE_BITMAP_LOCK_ID,
-                schema_change.delete_bitmap_lock_initiator());
-        if (!success) {
-            return;
-        }
-    }
-
     for (size_t i = 0; i < schema_change.txn_ids().size(); ++i) {
         auto tmp_rowset_key =
                 meta_rowset_tmp_key({instance_id, schema_change.txn_ids().at(i), new_tablet_id});
@@ -1391,7 +1393,7 @@ void MetaServiceImpl::finish_tablet_job(::google::protobuf::RpcController* contr
                                         const FinishTabletJobRequest* request,
                                         FinishTabletJobResponse* response,
                                         ::google::protobuf::Closure* done) {
-    RPC_PREPROCESS(finish_tablet_job);
+    RPC_PREPROCESS(finish_tablet_job, get, put, del);
     std::string cloud_unique_id = request->cloud_unique_id();
     instance_id = get_instance_id(resource_mgr_, cloud_unique_id);
     if (instance_id.empty()) {
@@ -1410,79 +1412,89 @@ void MetaServiceImpl::finish_tablet_job(::google::protobuf::RpcController* contr
         return;
     }
 
-    bool need_commit = false;
-    std::unique_ptr<Transaction> txn;
-    TxnErrorCode err = txn_kv_->create_txn(&txn);
-    if (err != TxnErrorCode::TXN_OK) {
-        code = cast_as<ErrCategory::CREATE>(err);
-        msg = "failed to create txn";
-        return;
-    }
+    for (int retry = 0; retry <= 1; retry++) {
+        bool need_commit = false;
+        TxnErrorCode err = txn_kv_->create_txn(&txn);
+        if (err != TxnErrorCode::TXN_OK) {
+            code = cast_as<ErrCategory::CREATE>(err);
+            msg = "failed to create txn";
+            return;
+        }
 
-    int64_t tablet_id = request->job().idx().tablet_id();
-    if (tablet_id <= 0) {
-        code = MetaServiceCode::INVALID_ARGUMENT;
-        msg = "no valid tablet_id given";
-        return;
-    }
-    auto& tablet_idx = const_cast<TabletIndexPB&>(request->job().idx());
-    if (!tablet_idx.has_table_id() || !tablet_idx.has_index_id() ||
-        !tablet_idx.has_partition_id()) {
-        get_tablet_idx(code, msg, txn.get(), instance_id, tablet_id, tablet_idx);
-        if (code != MetaServiceCode::OK) return;
-    }
-    // Check if tablet has been dropped
-    if (is_dropped_tablet(txn.get(), instance_id, tablet_idx.index_id(),
-                          tablet_idx.partition_id())) {
-        code = MetaServiceCode::TABLET_NOT_FOUND;
-        msg = fmt::format("tablet {} has been dropped", tablet_id);
-        return;
-    }
+        int64_t tablet_id = request->job().idx().tablet_id();
+        if (tablet_id <= 0) {
+            code = MetaServiceCode::INVALID_ARGUMENT;
+            msg = "no valid tablet_id given";
+            return;
+        }
+        auto& tablet_idx = const_cast<TabletIndexPB&>(request->job().idx());
+        if (!tablet_idx.has_table_id() || !tablet_idx.has_index_id() ||
+            !tablet_idx.has_partition_id()) {
+            get_tablet_idx(code, msg, txn.get(), instance_id, tablet_id, tablet_idx);
+            if (code != MetaServiceCode::OK) return;
+        }
+        // Check if tablet has been dropped
+        if (is_dropped_tablet(txn.get(), instance_id, tablet_idx.index_id(),
+                              tablet_idx.partition_id())) {
+            code = MetaServiceCode::TABLET_NOT_FOUND;
+            msg = fmt::format("tablet {} has been dropped", tablet_id);
+            return;
+        }
 
-    // TODO(gavin): remove duplicated code with start_tablet_job()
-    // Begin to process finish tablet job
-    std::string job_key = job_tablet_key({instance_id, tablet_idx.table_id(), tablet_idx.index_id(),
-                                          tablet_idx.partition_id(), tablet_id});
-    std::string job_val;
-    err = txn->get(job_key, &job_val);
-    if (err != TxnErrorCode::TXN_OK) {
-        SS << (err == TxnErrorCode::TXN_KEY_NOT_FOUND ? "job not found," : "internal error,")
-           << " instance_id=" << instance_id << " tablet_id=" << tablet_id
-           << " job=" << proto_to_json(request->job()) << " err=" << err;
-        msg = ss.str();
-        code = err == TxnErrorCode::TXN_KEY_NOT_FOUND ? MetaServiceCode::INVALID_ARGUMENT
-                                                      : cast_as<ErrCategory::READ>(err);
-        return;
-    }
-    TabletJobInfoPB recorded_job;
-    recorded_job.ParseFromString(job_val);
-    VLOG_DEBUG << "get tablet job, tablet_id=" << tablet_id
-               << " job=" << proto_to_json(recorded_job);
+        // TODO(gavin): remove duplicated code with start_tablet_job()
+        // Begin to process finish tablet job
+        std::string job_key =
+                job_tablet_key({instance_id, tablet_idx.table_id(), tablet_idx.index_id(),
+                                tablet_idx.partition_id(), tablet_id});
+        std::string job_val;
+        err = txn->get(job_key, &job_val);
+        if (err != TxnErrorCode::TXN_OK) {
+            SS << (err == TxnErrorCode::TXN_KEY_NOT_FOUND ? "job not found," : "internal error,")
+               << " instance_id=" << instance_id << " tablet_id=" << tablet_id
+               << " job=" << proto_to_json(request->job()) << " err=" << err;
+            msg = ss.str();
+            code = err == TxnErrorCode::TXN_KEY_NOT_FOUND ? MetaServiceCode::INVALID_ARGUMENT
+                                                          : cast_as<ErrCategory::READ>(err);
+            return;
+        }
+        TabletJobInfoPB recorded_job;
+        recorded_job.ParseFromString(job_val);
+        VLOG_DEBUG << "get tablet job, tablet_id=" << tablet_id
+                   << " job=" << proto_to_json(recorded_job);
 
-    std::unique_ptr<int, std::function<void(int*)>> defer_commit(
-            (int*)0x01, [&ss, &txn, &code, &msg, &need_commit](int*) {
-                if (!need_commit) return;
-                TxnErrorCode err = txn->commit();
-                if (err != TxnErrorCode::TXN_OK) {
-                    code = cast_as<ErrCategory::COMMIT>(err);
-                    ss << "failed to commit job kv, err=" << err;
-                    msg = ss.str();
-                    return;
+        if (!request->job().compaction().empty()) {
+            // Process compaction commit
+            process_compaction_job(code, msg, ss, txn, request, response, recorded_job, instance_id,
+                                   job_key, need_commit);
+        } else if (request->job().has_schema_change()) {
+            // Process schema change commit
+            process_schema_change_job(code, msg, ss, txn, request, response, recorded_job,
+                                      instance_id, job_key, need_commit);
+        }
+
+        if (!need_commit) return;
+        err = txn->commit();
+        if (err != TxnErrorCode::TXN_OK) {
+            if (err == TxnErrorCode::TXN_CONFLICT) {
+                if (retry == 0 && !request->job().compaction().empty() &&
+                    request->job().compaction(0).has_delete_bitmap_lock_initiator()) {
+                    // Do a fast retry for mow when commit compaction job.
+                    // The only fdb txn conflict here is that during the compaction job commit,
+                    // a compaction lease RPC comes and finishes before the commit,
+                    // so we retry to commit the compaction job again.
+                    response->Clear();
+                    code = MetaServiceCode::OK;
+                    msg.clear();
+                    continue;
                 }
-            });
+            }
 
-    // Process compaction commit
-    if (!request->job().compaction().empty()) {
-        process_compaction_job(code, msg, ss, txn, request, response, recorded_job, instance_id,
-                               job_key, need_commit);
-        return;
-    }
-
-    // Process schema change commit
-    if (request->job().has_schema_change()) {
-        process_schema_change_job(code, msg, ss, txn, request, response, recorded_job, instance_id,
-                                  job_key, need_commit);
-        return;
+            code = cast_as<ErrCategory::COMMIT>(err);
+            ss << "failed to commit job kv, err=" << err;
+            msg = ss.str();
+            return;
+        }
+        break;
     }
 }
 

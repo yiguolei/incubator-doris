@@ -41,6 +41,7 @@
 #include "exprs/function_filter.h"
 #include "io/cache/block_file_cache_profile.h"
 #include "io/io_common.h"
+#include "olap/inverted_index_profile.h"
 #include "olap/olap_common.h"
 #include "olap/olap_tuple.h"
 #include "olap/rowset/rowset.h"
@@ -378,6 +379,11 @@ Status NewOlapScanner::_init_tablet_reader_params(
 
     _tablet_reader_params.use_page_cache = _state->enable_page_cache();
 
+<<<<<<< HEAD
+=======
+    DBUG_EXECUTE_IF("NewOlapScanner::_init_tablet_reader_params.block", DBUG_BLOCK);
+
+>>>>>>> 3.0.7-rc01
     if (!_state->skip_storage_engine_merge()) {
         TOlapScanNode& olap_scan_node =
                 ((pipeline::OlapScanLocalState*)_local_state)->olap_scan_node();
@@ -638,12 +644,19 @@ void NewOlapScanner::_collect_profile_before_close() {
                    stats.inverted_index_searcher_open_timer);                                   \
     COUNTER_UPDATE(Parent->_inverted_index_searcher_search_timer,                               \
                    stats.inverted_index_searcher_search_timer);                                 \
+    COUNTER_UPDATE(Parent->_inverted_index_searcher_search_init_timer,                          \
+                   stats.inverted_index_searcher_search_init_timer);                            \
+    COUNTER_UPDATE(Parent->_inverted_index_searcher_search_exec_timer,                          \
+                   stats.inverted_index_searcher_search_exec_timer);                            \
     COUNTER_UPDATE(Parent->_inverted_index_searcher_cache_hit_counter,                          \
                    stats.inverted_index_searcher_cache_hit);                                    \
     COUNTER_UPDATE(Parent->_inverted_index_searcher_cache_miss_counter,                         \
                    stats.inverted_index_searcher_cache_miss);                                   \
     COUNTER_UPDATE(Parent->_inverted_index_downgrade_count_counter,                             \
                    stats.inverted_index_downgrade_count);                                       \
+    InvertedIndexProfileReporter inverted_index_profile;                                        \
+    inverted_index_profile.update(Parent->_index_filter_profile.get(),                          \
+                                  &stats.inverted_index_stats);                                 \
     if (config::enable_file_cache) {                                                            \
         io::FileCacheProfileReporter cache_profile(Parent->_segment_profile.get());             \
         cache_profile.update(&stats.file_cache_stats);                                          \

@@ -37,10 +37,10 @@
 #include "common/logging.h"
 #include "common/util.h"
 #include "cpp/sync_point.h"
-#include "meta-service/keys.h"
-#include "meta-service/mem_txn_kv.h"
 #include "meta-service/meta_service_helper.h"
-#include "meta-service/txn_kv_error.h"
+#include "meta-store/keys.h"
+#include "meta-store/mem_txn_kv.h"
+#include "meta-store/txn_kv_error.h"
 #include "mock_resource_manager.h"
 #include "rate-limiter/rate_limiter.h"
 #include "resource-manager/resource_manager.h"
@@ -351,8 +351,9 @@ TEST(MetaServiceTest, GetInstanceIdTest) {
                                        const std::string& cloud_unique_id);
     auto meta_service = get_meta_service();
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id_err", [&](auto&& args) {
         std::string* err = try_any_cast<std::string*>(args[0]);
         *err = "can't find node from cache";
@@ -1183,8 +1184,9 @@ TEST(MetaServiceTest, BeginTxnTest) {
         std::condition_variable go_cv;
         bool go = false;
         auto sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer(
-                (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+        DORIS_CLOUD_DEFER {
+            SyncPoint::get_instance()->clear_all_call_backs();
+        };
 
         std::atomic<int32_t> count_txn1 = {0};
         std::atomic<int32_t> count_txn2 = {0};
@@ -1330,8 +1332,9 @@ TEST(MetaServiceTest, BeginTxnTest) {
         std::condition_variable go_cv;
         bool go = false;
         auto sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer(
-                (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+        DORIS_CLOUD_DEFER {
+            SyncPoint::get_instance()->clear_all_call_backs();
+        };
 
         std::atomic<int32_t> count_txn1 = {0};
         std::atomic<int32_t> count_txn2 = {0};
@@ -3453,8 +3456,9 @@ TEST(MetaServiceTest, CopyJobTest) {
     std::string instance_id = "copy_job_test_instance_id";
 
     [[maybe_unused]] auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -3931,8 +3935,9 @@ TEST(MetaServiceTest, StageTest) {
     auto cloud_unique_id = "test_cloud_unique_id";
     std::string instance_id = "stage_test_instance_id";
     [[maybe_unused]] auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -4269,8 +4274,9 @@ TEST(MetaServiceTest, GetIamTest) {
     auto cloud_unique_id = "test_cloud_unique_id";
     std::string instance_id = "get_iam_test_instance_id";
     [[maybe_unused]] auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -4352,8 +4358,9 @@ TEST(MetaServiceTest, AlterRamTest) {
     auto cloud_unique_id = "test_cloud_unique_id";
     std::string instance_id = "alter_iam_test_instance_id";
     [[maybe_unused]] auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -4689,58 +4696,66 @@ TEST(MetaServiceTest, GetDeleteBitmapUpdateLockNoReadStats) {
 TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsNormal) {
     auto meta_service = get_meta_service();
 
-    std::string instance_id = "test_get_delete_bitmap_update_lock_normal";
-    [[maybe_unused]] auto* sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [](int*) {
-        SyncPoint::get_instance()->disable_processing();
-        SyncPoint::get_instance()->clear_all_call_backs();
-    });
-    sp->set_call_back("get_instance_id", [&](auto&& args) {
-        auto* ret = try_any_cast_ret<std::string>(args);
-        ret->first = instance_id;
-        ret->second = true;
-    });
-    sp->enable_processing();
+    bool enable_batch_get_mow_tablet_stats_and_meta_vals[] = {false, true};
+    for (bool val : enable_batch_get_mow_tablet_stats_and_meta_vals) {
+        config::enable_batch_get_mow_tablet_stats_and_meta = val;
 
-    int64_t db_id = 1000;
-    int64_t table_id = 2001;
-    int64_t index_id = 3001;
-    // [(partition_id, tablet_id)]
-    std::vector<std::array<int64_t, 2>> tablet_idxes {{70001, 12345}, {80001, 3456}, {90001, 6789}};
+        std::string instance_id = "test_get_delete_bitmap_update_lock_normal";
+        [[maybe_unused]] auto* sp = SyncPoint::get_instance();
+        DORIS_CLOUD_DEFER {
+            SyncPoint::get_instance()->disable_processing();
+            SyncPoint::get_instance()->clear_all_call_backs();
+        };
+        sp->set_call_back("get_instance_id", [&](auto&& args) {
+            auto* ret = try_any_cast_ret<std::string>(args);
+            ret->first = instance_id;
+            ret->second = true;
+        });
+        sp->enable_processing();
 
-    add_tablet_metas(meta_service.get(), instance_id, table_id, index_id, tablet_idxes);
+        int64_t db_id = 1000;
+        int64_t table_id = 2001;
+        int64_t index_id = 3001;
+        // [(partition_id, tablet_id)]
+        std::vector<std::array<int64_t, 2>> tablet_idxes {
+                {70001, 12345}, {80001, 3456}, {90001, 6789}};
 
-    GetDeleteBitmapUpdateLockResponse res;
-    get_delete_bitmap_update_lock(meta_service.get(), res, db_id, table_id, index_id, tablet_idxes,
-                                  5, 999999, -1, true);
-    ASSERT_EQ(res.status().code(), MetaServiceCode::OK);
+        add_tablet_metas(meta_service.get(), instance_id, table_id, index_id, tablet_idxes);
 
-    ASSERT_EQ(res.base_compaction_cnts().size(), tablet_idxes.size());
-    for (const auto& base_compaction_cnt : res.base_compaction_cnts()) {
-        ASSERT_EQ(base_compaction_cnt, 10);
-    }
-    ASSERT_EQ(res.cumulative_compaction_cnts().size(), tablet_idxes.size());
-    for (const auto& cumu_compaction_cnt : res.cumulative_compaction_cnts()) {
-        ASSERT_EQ(cumu_compaction_cnt, 20);
-    }
-    ASSERT_EQ(res.cumulative_points().size(), tablet_idxes.size());
-    for (const auto& cumulative_point : res.cumulative_points()) {
-        ASSERT_EQ(cumulative_point, 30);
+        GetDeleteBitmapUpdateLockResponse res;
+        get_delete_bitmap_update_lock(meta_service.get(), res, db_id, table_id, index_id,
+                                      tablet_idxes, 5, 999999, -1, true);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK);
+
+        ASSERT_EQ(res.base_compaction_cnts().size(), tablet_idxes.size());
+        for (const auto& base_compaction_cnt : res.base_compaction_cnts()) {
+            ASSERT_EQ(base_compaction_cnt, 10);
+        }
+        ASSERT_EQ(res.cumulative_compaction_cnts().size(), tablet_idxes.size());
+        for (const auto& cumu_compaction_cnt : res.cumulative_compaction_cnts()) {
+            ASSERT_EQ(cumu_compaction_cnt, 20);
+        }
+        ASSERT_EQ(res.cumulative_points().size(), tablet_idxes.size());
+        for (const auto& cumulative_point : res.cumulative_points()) {
+            ASSERT_EQ(cumulative_point, 30);
+        }
     }
 }
 
 TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsLockExpired) {
     auto meta_service = get_meta_service();
 
-    {
+    bool enable_batch_get_mow_tablet_stats_and_meta_vals[] = {false, true};
+    for (bool val : enable_batch_get_mow_tablet_stats_and_meta_vals) {
+        config::enable_batch_get_mow_tablet_stats_and_meta = val;
         // 2.1 abnormal path, lock has been expired and taken by another load/compaction during
         // the reading of tablet stats
         std::string instance_id = "test_get_delete_bitmap_update_lock_abnormal1";
         [[maybe_unused]] auto* sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [](int*) {
+        DORIS_CLOUD_DEFER {
             SyncPoint::get_instance()->disable_processing();
             SyncPoint::get_instance()->clear_all_call_backs();
-        });
+        };
         sp->set_call_back("get_instance_id", [&](auto&& args) {
             auto* ret = try_any_cast_ret<std::string>(args);
             ret->first = instance_id;
@@ -4773,15 +4788,17 @@ TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsLockExpired) {
         ASSERT_EQ(res.cumulative_points().size(), 0);
     }
 
-    {
+    for (bool val : enable_batch_get_mow_tablet_stats_and_meta_vals) {
+        config::enable_batch_get_mow_tablet_stats_and_meta = val;
+
         // 2.2 abnormal path, lock has been taken by another load/compaction and been released during
         // the reading of tablet stats
         std::string instance_id = "test_get_delete_bitmap_update_lock_abnormal2";
         [[maybe_unused]] auto* sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [](int*) {
+        DORIS_CLOUD_DEFER {
             SyncPoint::get_instance()->disable_processing();
             SyncPoint::get_instance()->clear_all_call_backs();
-        });
+        };
         sp->set_call_back("get_instance_id", [&](auto&& args) {
             auto* ret = try_any_cast_ret<std::string>(args);
             ret->first = instance_id;
@@ -4815,14 +4832,16 @@ TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsLockExpired) {
 TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsError) {
     auto meta_service = get_meta_service();
 
-    {
+    bool enable_batch_get_mow_tablet_stats_and_meta_vals[] = {false, true};
+    for (bool val : enable_batch_get_mow_tablet_stats_and_meta_vals) {
+        config::enable_batch_get_mow_tablet_stats_and_meta = val;
         // 2.3 abnormal path, meeting error when reading tablets' stats
         std::string instance_id = "test_get_delete_bitmap_update_lock_abnormal3";
         [[maybe_unused]] auto* sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [](int*) {
+        DORIS_CLOUD_DEFER {
             SyncPoint::get_instance()->disable_processing();
             SyncPoint::get_instance()->clear_all_call_backs();
-        });
+        };
         sp->set_call_back("get_instance_id", [&](auto&& args) {
             auto* ret = try_any_cast_ret<std::string>(args);
             ret->first = instance_id;
@@ -4853,15 +4872,16 @@ TEST(MetaServiceTest, GetDeleteBitmapUpdateLockTabletStatsError) {
         ASSERT_EQ(res.status().code(), MetaServiceCode::KV_TXN_GET_ERR);
     }
 
-    {
+    for (bool val : enable_batch_get_mow_tablet_stats_and_meta_vals) {
+        config::enable_batch_get_mow_tablet_stats_and_meta = val;
         // 2.4 abnormal path, meeting TXN_TOO_OLD error when reading tablets' stats,
         // this should not fail if lock is not expired
         std::string instance_id = "test_get_delete_bitmap_update_lock_abnormal4";
         [[maybe_unused]] auto* sp = SyncPoint::get_instance();
-        std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [](int*) {
+        DORIS_CLOUD_DEFER {
             SyncPoint::get_instance()->disable_processing();
             SyncPoint::get_instance()->clear_all_call_backs();
-        });
+        };
         sp->set_call_back("get_instance_id", [&](auto&& args) {
             auto* ret = try_any_cast_ret<std::string>(args);
             ret->first = instance_id;
@@ -5329,6 +5349,117 @@ TEST(MetaServiceTest, UpdateDeleteBitmapFailCase) {
     ASSERT_EQ(get_delete_bitmap_res.segment_ids_size(), 1);
     ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps_size(), 1);
     ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps(0), data1);
+}
+
+TEST(MetaServiceTest, UpdateDeleteBitmapScOverrideExistingKey) {
+    auto meta_service = get_meta_service();
+    brpc::Controller cntl;
+    size_t split_size = 90 * 1000; // see cloud/src/common/util.h
+
+    extern std::string get_instance_id(const std::shared_ptr<ResourceManager>& rc_mgr,
+                                       const std::string& cloud_unique_id);
+    auto instance_id = get_instance_id(meta_service->resource_mgr(), "test_cloud_unique_id");
+
+    {
+        // schema change should use pending delete bitmap to clear previous failed trials
+        int64_t db_id = 99999;
+        int64_t table_id = 1801;
+        int64_t index_id = 4801;
+        int64_t t1p1 = 2001;
+        int64_t tablet_id = 3001;
+        int64_t txn_id;
+        ASSERT_NO_FATAL_FAILURE(create_tablet_with_db_id(meta_service.get(), db_id, table_id,
+                                                         index_id, t1p1, tablet_id));
+        begin_txn_and_commit_rowset(meta_service.get(), "label11", db_id, table_id, t1p1, tablet_id,
+                                    &txn_id);
+        int64_t lock_id = -2;
+        int64_t initiator = 1009;
+        int64_t version = 100;
+
+        get_delete_bitmap_update_lock(meta_service.get(), table_id, t1p1, lock_id, initiator);
+
+        {
+            UpdateDeleteBitmapRequest update_delete_bitmap_req;
+            UpdateDeleteBitmapResponse update_delete_bitmap_res;
+            // will be splited and stored in 5 KVs
+            std::string data1(split_size * 5, 'c');
+            update_delete_bitmap(meta_service.get(), update_delete_bitmap_req,
+                                 update_delete_bitmap_res, table_id, t1p1, lock_id, initiator,
+                                 tablet_id, txn_id, version, data1);
+            ASSERT_EQ(update_delete_bitmap_res.status().code(), MetaServiceCode::OK);
+
+            GetDeleteBitmapRequest get_delete_bitmap_req;
+            GetDeleteBitmapResponse get_delete_bitmap_res;
+            get_delete_bitmap_req.set_cloud_unique_id("test_cloud_unique_id");
+            get_delete_bitmap_req.set_tablet_id(tablet_id);
+            get_delete_bitmap_req.add_rowset_ids("123");
+            get_delete_bitmap_req.add_begin_versions(0);
+            get_delete_bitmap_req.add_end_versions(version);
+            meta_service->get_delete_bitmap(
+                    reinterpret_cast<google::protobuf::RpcController*>(&cntl),
+                    &get_delete_bitmap_req, &get_delete_bitmap_res, nullptr);
+            ASSERT_EQ(get_delete_bitmap_res.status().code(), MetaServiceCode::OK);
+            ASSERT_EQ(get_delete_bitmap_res.rowset_ids_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.versions_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_ids_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps(0), data1);
+        }
+
+        {
+            std::string pending_key = meta_pending_delete_bitmap_key({instance_id, tablet_id});
+            std::string pending_val;
+            std::unique_ptr<Transaction> txn;
+            ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+            ASSERT_EQ(txn->get(pending_key, &pending_val), TxnErrorCode::TXN_OK);
+            PendingDeleteBitmapPB pending_info;
+            ASSERT_TRUE(pending_info.ParseFromString(pending_val));
+            ASSERT_EQ(pending_info.delete_bitmap_keys_size(), 1);
+
+            std::string_view k1 = pending_info.delete_bitmap_keys(0);
+            k1.remove_prefix(1);
+            std::vector<std::tuple<std::variant<int64_t, std::string>, int, int>> out;
+            decode_key(&k1, &out);
+            // 0x01 "meta" ${instance_id} "delete_bitmap" ${tablet_id} ${rowset_id} ${version} ${segment_id} -> roaringbitmap
+            auto encoded_tablet_id = std::get<std::int64_t>(std::get<0>(out[3]));
+            ASSERT_EQ(encoded_tablet_id, tablet_id);
+            auto encoded_rowset_id = std::get<std::string>(std::get<0>(out[4]));
+            ASSERT_EQ(encoded_rowset_id, "123");
+            auto encoded_version = std::get<std::int64_t>(std::get<0>(out[5]));
+            ASSERT_EQ(encoded_version, version);
+            auto encoded_segment_id = std::get<std::int64_t>(std::get<0>(out[6]));
+            ASSERT_EQ(encoded_segment_id, 0);
+        }
+
+        {
+            UpdateDeleteBitmapRequest update_delete_bitmap_req;
+            UpdateDeleteBitmapResponse update_delete_bitmap_res;
+            // will be splited and stored in 3 KVs
+            // if we don't remove previous splited KVs, will crash when reading
+            std::string data2(split_size * 3, 'a');
+            update_delete_bitmap(meta_service.get(), update_delete_bitmap_req,
+                                 update_delete_bitmap_res, table_id, t1p1, lock_id, initiator,
+                                 tablet_id, txn_id, version, data2);
+            ASSERT_EQ(update_delete_bitmap_res.status().code(), MetaServiceCode::OK);
+
+            GetDeleteBitmapRequest get_delete_bitmap_req;
+            GetDeleteBitmapResponse get_delete_bitmap_res;
+            get_delete_bitmap_req.set_cloud_unique_id("test_cloud_unique_id");
+            get_delete_bitmap_req.set_tablet_id(tablet_id);
+            get_delete_bitmap_req.add_rowset_ids("123");
+            get_delete_bitmap_req.add_begin_versions(0);
+            get_delete_bitmap_req.add_end_versions(version);
+            meta_service->get_delete_bitmap(
+                    reinterpret_cast<google::protobuf::RpcController*>(&cntl),
+                    &get_delete_bitmap_req, &get_delete_bitmap_res, nullptr);
+            ASSERT_EQ(get_delete_bitmap_res.status().code(), MetaServiceCode::OK);
+            ASSERT_EQ(get_delete_bitmap_res.rowset_ids_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.versions_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_ids_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps_size(), 1);
+            ASSERT_EQ(get_delete_bitmap_res.segment_delete_bitmaps(0), data2);
+        }
+    }
 }
 
 TEST(MetaServiceTest, UpdateDeleteBitmap) {
@@ -6319,8 +6450,9 @@ TEST(MetaServiceTest, BatchGetVersionFallback) {
     constexpr size_t N = 100;
     size_t i = 0;
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("batch_get_version_err", [&](auto&& args) {
         if (i++ == N / 10) {
             *try_any_cast<TxnErrorCode*>(args) = TxnErrorCode::TXN_TOO_OLD;
@@ -6365,8 +6497,9 @@ TEST(MetaServiceTest, IsDroppedTablet) {
     auto meta_service = get_meta_service();
     std::string instance_id = "IsDroppedTablet";
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -6446,8 +6579,9 @@ TEST(MetaServiceTest, IndexRequest) {
     auto meta_service = get_meta_service();
     std::string instance_id = "IndexRequest";
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -6689,8 +6823,9 @@ TEST(MetaServiceTest, PartitionRequest) {
     auto meta_service = get_meta_service();
     std::string instance_id = "PartitionRequest";
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -8543,8 +8678,9 @@ TEST(MetaServiceTest, UpdateTmpRowsetTest) {
 
     std::string instance_id = "update_rowset_meta_test_instance_id";
     auto sp = SyncPoint::get_instance();
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -8962,8 +9098,14 @@ TEST(MetaServiceTest, CheckJobExisted) {
 
     std::string instance_id = "check_job_existed_instance_id";
     auto sp = SyncPoint::get_instance();
+<<<<<<< HEAD
     std::unique_ptr<int, std::function<void(int*)>> defer(
             (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
+=======
+    DORIS_CLOUD_DEFER {
+        SyncPoint::get_instance()->clear_all_call_backs();
+    };
+>>>>>>> 3.0.7-rc01
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -9334,4 +9476,308 @@ TEST(MetaServiceTest, StaleCommitRowset) {
     ASSERT_EQ(res.status().code(), MetaServiceCode::INVALID_ARGUMENT) << res.status().code();
 }
 
+<<<<<<< HEAD
+=======
+TEST(MetaServiceTest, AlterObjInfoTest) {
+    auto meta_service = get_meta_service();
+
+    auto sp = SyncPoint::get_instance();
+    sp->enable_processing();
+
+    sp->set_call_back("encrypt_ak_sk:get_encryption_key", [](auto&& args) {
+        auto* ret = try_any_cast<int*>(args[0]);
+        *ret = 0;
+        auto* key = try_any_cast<std::string*>(args[1]);
+        *key = "selectdbselectdbselectdbselectdb";
+        auto* key_id = try_any_cast<int64_t*>(args[2]);
+        *key_id = 1;
+    });
+
+    std::unique_ptr<Transaction> txn;
+    ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+    std::string key;
+    std::string val;
+    InstanceKeyInfo key_info {"test_instance"};
+    instance_key(key_info, &key);
+
+    ObjectStoreInfoPB obj_info;
+    obj_info.set_id("1");
+    obj_info.set_ak("access_key_132131");
+    obj_info.set_sk("secret_key_434124");
+    obj_info.set_provider(ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+    InstanceInfoPB instance;
+    instance.add_obj_info()->CopyFrom(obj_info);
+    val = instance.SerializeAsString();
+    txn->put(key, val);
+    ASSERT_EQ(txn->commit(), TxnErrorCode::TXN_OK);
+
+    auto get_test_instance = [&](InstanceInfoPB& i) {
+        std::string key;
+        std::string val;
+        std::unique_ptr<Transaction> txn;
+        ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+        InstanceKeyInfo key_info {"test_instance"};
+        instance_key(key_info, &key);
+        ASSERT_EQ(txn->get(key, &val), TxnErrorCode::TXN_OK);
+        i.ParseFromString(val);
+    };
+
+    std::string cipher_sk = "JUkuTDctR+ckJtnPkLScWaQZRcOtWBhsLLpnCRxQLxr734qB8cs6gNLH6grE1FxO";
+    std::string plain_sk = "Hx60p12123af234541nsVsffdfsdfghsdfhsdf34t";
+
+    // update failed
+    {
+        AlterObjStoreInfoRequest req;
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_OBJ_INFO);
+        req.mutable_obj()->set_id("2");
+        req.mutable_obj()->set_ak("new_ak");
+        req.mutable_obj()->set_sk(plain_sk);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_obj_store_info(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::INVALID_ARGUMENT);
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        ASSERT_EQ(instance.obj_info(0).id(), "1");
+        ASSERT_EQ(instance.obj_info(0).ak(), "access_key_132131");
+        ASSERT_EQ(instance.obj_info(0).sk(), "secret_key_434124");
+    }
+
+    // update ak/sk successful
+    {
+        AlterObjStoreInfoRequest req;
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_OBJ_INFO);
+        req.mutable_obj()->set_id("1");
+        req.mutable_obj()->set_ak("new_access_key_132131");
+        req.mutable_obj()->set_sk(plain_sk);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_obj_store_info(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK);
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        LOG(INFO) << "instance:" << instance.ShortDebugString();
+        ASSERT_EQ(instance.obj_info(0).id(), "1");
+        ASSERT_EQ(instance.obj_info(0).ak(), "new_access_key_132131");
+        ASSERT_EQ(instance.obj_info(0).sk(), cipher_sk);
+    }
+
+    // update from ak/sk to role_arn
+    {
+        AlterObjStoreInfoRequest req;
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_OBJ_INFO);
+        req.mutable_obj()->set_id("1");
+        req.mutable_obj()->set_role_arn("arn:aws:iam::1453123012:role/test-role");
+        req.mutable_obj()->set_external_id("external_id_13123");
+        req.mutable_obj()->set_cred_provider_type(CredProviderTypePB::INSTANCE_PROFILE);
+        req.mutable_obj()->set_provider(ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_obj_store_info(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK);
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        LOG(INFO) << "instance:" << instance.ShortDebugString();
+        ASSERT_EQ(instance.obj_info(0).id(), "1");
+        ASSERT_EQ(instance.obj_info(0).role_arn(), "arn:aws:iam::1453123012:role/test-role");
+        ASSERT_EQ(instance.obj_info(0).external_id(), "external_id_13123");
+        ASSERT_EQ(instance.obj_info(0).provider(),
+                  ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+        ASSERT_EQ(instance.obj_info(0).cred_provider_type(), CredProviderTypePB::INSTANCE_PROFILE);
+        ASSERT_TRUE(instance.obj_info(0).ak().empty());
+        ASSERT_TRUE(instance.obj_info(0).sk().empty());
+        ASSERT_FALSE(instance.obj_info(0).has_encryption_info());
+    }
+
+    // update from role_arn to ak/sk
+    {
+        AlterObjStoreInfoRequest req;
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_OBJ_INFO);
+        req.mutable_obj()->set_id("1");
+        req.mutable_obj()->set_ak("new_access_key_132131");
+        req.mutable_obj()->set_sk(plain_sk);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_obj_store_info(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK);
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        LOG(INFO) << "instance:" << instance.ShortDebugString();
+        ASSERT_EQ(instance.obj_info(0).id(), "1");
+        ASSERT_EQ(instance.obj_info(0).ak(), "new_access_key_132131");
+        ASSERT_EQ(instance.obj_info(0).sk(), cipher_sk);
+        ASSERT_EQ(instance.obj_info(0).provider(),
+                  ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+        ASSERT_FALSE(instance.obj_info(0).has_cred_provider_type());
+        ASSERT_FALSE(instance.obj_info(0).has_role_arn());
+        ASSERT_FALSE(instance.obj_info(0).has_external_id());
+    }
+
+    SyncPoint::get_instance()->disable_processing();
+    SyncPoint::get_instance()->clear_all_call_backs();
+}
+
+TEST(MetaServiceTest, AlterS3StorageVaultWithRoleArnTest) {
+    auto meta_service = get_meta_service();
+
+    auto sp = SyncPoint::get_instance();
+    sp->enable_processing();
+    sp->set_call_back("encrypt_ak_sk:get_encryption_key", [](auto&& args) {
+        auto* ret = try_any_cast<int*>(args[0]);
+        *ret = 0;
+        auto* key = try_any_cast<std::string*>(args[1]);
+        *key = "selectdbselectdbselectdbselectdb";
+        auto* key_id = try_any_cast<int64_t*>(args[2]);
+        *key_id = 1;
+    });
+    std::pair<std::string, std::string> pair;
+    sp->set_call_back("extract_object_storage_info:get_aksk_pair", [&](auto&& args) {
+        auto* ret = try_any_cast<std::pair<std::string, std::string>*>(args[0]);
+        pair = *ret;
+    });
+
+    std::unique_ptr<Transaction> txn;
+    ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+    std::string key;
+    std::string val;
+    InstanceKeyInfo key_info {"test_instance"};
+    instance_key(key_info, &key);
+
+    ObjectStoreInfoPB obj_info;
+    obj_info.set_id("1");
+    obj_info.set_ak("123456ab");
+    obj_info.set_sk("@ak$");
+    obj_info.set_provider(ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+    StorageVaultPB vault;
+    constexpr char vault_name[] = "test_alter_s3_vault_111";
+    vault.mutable_obj_info()->MergeFrom(obj_info);
+    vault.set_name(vault_name);
+    vault.set_id("2");
+    InstanceInfoPB instance;
+    instance.add_storage_vault_names(vault.name());
+    instance.add_resource_ids(vault.id());
+    instance.set_instance_id("GetObjStoreInfoTestInstance");
+    val = instance.SerializeAsString();
+    txn->put(key, val);
+    txn->put(storage_vault_key({instance.instance_id(), "2"}), vault.SerializeAsString());
+    ASSERT_EQ(txn->commit(), TxnErrorCode::TXN_OK);
+    txn = nullptr;
+
+    auto get_test_instance = [&](InstanceInfoPB& i) {
+        std::string key;
+        std::string val;
+        std::unique_ptr<Transaction> txn;
+        ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+        InstanceKeyInfo key_info {"test_instance"};
+        instance_key(key_info, &key);
+        ASSERT_EQ(txn->get(key, &val), TxnErrorCode::TXN_OK);
+        i.ParseFromString(val);
+    };
+
+    // update from ak/sk to role_arn
+    {
+        AlterObjStoreInfoRequest req;
+        constexpr char new_vault_name[] = "new_test_alter_s3_vault_111";
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_S3_VAULT);
+        StorageVaultPB vault;
+        vault.set_alter_name(new_vault_name);
+        ObjectStoreInfoPB obj;
+        obj.set_role_arn("arn:aws:iam::12311321:role/test-alter-role");
+        obj.set_external_id("external_id_123123");
+        vault.mutable_obj_info()->MergeFrom(obj);
+        vault.set_name(vault_name);
+        req.mutable_vault()->CopyFrom(vault);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_storage_vault(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK) << res.status().msg();
+
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        LOG(INFO) << "instance:" << instance.ShortDebugString();
+
+        std::unique_ptr<Transaction> txn;
+        ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+        std::string val;
+        ASSERT_EQ(txn->get(storage_vault_key({instance.instance_id(), "2"}), &val),
+                  TxnErrorCode::TXN_OK);
+        StorageVaultPB get_obj;
+        get_obj.ParseFromString(val);
+        ASSERT_EQ(get_obj.id(), "2");
+        ASSERT_EQ(get_obj.obj_info().role_arn(), "arn:aws:iam::12311321:role/test-alter-role");
+        ASSERT_EQ(get_obj.obj_info().external_id(), "external_id_123123");
+        ASSERT_EQ(get_obj.obj_info().provider(),
+                  ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+        ASSERT_EQ(get_obj.obj_info().cred_provider_type(), CredProviderTypePB::INSTANCE_PROFILE);
+        ASSERT_TRUE(get_obj.obj_info().ak().empty());
+        ASSERT_TRUE(get_obj.obj_info().sk().empty());
+        ASSERT_FALSE(get_obj.obj_info().has_encryption_info());
+        ASSERT_EQ(get_obj.name(), new_vault_name) << get_obj.obj_info().ShortDebugString();
+    }
+
+    std::string cipher_sk = "JUkuTDctR+ckJtnPkLScWaQZRcOtWBhsLLpnCRxQLxr734qB8cs6gNLH6grE1FxO";
+    std::string plain_sk = "Hx60p12123af234541nsVsffdfsdfghsdfhsdf34t";
+
+    // update from role_arn to ak_sk
+    {
+        AlterObjStoreInfoRequest req;
+        constexpr char new_vault_name[] = "new_test_alter_s3_vault_111";
+        req.set_cloud_unique_id("test_cloud_unique_id");
+        req.set_op(AlterObjStoreInfoRequest::ALTER_S3_VAULT);
+        StorageVaultPB vault;
+        ObjectStoreInfoPB obj;
+        obj.set_ak("123456ab");
+        obj.set_sk(plain_sk);
+        vault.mutable_obj_info()->MergeFrom(obj);
+        vault.set_name(new_vault_name);
+        req.mutable_vault()->CopyFrom(vault);
+
+        brpc::Controller cntl;
+        AlterObjStoreInfoResponse res;
+        meta_service->alter_storage_vault(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &res, nullptr);
+        ASSERT_EQ(res.status().code(), MetaServiceCode::OK) << res.status().msg();
+
+        InstanceInfoPB instance;
+        get_test_instance(instance);
+        LOG(INFO) << "instance:" << instance.ShortDebugString();
+
+        std::unique_ptr<Transaction> txn;
+        ASSERT_EQ(meta_service->txn_kv()->create_txn(&txn), TxnErrorCode::TXN_OK);
+        std::string val;
+        ASSERT_EQ(txn->get(storage_vault_key({instance.instance_id(), "2"}), &val),
+                  TxnErrorCode::TXN_OK);
+        StorageVaultPB get_obj;
+        get_obj.ParseFromString(val);
+        ASSERT_EQ(get_obj.id(), "2");
+        ASSERT_EQ(get_obj.obj_info().provider(),
+                  ObjectStoreInfoPB::Provider::ObjectStoreInfoPB_Provider_S3);
+        ASSERT_EQ(get_obj.obj_info().ak(), "123456ab");
+        ASSERT_EQ(get_obj.obj_info().sk(), cipher_sk);
+        ASSERT_TRUE(get_obj.obj_info().role_arn().empty());
+        ASSERT_TRUE(get_obj.obj_info().external_id().empty());
+        ASSERT_TRUE(get_obj.obj_info().has_encryption_info());
+        ASSERT_FALSE(get_obj.obj_info().has_cred_provider_type());
+        ASSERT_EQ(get_obj.name(), new_vault_name) << get_obj.obj_info().ShortDebugString();
+    }
+
+    SyncPoint::get_instance()->disable_processing();
+    SyncPoint::get_instance()->clear_all_call_backs();
+}
+>>>>>>> 3.0.7-rc01
 } // namespace doris::cloud

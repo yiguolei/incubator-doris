@@ -242,6 +242,10 @@ public:
                                          ColumnPB* column);
 
     std::shared_ptr<DeleteBitmap> delete_bitmap() { return _delete_bitmap; }
+<<<<<<< HEAD
+=======
+    void remove_rowset_delete_bitmap(const RowsetId& rowset_id, const Version& version);
+>>>>>>> 3.0.7-rc01
 
     bool enable_unique_key_merge_on_write() const { return _enable_unique_key_merge_on_write; }
 
@@ -361,6 +365,20 @@ private:
     int64_t _ttl_seconds = 0;
 
     mutable std::shared_mutex _meta_lock;
+};
+
+class DeleteBitmapAggCache : public LRUCachePolicy {
+public:
+    DeleteBitmapAggCache(size_t capacity);
+
+    static DeleteBitmapAggCache* instance();
+
+    static DeleteBitmapAggCache* create_instance(size_t capacity);
+
+    class Value : public LRUCacheValueBase {
+    public:
+        roaring::Roaring bitmap;
+    };
 };
 
 /**
@@ -576,6 +594,7 @@ public:
      * @return Deletebitmap containning all entries in diffset
     */
     DeleteBitmap diffset(const std::set<BitmapKey>& key_set) const;
+<<<<<<< HEAD
 
     class AggCachePolicy : public LRUCachePolicy {
     public:
@@ -606,11 +625,12 @@ public:
         static LRUCachePolicy* repr() { return s_repr.load(std::memory_order_acquire); }
         static std::atomic<AggCachePolicy*> s_repr;
     };
+=======
+>>>>>>> 3.0.7-rc01
 
 private:
     DeleteBitmap::Version _get_rowset_cache_version(const BitmapKey& bmk) const;
 
-    mutable std::shared_ptr<AggCache> _agg_cache;
     int64_t _tablet_id;
     mutable std::shared_mutex _rowset_cache_version_lock;
     mutable std::map<RowsetId, std::map<SegmentId, Version>> _rowset_cache_version;

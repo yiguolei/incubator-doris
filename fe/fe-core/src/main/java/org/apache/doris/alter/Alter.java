@@ -852,7 +852,8 @@ public class Alter {
                 // check currentStoragePolicy resource exist.
                 Env.getCurrentEnv().getPolicyMgr().checkStoragePolicyExist(currentStoragePolicy);
                 partitionInfo.setStoragePolicy(partition.getId(), currentStoragePolicy);
-            } else {
+            } else if (PropertyAnalyzer.hasStoragePolicy(properties)) {
+                // only set "storage_policy" = "", means cancel storage policy
                 // if current partition is already in remote storage
                 if (partition.getRemoteDataSize() > 0) {
                     throw new AnalysisException(
@@ -1028,6 +1029,11 @@ public class Alter {
                 case ADD_TASK:
                     mtmv.addTaskResult(alterMTMV.getTask(), alterMTMV.getRelation(), alterMTMV.getPartitionSnapshots(),
                             isReplay);
+                    // If it is not a replay thread, it means that the current service is already a new version
+                    // and does not require compatibility
+                    if (isReplay) {
+                        mtmv.compatible(Env.getCurrentEnv().getCatalogMgr());
+                    }
                     break;
                 default:
                     throw new RuntimeException("Unknown type value: " + alterMTMV.getOpType());

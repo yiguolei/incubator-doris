@@ -26,10 +26,12 @@
 #include <gen_cpp/olap_file.pb.h>
 #include <glog/logging.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <sstream>
 #include <string_view>
 #include <unordered_set>
@@ -37,14 +39,21 @@
 
 #include "common/bvars.h"
 #include "common/config.h"
+#include "common/defer.h"
 #include "common/encryption_util.h"
 #include "common/logging.h"
 #include "common/util.h"
 #include "cpp/sync_point.h"
+<<<<<<< HEAD
 #include "meta-service/keys.h"
 #include "meta-service/txn_kv.h"
 #include "meta-service/txn_kv_error.h"
 #ifdef ENABLE_HDFS
+=======
+#include "meta-store/keys.h"
+#include "meta-store/txn_kv.h"
+#include "meta-store/txn_kv_error.h"
+>>>>>>> 3.0.7-rc01
 #include "recycler/hdfs_accessor.h"
 #endif
 #include "recycler/s3_accessor.h"
@@ -424,7 +433,8 @@ int InstanceChecker::init_storage_vault_accessors(const InstanceInfoPB& instance
             LOG(WARNING) << "malformed storage vault, unable to deserialize key=" << hex(k);
             return -1;
         }
-
+        TEST_SYNC_POINT_CALLBACK("InstanceRecycler::init_storage_vault_accessors.mock_vault",
+                                 &accessor_map_, &vault);
         if (vault.has_hdfs_info()) {
 #ifdef ENABLE_HDFS
             auto accessor = std::make_shared<HdfsAccessor>(vault.hdfs_info());
@@ -477,7 +487,7 @@ int InstanceChecker::do_check() {
     long instance_volume = 0;
     using namespace std::chrono;
     auto start_time = steady_clock::now();
-    std::unique_ptr<int, std::function<void(int*)>> defer_log_statistics((int*)0x01, [&](int*) {
+    DORIS_CLOUD_DEFER {
         auto cost = duration<float>(steady_clock::now() - start_time).count();
         LOG(INFO) << "check instance objects finished, cost=" << cost
                   << "s. instance_id=" << instance_id_ << " num_scanned=" << num_scanned
@@ -490,7 +500,7 @@ int InstanceChecker::do_check() {
         g_bvar_checker_check_cost_s.put(instance_id_, static_cast<long>(cost));
         // FIXME(plat1ko): What if some list operation failed?
         g_bvar_checker_instance_volume.put(instance_id_, instance_volume);
-    });
+    };
 
     struct TabletFiles {
         int64_t tablet_id {0};
@@ -498,11 +508,23 @@ int InstanceChecker::do_check() {
     };
     TabletFiles tablet_files_cache;
 
-    auto check_rowset_objects = [&, this](const doris::RowsetMetaCloudPB& rs_meta,
-                                          std::string_view key) {
+    auto check_rowset_objects = [&, this](doris::RowsetMetaCloudPB& rs_meta, std::string_view key) {
         if (rs_meta.num_segments() == 0) {
             return;
         }
+
+        bool data_loss = false;
+        bool segment_file_loss = false;
+        bool index_file_loss = false;
+
+        DORIS_CLOUD_DEFER {
+            if (data_loss) {
+                LOG(INFO) << "segment file is" << (segment_file_loss ? "" : " not") << " loss, "
+                          << "index file is" << (index_file_loss ? "" : " not") << " loss, "
+                          << "rowset.tablet_id = " << rs_meta.tablet_id();
+                num_rowset_loss++;
+            }
+        };
 
         ++num_scanned_with_segment;
         if (tablet_files_cache.tablet_id != rs_meta.tablet_id()) {
@@ -537,9 +559,9 @@ int InstanceChecker::do_check() {
             instance_volume += tablet_volume;
         }
 
-        bool data_loss = false;
         for (int i = 0; i < rs_meta.num_segments(); ++i) {
             auto path = segment_path(rs_meta.tablet_id(), rs_meta.rowset_id_v2(), i);
+
             if (tablet_files_cache.files.contains(path)) {
                 continue;
             }
@@ -549,12 +571,76 @@ int InstanceChecker::do_check() {
                 break;
             }
             data_loss = true;
+            segment_file_loss = true;
             TEST_SYNC_POINT_CALLBACK("InstanceChecker.do_check1", &path);
-            LOG(WARNING) << "object not exist, path=" << path << " key=" << hex(key);
+            LOG(WARNING) << "object not exist, path=" << path
+                         << ", rs_meta=" << rs_meta.ShortDebugString() << " key=" << hex(key);
         }
 
-        if (data_loss) {
-            ++num_rowset_loss;
+        std::unique_ptr<Transaction> txn;
+        TxnErrorCode err = txn_kv_->create_txn(&txn);
+        if (err != TxnErrorCode::TXN_OK) {
+            LOG(WARNING) << "failed to init txn, err=" << err;
+            return;
+        }
+
+        TabletIndexPB tablet_index;
+        if (get_tablet_idx(txn_kv_.get(), instance_id_, rs_meta.tablet_id(), tablet_index) == -1) {
+            LOG(WARNING) << "failed to get tablet index, tablet_id= " << rs_meta.tablet_id();
+            return;
+        }
+
+        auto tablet_schema_key =
+                meta_schema_key({instance_id_, tablet_index.index_id(), rs_meta.schema_version()});
+        std::string tablet_schema_val;
+        err = txn->get(tablet_schema_key, &tablet_schema_val);
+        if (err == TxnErrorCode::TXN_KEY_NOT_FOUND) {
+            // rowset don't have tablet schema key means no index
+            return;
+        }
+        auto* schema = rs_meta.mutable_tablet_schema();
+        schema->ParseFromString(tablet_schema_val);
+
+        std::vector<std::pair<int64_t, std::string>> index_ids;
+        for (const auto& i : rs_meta.tablet_schema().index()) {
+            if (i.has_index_type() && i.index_type() == IndexType::INVERTED) {
+                index_ids.emplace_back(i.index_id(), i.index_suffix_name());
+            }
+        }
+        std::string tablet_idx_key = meta_tablet_idx_key({instance_id_, rs_meta.tablet_id()});
+        if (!key_exist(txn_kv_.get(), tablet_idx_key)) {
+            for (int i = 0; i < rs_meta.num_segments(); ++i) {
+                std::vector<std::string> index_path_v;
+                if (rs_meta.tablet_schema().inverted_index_storage_format() ==
+                    InvertedIndexStorageFormatPB::V1) {
+                    for (const auto& index_id : index_ids) {
+                        LOG(INFO) << "check inverted index, tablet_id=" << rs_meta.tablet_id()
+                                  << " rowset_id=" << rs_meta.rowset_id_v2() << " segment_id=" << i
+                                  << " index_id=" << index_id.first
+                                  << " index_suffix_name=" << index_id.second;
+                        index_path_v.emplace_back(
+                                inverted_index_path_v1(rs_meta.tablet_id(), rs_meta.rowset_id_v2(),
+                                                       i, index_id.first, index_id.second));
+                    }
+                } else {
+                    index_path_v.emplace_back(
+                            inverted_index_path_v2(rs_meta.tablet_id(), rs_meta.rowset_id_v2(), i));
+                }
+
+                if (!index_path_v.empty()) {
+                    if (std::ranges::all_of(index_path_v, [&](const auto& idx_file_path) {
+                            if (!tablet_files_cache.files.contains(idx_file_path)) {
+                                LOG(INFO) << "loss index file: " << idx_file_path;
+                                return false;
+                            }
+                            return true;
+                        })) {
+                        continue;
+                    }
+                }
+                index_file_loss = true;
+                data_loss = true;
+            }
         }
     };
 
@@ -580,7 +666,9 @@ int InstanceChecker::do_check() {
 
         while (it->has_next() && !stopped()) {
             auto [k, v] = it->next();
-            if (!it->has_next()) start_key = k;
+            if (!it->has_next()) {
+                start_key = k;
+            }
 
             doris::RowsetMetaCloudPB rs_meta;
             if (!rs_meta.ParseFromArray(v.data(), v.size())) {
@@ -636,14 +724,14 @@ int InstanceChecker::do_inverted_check() {
     long num_file_leak = 0;
     using namespace std::chrono;
     auto start_time = steady_clock::now();
-    std::unique_ptr<int, std::function<void(int*)>> defer_log_statistics((int*)0x01, [&](int*) {
+    DORIS_CLOUD_DEFER {
         g_bvar_inverted_checker_num_scanned.put(instance_id_, num_scanned);
         g_bvar_inverted_checker_num_check_failed.put(instance_id_, num_file_leak);
         auto cost = duration<float>(steady_clock::now() - start_time).count();
         LOG(INFO) << "inverted check instance objects finished, cost=" << cost
                   << "s. instance_id=" << instance_id_ << " num_scanned=" << num_scanned
                   << " num_file_leak=" << num_file_leak;
-    });
+    };
 
     struct TabletRowsets {
         int64_t tablet_id {0};
@@ -651,12 +739,19 @@ int InstanceChecker::do_inverted_check() {
     };
     TabletRowsets tablet_rowsets_cache;
 
+    RowsetIndexesFormatV1 rowset_index_cache_v1;
+    RowsetIndexesFormatV2 rowset_index_cache_v2;
+
     // Return 0 if check success, return 1 if file is garbage data, negative if error occurred
     auto check_segment_file = [&](const std::string& obj_key) {
         std::vector<std::string> str;
         butil::SplitString(obj_key, '/', &str);
         // data/{tablet_id}/{rowset_id}_{seg_num}.dat
         if (str.size() < 3) {
+            // clang-format off
+            LOG(WARNING) << "split obj_key error, str.size() should be less than 3,"
+                         << " value = " << str.size();
+            // clang-format on
             return -1;
         }
 
@@ -664,6 +759,11 @@ int InstanceChecker::do_inverted_check() {
         if (tablet_id <= 0) {
             LOG(WARNING) << "failed to parse tablet_id, key=" << obj_key;
             return -1;
+        }
+
+        if (!str[2].ends_with(".dat")) {
+            // skip check not segment file
+            return 0;
         }
 
         std::string rowset_id;
@@ -729,7 +829,51 @@ int InstanceChecker::do_inverted_check() {
         return 0;
     };
 
-    // TODO(Xiaocc): Currently we haven't implemented one generator-like s3 accessor list function
+    auto check_inverted_index_file = [&](const std::string& obj_key) {
+        std::vector<std::string> str;
+        butil::SplitString(obj_key, '/', &str);
+        // format v1: data/{tablet_id}/{rowset_id}_{seg_num}_{idx_id}{idx_suffix}.idx
+        // format v2: data/{tablet_id}/{rowset_id}_{seg_num}.idx
+        if (str.size() < 3) {
+            // clang-format off
+            LOG(WARNING) << "split obj_key error, str.size() should be less than 3,"
+                         << " value = " << str.size();
+            // clang-format on
+            return -1;
+        }
+
+        int64_t tablet_id = atol(str[1].c_str());
+        if (tablet_id <= 0) {
+            LOG(WARNING) << "failed to parse tablet_id, key=" << obj_key;
+            return -1;
+        }
+
+        // v1: {rowset_id}_{seg_num}_{idx_id}{idx_suffix}.idx
+        // v2: {rowset_id}_{seg_num}.idx
+        std::string rowset_info = str.back();
+
+        if (!rowset_info.ends_with(".idx")) {
+            return 0; // Not an index file
+        }
+
+        InvertedIndexStorageFormatPB inverted_index_storage_format =
+                std::count(rowset_info.begin(), rowset_info.end(), '_') > 1
+                        ? InvertedIndexStorageFormatPB::V1
+                        : InvertedIndexStorageFormatPB::V2;
+
+        size_t pos = rowset_info.find_last_of('_');
+        if (pos == std::string::npos || pos + 1 >= str.back().size() - 4) {
+            LOG(WARNING) << "Invalid index_id format, key=" << obj_key;
+            return -1;
+        }
+        if (inverted_index_storage_format == InvertedIndexStorageFormatPB::V1) {
+            return check_inverted_index_file_storage_format_v1(tablet_id, obj_key, rowset_info,
+                                                               rowset_index_cache_v1);
+        } else {
+            return check_inverted_index_file_storage_format_v2(tablet_id, obj_key, rowset_info,
+                                                               rowset_index_cache_v2);
+        }
+    };
     // so we choose to skip here.
     TEST_SYNC_POINT_RETURN_WITH_VALUE("InstanceChecker::do_inverted_check", (int)0);
 
@@ -745,6 +889,16 @@ int InstanceChecker::do_inverted_check() {
             int ret = check_segment_file(file->path);
             if (ret != 0) {
                 LOG(WARNING) << "failed to check segment file, uri=" << accessor->uri()
+                             << " path=" << file->path;
+                if (ret == 1) {
+                    ++num_file_leak;
+                } else {
+                    check_ret = -1;
+                }
+            }
+            ret = check_inverted_index_file(file->path);
+            if (ret != 0) {
+                LOG(WARNING) << "failed to check index file, uri=" << accessor->uri()
                              << " path=" << file->path;
                 if (ret == 1) {
                     ++num_file_leak;
@@ -930,7 +1084,7 @@ int InstanceChecker::do_delete_bitmap_inverted_check() {
     int64_t leaked_delete_bitmaps {0};
 
     auto start_time = std::chrono::steady_clock::now();
-    std::unique_ptr<int, std::function<void(int*)>> defer_log_statistics((int*)0x01, [&](int*) {
+    DORIS_CLOUD_DEFER {
         g_bvar_inverted_checker_leaked_delete_bitmaps.put(instance_id_, leaked_delete_bitmaps);
         g_bvar_inverted_checker_abnormal_delete_bitmaps.put(instance_id_, abnormal_delete_bitmaps);
         g_bvar_inverted_checker_delete_bitmaps_scanned.put(instance_id_, total_delete_bitmap_keys);
@@ -951,7 +1105,7 @@ int InstanceChecker::do_delete_bitmap_inverted_check() {
                     "passed. cost={} ms, total_delete_bitmap_keys={}",
                     instance_id_, cost, total_delete_bitmap_keys);
         }
-    });
+    };
 
     struct TabletsRowsetsCache {
         int64_t tablet_id {-1};
@@ -1060,6 +1214,213 @@ int InstanceChecker::do_delete_bitmap_inverted_check() {
     } while (it->more() && !stopped());
 
     return (leaked_delete_bitmaps > 0 || abnormal_delete_bitmaps > 0) ? 1 : 0;
+}
+
+int InstanceChecker::check_inverted_index_file_storage_format_v1(
+        int64_t tablet_id, const std::string& file_path, const std::string& rowset_info,
+        RowsetIndexesFormatV1& rowset_index_cache_v1) {
+    // format v1: data/{tablet_id}/{rowset_id}_{seg_num}_{idx_id}{idx_suffix}.idx
+    std::string rowset_id;
+    int64_t segment_id;
+    std::string index_id_with_suffix_name;
+    // {rowset_id}_{seg_num}_{idx_id}{idx_suffix}.idx
+    std::vector<std::string> str;
+    butil::SplitString(rowset_info.substr(0, rowset_info.size() - 4), '_', &str);
+    if (str.size() < 3) {
+        LOG(WARNING) << "Split rowset info with '_' error, str size < 3, rowset_info = "
+                     << rowset_info;
+        return -1;
+    }
+    rowset_id = str[0];
+    segment_id = std::atoll(str[1].c_str());
+    index_id_with_suffix_name = str[2];
+
+    if (rowset_index_cache_v1.rowset_id == rowset_id) {
+        if (rowset_index_cache_v1.segment_ids.contains(segment_id)) {
+            if (auto it = rowset_index_cache_v1.index_ids.find(index_id_with_suffix_name);
+                it == rowset_index_cache_v1.index_ids.end()) {
+                // clang-format off
+                LOG(WARNING) << fmt::format("index_id with suffix name not found, rowset_info = {}, obj_key = {}", rowset_info, file_path);
+                // clang-format on
+                return -1;
+            }
+        } else {
+            // clang-format off
+            LOG(WARNING) << fmt::format("segment id not found, rowset_info = {}, obj_key = {}", rowset_info, file_path);
+            // clang-format on
+            return -1;
+        }
+    }
+
+    rowset_index_cache_v1.rowset_id = rowset_id;
+    rowset_index_cache_v1.segment_ids.clear();
+    rowset_index_cache_v1.index_ids.clear();
+
+    std::unique_ptr<Transaction> txn;
+    TxnErrorCode err = txn_kv_->create_txn(&txn);
+    if (err != TxnErrorCode::TXN_OK) {
+        LOG(WARNING) << "failed to create txn";
+        return -1;
+    }
+    std::unique_ptr<RangeGetIterator> it;
+    auto begin = meta_rowset_key({instance_id_, tablet_id, 0});
+    auto end = meta_rowset_key({instance_id_, tablet_id, INT64_MAX});
+    do {
+        TxnErrorCode err = txn->get(begin, end, &it);
+        if (err != TxnErrorCode::TXN_OK) {
+            LOG(WARNING) << "failed to get rowset kv, err=" << err;
+            return -1;
+        }
+        if (!it->has_next()) {
+            break;
+        }
+        while (it->has_next()) {
+            // recycle corresponding resources
+            auto [k, v] = it->next();
+            doris::RowsetMetaCloudPB rs_meta;
+            if (!rs_meta.ParseFromArray(v.data(), v.size())) {
+                LOG(WARNING) << "malformed rowset meta value, key=" << hex(k);
+                return -1;
+            }
+
+            for (size_t i = 0; i < rs_meta.num_segments(); i++) {
+                rowset_index_cache_v1.segment_ids.insert(i);
+            }
+
+            TabletIndexPB tablet_index;
+            if (get_tablet_idx(txn_kv_.get(), instance_id_, rs_meta.tablet_id(), tablet_index) ==
+                -1) {
+                LOG(WARNING) << "failedt to get tablet index, tablet_id= " << rs_meta.tablet_id();
+                return -1;
+            }
+
+            auto tablet_schema_key = meta_schema_key(
+                    {instance_id_, tablet_index.index_id(), rs_meta.schema_version()});
+            std::string tablet_schema_val;
+            err = txn->get(tablet_schema_key, &tablet_schema_val);
+            if (err == TxnErrorCode::TXN_KEY_NOT_FOUND) {
+                // rowset don't have tablet schema key means no index
+                return 0;
+            }
+            auto* schema = rs_meta.mutable_tablet_schema();
+            schema->ParseFromString(tablet_schema_val);
+
+            for (const auto& i : rs_meta.tablet_schema().index()) {
+                if (i.has_index_type() && i.index_type() == IndexType::INVERTED) {
+                    LOG(INFO) << fmt::format(
+                            "record index info, index_id: {}, index_suffix_name: {}", i.index_id(),
+                            i.index_suffix_name());
+                    rowset_index_cache_v1.index_ids.insert(
+                            fmt::format("{}{}", i.index_id(), i.index_suffix_name()));
+                }
+            }
+
+            if (!it->has_next()) {
+                begin = k;
+                begin.push_back('\x00'); // Update to next smallest key for iteration
+                break;
+            }
+        }
+    } while (it->more() && !stopped());
+
+    if (!rowset_index_cache_v1.segment_ids.contains(segment_id)) {
+        // Garbage data leak
+        // clang-format off
+        LOG(WARNING) << "rowset_index_cache_v1.segment_ids don't contains segment_id, rowset should be recycled,"
+                     << " key = " << file_path 
+                     << " segment_id = " << segment_id;
+        // clang-format on
+        return 1;
+    }
+
+    if (!rowset_index_cache_v1.index_ids.contains(index_id_with_suffix_name)) {
+        // Garbage data leak
+        // clang-format off
+        LOG(WARNING) << "rowset_index_cache_v1.index_ids don't contains index_id_with_suffix_name,"
+                     << " rowset with inde meta should be recycled, key=" << file_path 
+                     << " index_id_with_suffix_name=" << index_id_with_suffix_name;
+        // clang-format on
+        return 1;
+    }
+
+    return 0;
+}
+
+int InstanceChecker::check_inverted_index_file_storage_format_v2(
+        int64_t tablet_id, const std::string& file_path, const std::string& rowset_info,
+        RowsetIndexesFormatV2& rowset_index_cache_v2) {
+    std::string rowset_id;
+    int64_t segment_id;
+    // {rowset_id}_{seg_num}.idx
+    std::vector<std::string> str;
+    butil::SplitString(rowset_info.substr(0, rowset_info.size() - 4), '_', &str);
+    if (str.size() < 2) {
+        // clang-format off
+        LOG(WARNING) << "Split rowset info with '_' error, str size < 2, rowset_info = " << rowset_info;
+        // clang-format on
+        return -1;
+    }
+    rowset_id = str[0];
+    segment_id = std::atoll(str[1].c_str());
+
+    if (rowset_index_cache_v2.rowset_id == rowset_id) {
+        if (!rowset_index_cache_v2.segment_ids.contains(segment_id)) {
+            // clang-format off
+            LOG(WARNING) << fmt::format("index file not found, rowset_info = {}, obj_key = {}", rowset_info, file_path);
+            // clang-format on
+            return -1;
+        }
+    }
+
+    rowset_index_cache_v2.rowset_id = rowset_id;
+    rowset_index_cache_v2.segment_ids.clear();
+
+    std::unique_ptr<Transaction> txn;
+    TxnErrorCode err = txn_kv_->create_txn(&txn);
+    if (err != TxnErrorCode::TXN_OK) {
+        LOG(WARNING) << "failed to create txn";
+        return -1;
+    }
+    std::unique_ptr<RangeGetIterator> it;
+    auto begin = meta_rowset_key({instance_id_, tablet_id, 0});
+    auto end = meta_rowset_key({instance_id_, tablet_id, INT64_MAX});
+    do {
+        TxnErrorCode err = txn->get(begin, end, &it);
+        if (err != TxnErrorCode::TXN_OK) {
+            LOG(WARNING) << "failed to get rowset kv, err=" << err;
+            return -1;
+        }
+        if (!it->has_next()) {
+            break;
+        }
+        while (it->has_next()) {
+            // recycle corresponding resources
+            auto [k, v] = it->next();
+            doris::RowsetMetaCloudPB rs_meta;
+            if (!rs_meta.ParseFromArray(v.data(), v.size())) {
+                LOG(WARNING) << "malformed rowset meta value, key=" << hex(k);
+                return -1;
+            }
+
+            for (size_t i = 0; i < rs_meta.num_segments(); i++) {
+                rowset_index_cache_v2.segment_ids.insert(i);
+            }
+
+            if (!it->has_next()) {
+                begin = k;
+                begin.push_back('\x00'); // Update to next smallest key for iteration
+                break;
+            }
+        }
+    } while (it->more() && !stopped());
+
+    if (!rowset_index_cache_v2.segment_ids.contains(segment_id)) {
+        // Garbage data leak
+        LOG(WARNING) << "rowset with index meta should be recycled, key=" << file_path;
+        return 1;
+    }
+
+    return 0;
 }
 
 int InstanceChecker::check_delete_bitmap_storage_optimize(int64_t tablet_id) {

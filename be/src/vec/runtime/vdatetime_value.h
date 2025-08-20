@@ -1024,8 +1024,8 @@ public:
     }
 
     bool operator==(const VecDateTimeValue& other) const {
-        int64_t ts1;
-        int64_t ts2;
+        int64_t ts1 = 0;
+        int64_t ts2 = 0;
         this->unix_timestamp(&ts1, TimezoneUtils::default_time_zone);
         other.unix_timestamp(&ts2, TimezoneUtils::default_time_zone);
         return ts1 == ts2;
@@ -1040,8 +1040,8 @@ public:
     bool operator<=(const DateV2Value<T>& other) const { return !(*this > other); }
 
     bool operator<=(const VecDateTimeValue& other) const {
-        int64_t ts1;
-        int64_t ts2;
+        int64_t ts1 = 0;
+        int64_t ts2 = 0;
         this->unix_timestamp(&ts1, TimezoneUtils::default_time_zone);
         other.unix_timestamp(&ts2, TimezoneUtils::default_time_zone);
         return ts1 <= ts2;
@@ -1050,8 +1050,8 @@ public:
     bool operator>=(const DateV2Value<T>& other) const { return !(*this < other); }
 
     bool operator>=(const VecDateTimeValue& other) const {
-        int64_t ts1;
-        int64_t ts2;
+        int64_t ts1 = 0;
+        int64_t ts2 = 0;
         this->unix_timestamp(&ts1, TimezoneUtils::default_time_zone);
         other.unix_timestamp(&ts2, TimezoneUtils::default_time_zone);
         return ts1 >= ts2;
@@ -1062,8 +1062,8 @@ public:
     }
 
     bool operator<(const VecDateTimeValue& other) const {
-        int64_t ts1;
-        int64_t ts2;
+        int64_t ts1 = 0;
+        int64_t ts2 = 0;
         this->unix_timestamp(&ts1, TimezoneUtils::default_time_zone);
         other.unix_timestamp(&ts2, TimezoneUtils::default_time_zone);
         return ts1 < ts2;
@@ -1074,8 +1074,8 @@ public:
     }
 
     bool operator>(const VecDateTimeValue& other) const {
-        int64_t ts1;
-        int64_t ts2;
+        int64_t ts1 = 0;
+        int64_t ts2 = 0;
         this->unix_timestamp(&ts1, TimezoneUtils::default_time_zone);
         other.unix_timestamp(&ts2, TimezoneUtils::default_time_zone);
         return ts1 > ts2;
@@ -1211,13 +1211,18 @@ public:
             }
             date_v2_value_.year_ = val;
         } else if constexpr (unit == TimeUnit::MONTH) {
-            if (val > MAX_MONTH) [[unlikely]] {
+            DCHECK(date_v2_value_.year_ <= MAX_YEAR);
+            if (val > MAX_MONTH || val == 0) [[unlikely]] {
                 return false;
             }
             date_v2_value_.month_ = val;
         } else if constexpr (unit == TimeUnit::DAY) {
+            DCHECK(date_v2_value_.year_ <= MAX_YEAR);
             DCHECK(date_v2_value_.month_ <= MAX_MONTH);
             DCHECK(date_v2_value_.month_ != 0);
+            if (val == 0) [[unlikely]] {
+                return false;
+            }
             if (val > S_DAYS_IN_MONTH[date_v2_value_.month_] &&
                 !(is_leap(date_v2_value_.year_) && date_v2_value_.month_ == 2 && val == 29)) {
                 return false;

@@ -318,14 +318,12 @@ public class Tablet extends MetaObject {
             if (replica.isBad()) {
                 continue;
             }
-
-            if (replica.getLastFailedVersion() > 0) {
-                mayMissingVersionReplica.add(replica);
-                continue;
-            }
-
             if (!replica.checkVersionCatchUp(visibleVersion, false)) {
                 notCatchupReplica.add(replica);
+                continue;
+            }
+            if (replica.getLastFailedVersion() > 0) {
+                mayMissingVersionReplica.add(replica);
                 continue;
             }
 
@@ -517,8 +515,11 @@ public class Tablet extends MetaObject {
         return id == tablet.id;
     }
 
-    public long getDataSize(boolean singleReplica) {
+    // ATTN: Replica::getDataSize may zero in cloud and non-cloud
+    // due to dataSize not write to image
+    public long getDataSize(boolean singleReplica, boolean filterSizeZero) {
         LongStream s = replicas.stream().filter(r -> r.getState() == ReplicaState.NORMAL)
+                .filter(r -> !filterSizeZero || r.getDataSize() > 0)
                 .mapToLong(Replica::getDataSize);
         return singleReplica ? Double.valueOf(s.average().orElse(0)).longValue() : s.sum();
     }

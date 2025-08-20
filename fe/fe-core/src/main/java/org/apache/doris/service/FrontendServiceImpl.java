@@ -47,10 +47,13 @@ import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.catalog.Tablet;
 import org.apache.doris.catalog.TabletMeta;
 import org.apache.doris.catalog.View;
+import org.apache.doris.cloud.CloudWarmUpJob;
+import org.apache.doris.cloud.catalog.CloudEnv;
 import org.apache.doris.cloud.catalog.CloudPartition;
 import org.apache.doris.cloud.catalog.CloudReplica;
 import org.apache.doris.cloud.catalog.CloudTablet;
 import org.apache.doris.cloud.proto.Cloud.CommitTxnResponse;
+import org.apache.doris.cloud.system.CloudSystemInfoService;
 import org.apache.doris.cluster.ClusterNamespace;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.AuthenticationException;
@@ -892,7 +895,12 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                         final TColumnDef colDef = new TColumnDef(desc);
                         final String comment = column.getComment();
                         if (comment != null) {
-                            colDef.setComment(comment);
+                            if (Config.column_comment_length_limit > 0
+                                    && comment.length() > Config.column_comment_length_limit) {
+                                colDef.setComment(comment.substring(0, Config.column_comment_length_limit));
+                            } else {
+                                colDef.setComment(comment);
+                            }
                         }
                         if (column.isKey()) {
                             if (table instanceof OlapTable) {
@@ -953,7 +961,12 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                             final TColumnDef colDef = new TColumnDef(desc);
                             final String comment = column.getComment();
                             if (comment != null) {
-                                colDef.setComment(comment);
+                                if (Config.column_comment_length_limit > 0
+                                        && comment.length() > Config.column_comment_length_limit) {
+                                    colDef.setComment(comment.substring(0, Config.column_comment_length_limit));
+                                } else {
+                                    colDef.setComment(comment);
+                                }
                             }
                             if (column.isKey()) {
                                 if (table instanceof OlapTable) {
@@ -2734,6 +2747,21 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         TGetTabletReplicaInfosResult result = new TGetTabletReplicaInfosResult();
         List<Long> tabletIds = request.getTabletIds();
         Map<Long, List<TReplicaInfo>> tabletReplicaInfos = Maps.newHashMap();
+        String clusterId = "";
+        if (Config.isCloudMode() && request.isSetWarmUpJobId()) {
+            CloudWarmUpJob job = ((CloudEnv) Env.getCurrentEnv())
+                    .getCacheHotspotMgr()
+                    .getCloudWarmUpJob(request.getWarmUpJobId());
+            if (job == null) {
+                LOG.info("warmup job {} is not running, notify caller BE {} to cancel job",
+                        job.getJobId(), clientAddr);
+                // notify client to cancel this job
+                result.setStatus(new TStatus(TStatusCode.CANCELLED));
+                return result;
+            }
+            clusterId = ((CloudSystemInfoService) Env.getCurrentSystemInfo())
+                    .getCloudClusterIdByName(job.getDstClusterName());
+        }
         for (Long tabletId : tabletIds) {
             if (DebugPointUtil.isEnable("getTabletReplicaInfos.returnEmpty")) {
                 LOG.info("enable getTabletReplicaInfos.returnEmpty");
@@ -2743,14 +2771,25 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             List<Replica> replicas = Env.getCurrentEnv().getCurrentInvertedIndex()
                     .getReplicasByTabletId(tabletId);
             for (Replica replica : replicas) {
-                if (!replica.isNormal()) {
+                if (!replica.isNormal() && !request.isSetWarmUpJobId()) {
                     LOG.warn("replica {} not normal", replica.getId());
                     continue;
                 }
                 List<Backend> backends;
                 if (Config.isCloudMode()) {
+<<<<<<< HEAD
                     CloudReplica cloudReplica = (CloudReplica) replica;
                     backends = cloudReplica.getAllPrimaryBes();
+=======
+                    if (request.isSetWarmUpJobId()) {
+                        CloudReplica cloudReplica = (CloudReplica) replica;
+                        Backend primaryBackend = cloudReplica.getPrimaryBackend(clusterId);
+                        backends = Lists.newArrayList(primaryBackend);
+                    } else {
+                        CloudReplica cloudReplica = (CloudReplica) replica;
+                        backends = cloudReplica.getAllPrimaryBes();
+                    }
+>>>>>>> 3.0.7-rc01
                 } else {
                     Backend backend = Env.getCurrentSystemInfo().getBackend(replica.getBackendIdWithoutException());
                     backends = Lists.newArrayList(backend);
@@ -3640,20 +3679,6 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             return result;
         }
 
-        // check partition's number limit.
-        int partitionNum = olapTable.getPartitionNum() + addPartitionClauseMap.size();
-        if (partitionNum > Config.max_auto_partition_num) {
-            String errorMessage = String.format(
-                    "create partition failed. partition numbers %d will exceed limit variable "
-                            + "max_auto_partition_num %d",
-                    partitionNum, Config.max_auto_partition_num);
-            LOG.warn(errorMessage);
-            errorStatus.setErrorMsgs(Lists.newArrayList(errorMessage));
-            result.setStatus(errorStatus);
-            LOG.warn("send create partition error status: {}", result);
-            return result;
-        }
-
         for (AddPartitionClause addPartitionClause : addPartitionClauseMap.values()) {
             try {
                 // here maybe check and limit created partitions num
@@ -3666,6 +3691,20 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 LOG.warn("send create partition error status: {}", result);
                 return result;
             }
+        }
+
+        // check partition's number limit. because partitions in addPartitionClauseMap may be duplicated with existing
+        // partitions, which would lead to false positive. so we should check the partition number AFTER adding new
+        // partitions using its ACTUAL NUMBER, rather than the sum of existing and requested partitions.
+        if (olapTable.getPartitionNum() > Config.max_auto_partition_num) {
+            String errorMessage = String.format(
+                    "partition numbers %d exceeded limit of variable max_auto_partition_num %d",
+                    olapTable.getPartitionNum(), Config.max_auto_partition_num);
+            LOG.warn(errorMessage);
+            errorStatus.setErrorMsgs(Lists.newArrayList(errorMessage));
+            result.setStatus(errorStatus);
+            LOG.warn("send create partition error status: {}", result);
+            return result;
         }
 
         // build partition & tablets

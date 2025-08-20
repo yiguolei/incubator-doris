@@ -91,10 +91,6 @@ exit_flag=0
     cp -f "${teamcity_build_checkoutDir}"/regression-test/pipeline/performance/clickbench/conf/fe_custom.conf "${DORIS_HOME}"/fe/conf/
     cp -f "${teamcity_build_checkoutDir}"/regression-test/pipeline/performance/clickbench/conf/be_custom.conf "${DORIS_HOME}"/be/conf/
     target_branch="$(echo "${target_branch}" | sed 's| ||g;s|\.||g;s|-||g')" # remove space、dot、hyphen from branch name
-    if [[ "${target_branch}" == "branch30" ]]; then
-        # branch-3.0 also use master data
-        target_branch="master"
-    fi
     sed -i "s|^meta_dir=/data/doris-meta-\${branch_name}|meta_dir=/data/doris-meta-${target_branch}|g" "${DORIS_HOME}"/fe/conf/fe_custom.conf
     sed -i "s|^storage_root_path=/data/doris-storage-\${branch_name}|storage_root_path=/data/doris-storage-${target_branch}|g" "${DORIS_HOME}"/be/conf/be_custom.conf
     if ! restart_doris; then echo "ERROR: Restart doris failed" && exit 1; fi
@@ -264,6 +260,12 @@ exit_flag=0
     if [[ "${target_branch}" == "branch-2.0" ]]; then
         cold_run_time_threshold=${cold_run_time_threshold_branch20:-110} # 单位 秒
         hot_run_time_threshold=${hot_run_time_threshold_branch20:-34}    # 单位 秒
+    elif [[ "${target_branch}" == "branch-3.1" ]]; then
+        cold_run_time_threshold=${cold_run_time_threshold_branch31:-120} # 单位 秒
+        hot_run_time_threshold=${hot_run_time_threshold_branch31:-34}    # 单位 秒
+    elif [[ "${target_branch}" == "branch-3.0" ]]; then
+        cold_run_time_threshold=${cold_run_time_threshold_branch30:-120} # 单位 秒
+        hot_run_time_threshold=${hot_run_time_threshold_branch30:-34}    # 单位 秒
     fi
     echo "INFO: cold_run_time_threshold is ${cold_run_time_threshold}, hot_run_time_threshold is ${hot_run_time_threshold}"
     # result.csv 来自 run-clickbench-queries.sh 的产出

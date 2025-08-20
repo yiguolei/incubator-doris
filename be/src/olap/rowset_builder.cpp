@@ -152,6 +152,7 @@ Status RowsetBuilder::check_tablet_version_count() {
     int32_t max_version_config = _tablet->max_version_config();
     DBUG_EXECUTE_IF("RowsetBuilder.check_tablet_version_count.too_many_version",
                     { injection = true; });
+    int32_t max_version_config = _tablet->max_version_config();
     if (injection) {
         // do not return if injection
     } else if (!_tablet->exceed_version_limit(max_version_config - 100) ||

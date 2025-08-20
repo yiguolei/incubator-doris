@@ -24,6 +24,7 @@ import org.apache.doris.analysis.ColumnDef;
 import org.apache.doris.analysis.CreateMaterializedViewStmt;
 import org.apache.doris.analysis.DataSortInfo;
 import org.apache.doris.analysis.Expr;
+import org.apache.doris.analysis.IndexDef;
 import org.apache.doris.analysis.SlotDescriptor;
 import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.backup.Status;
@@ -49,7 +50,6 @@ import org.apache.doris.common.io.DeepCopy;
 import org.apache.doris.common.io.Text;
 import org.apache.doris.common.util.PropertyAnalyzer;
 import org.apache.doris.common.util.Util;
-import org.apache.doris.datasource.InternalCatalog;
 import org.apache.doris.datasource.mvcc.MvccSnapshot;
 import org.apache.doris.mtmv.MTMVRefreshContext;
 import org.apache.doris.mtmv.MTMVRelatedTableIf;
@@ -93,6 +93,7 @@ import com.google.common.collect.Sets;
 import com.google.gson.annotations.SerializedName;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -337,6 +338,19 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             return Lists.newArrayList();
         }
         return indexes.getIndexIds();
+    }
+
+    /**
+     * Checks if the table contains at least one index of the specified type.
+     * @param indexType The index type to check for
+     * @return true if the table has at least one index of the specified type, false otherwise
+     */
+    public boolean hasIndexOfType(IndexDef.IndexType indexType) {
+        if (indexes == null) {
+            return false;
+        }
+        return indexes.getIndexes().stream()
+                .anyMatch(index -> index.getIndexType() == indexType);
     }
 
     @Override
@@ -1218,19 +1232,16 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return partition;
     }
 
-    public void getVersionInBatchForCloudMode(Collection<Long> partitionIds) {
-        if (Config.isCloudMode()) { // do nothing for non-cloud mode
-            List<CloudPartition> partitions = partitionIds.stream()
-                    .sorted()
-                    .map(this::getPartition)
-                    .map(partition -> (CloudPartition) partition)
-                    .collect(Collectors.toList());
-            try {
-                CloudPartition.getSnapshotVisibleVersion(partitions);
-            } catch (RpcException e) {
-                throw new RuntimeException(e);
-            }
+    public void getVersionInBatchForCloudMode(Collection<Long> partitionIds) throws RpcException {
+        if (Config.isNotCloudMode()) {
+            return;
         }
+        List<CloudPartition> partitions = partitionIds.stream()
+                .sorted()
+                .map(this::getPartition)
+                .map(partition -> (CloudPartition) partition)
+                .collect(Collectors.toList());
+        CloudPartition.getSnapshotVisibleVersion(partitions);
     }
 
     // select the non-empty partition ids belonging to this table.
@@ -1548,7 +1559,7 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         long dataSize = 0;
         for (Map.Entry<Long, Partition> entry : idToPartition.entrySet()) {
             rowCount += entry.getValue().getBaseIndex().getRowCount();
-            dataSize += entry.getValue().getBaseIndex().getDataSize(false);
+            dataSize += entry.getValue().getBaseIndex().getDataSize(false, false);
         }
         if (rowCount > 0) {
             return dataSize / rowCount;
@@ -2879,11 +2890,13 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
      * @param selectedIndexId the index want to scan
      */
     public TFetchOption generateTwoPhaseReadOption(long selectedIndexId) {
+        boolean useStoreRow = this.storeRowColumn()
+                && CollectionUtils.isEmpty(getTableProperty().getCopiedRowStoreColumns());
         TFetchOption fetchOption = new TFetchOption();
-        fetchOption.setFetchRowStore(this.storeRowColumn());
+        fetchOption.setFetchRowStore(useStoreRow);
         fetchOption.setUseTwoPhaseFetch(true);
         fetchOption.setNodesInfo(SystemInfoService.createAliveNodesInfo());
-        if (!this.storeRowColumn()) {
+        if (!useStoreRow) {
             List<TColumn> columnsDesc = Lists.newArrayList();
             getColumnDesc(selectedIndexId, columnsDesc, null, null);
             fetchOption.setColumnDesc(columnsDesc);
@@ -3030,18 +3043,22 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     // During `getNextVersion` and `updateVisibleVersionAndTime` period,
     // the write lock on the table should be held continuously
     public long getNextVersion() {
-        if (!Config.isCloudMode()) {
+        if (Config.isNotCloudMode()) {
             return tableAttributes.getNextVersion();
-        } else {
-            // cloud mode should not reach here
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("getNextVersion in Cloud mode in OlapTable {} ", getName());
-            }
+        }
+        // cloud mode should not reach here
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("getNextVersion in Cloud mode in OlapTable {} ", getName());
+        }
+        try {
             return getVisibleVersion() + 1;
+        } catch (RpcException e) {
+            LOG.warn("getNextVersion in Cloud mode in OlapTable {}", getName(), e);
+            throw new RuntimeException(e);
         }
     }
 
-    public long getVisibleVersion() {
+    public long getVisibleVersion() throws RpcException {
         if (Config.isNotCloudMode()) {
             return tableAttributes.getVisibleVersion();
         }
@@ -3071,28 +3088,9 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             }
             return version;
         } catch (RpcException e) {
-            throw new RuntimeException("get version from meta service failed", e);
+            LOG.warn("get version from meta service failed", e);
+            throw e;
         }
-    }
-
-    // Get the table versions in batch.
-    public static List<Long> getVisibleVersionByTableIds(Collection<Long> tableIds) {
-        List<OlapTable> tables = new ArrayList<>();
-
-        InternalCatalog catalog = Env.getCurrentEnv().getInternalCatalog();
-        for (long tableId : tableIds) {
-            Table table = catalog.getTableByTableId(tableId);
-            if (table == null) {
-                throw new RuntimeException("get table visible version failed, no such table " + tableId + " exists");
-            }
-            if (table.getType() != TableType.OLAP) {
-                throw new RuntimeException(
-                        "get table visible version failed, table " + tableId + " is not a OLAP table");
-            }
-            tables.add((OlapTable) table);
-        }
-
-        return getVisibleVersionInBatch(tables);
     }
 
     // Get the table versions in batch.
@@ -3223,10 +3221,16 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     }
 
     @Override
-    public MTMVSnapshotIf getTableSnapshot(MTMVRefreshContext context, Optional<MvccSnapshot> snapshot) {
+    public MTMVSnapshotIf getTableSnapshot(MTMVRefreshContext context, Optional<MvccSnapshot> snapshot)
+            throws AnalysisException {
         Map<Long, Long> tableVersions = context.getBaseVersions().getTableVersions();
-        long visibleVersion = tableVersions.containsKey(id) ? tableVersions.get(id) : getVisibleVersion();
-        return new MTMVVersionSnapshot(visibleVersion, id);
+        try {
+            long visibleVersion = tableVersions.containsKey(id) ? tableVersions.get(id) : getVisibleVersion();
+            return new MTMVVersionSnapshot(visibleVersion, id);
+        } catch (RpcException e) {
+            LOG.warn("getVisibleVersion failed", e);
+            throw new AnalysisException("getVisibleVersion failed " + e.getMessage());
+        }
     }
 
     @Override

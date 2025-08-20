@@ -36,6 +36,9 @@
 
 namespace doris {
 
+bvar::Adder<uint64_t> g_file_cache_warm_up_cache_async_submitted_segment_num(
+        "file_cache_warm_up_cache_async_submitted_segment_num");
+
 CloudBackendService::CloudBackendService(CloudStorageEngine& engine, ExecEnv* exec_env)
         : BaseBackendService(exec_env), _engine(engine) {}
 
@@ -93,8 +96,15 @@ void CloudBackendService::warm_up_tablets(TWarmUpTabletsResponse& response,
         LOG_INFO("receive the warm up request.")
                 .tag("request_type", "SET_JOB")
                 .tag("job_id", request.job_id);
-        st = manager.check_and_set_job_id(request.job_id);
-        if (!st) {
+        if (request.__isset.event) {
+            st = manager.set_event(request.job_id, request.event);
+            if (st.ok()) {
+                break;
+            }
+        } else {
+            st = manager.check_and_set_job_id(request.job_id);
+        }
+        if (!st.ok()) {
             LOG_WARNING("SET_JOB failed.").error(st);
             break;
         }
@@ -105,7 +115,9 @@ void CloudBackendService::warm_up_tablets(TWarmUpTabletsResponse& response,
                 .tag("request_type", "SET_BATCH")
                 .tag("job_id", request.job_id)
                 .tag("batch_id", request.batch_id)
-                .tag("jobs size", request.job_metas.size());
+                .tag("jobs size", request.job_metas.size())
+                .tag("tablet num of first meta",
+                     request.job_metas.empty() ? 0 : request.job_metas[0].tablet_ids.size());
         bool retry = false;
         st = manager.check_and_set_batch_id(request.job_id, request.batch_id, &retry);
         if (!retry && st) {
@@ -140,7 +152,11 @@ void CloudBackendService::warm_up_tablets(TWarmUpTabletsResponse& response,
         LOG_INFO("receive the warm up request.")
                 .tag("request_type", "CLEAR_JOB")
                 .tag("job_id", request.job_id);
-        st = manager.clear_job(request.job_id);
+        if (request.__isset.event) {
+            st = manager.set_event(request.job_id, request.event, /* clear: */ true);
+        } else {
+            st = manager.clear_job(request.job_id);
+        }
         break;
     }
     default:
@@ -153,13 +169,21 @@ void CloudBackendService::warm_up_cache_async(TWarmUpCacheAsyncResponse& respons
                                               const TWarmUpCacheAsyncRequest& request) {
     std::ostringstream oss;
     oss << "[";
+<<<<<<< HEAD
     for (size_t i = 0; i < request.tablet_ids.size(); ++i) {
+=======
+    for (size_t i = 0; i < request.tablet_ids.size() && i < 10; ++i) {
+>>>>>>> 3.0.7-rc01
         if (i > 0) oss << ",";
         oss << request.tablet_ids[i];
     }
     oss << "]";
     LOG(INFO) << "warm_up_cache_async: enter, request=" << request.host << ":" << request.brpc_port
+<<<<<<< HEAD
               << ", tablet_ids=" << oss.str();
+=======
+              << ", tablets num=" << request.tablet_ids.size() << ", tablet_ids=" << oss.str();
+>>>>>>> 3.0.7-rc01
 
     std::string host = request.host;
     auto dns_cache = ExecEnv::GetInstance()->dns_cache();
@@ -190,9 +214,16 @@ void CloudBackendService::warm_up_cache_async(TWarmUpCacheAsyncResponse& respons
     PGetFileCacheMetaResponse brpc_response;
 
     brpc_stub->get_file_cache_meta_by_tablet_id(&cntl, &brpc_request, &brpc_response, nullptr);
+<<<<<<< HEAD
     LOG(INFO) << "warm_up_cache_async: request=" << brpc_request.DebugString()
               << ", response=" << brpc_response.DebugString();
+=======
+    VLOG_DEBUG << "warm_up_cache_async: request=" << brpc_request.DebugString()
+               << ", response=" << brpc_response.DebugString();
+>>>>>>> 3.0.7-rc01
     if (!cntl.Failed()) {
+        g_file_cache_warm_up_cache_async_submitted_segment_num
+                << brpc_response.file_cache_block_metas().size();
         _engine.file_cache_block_downloader().submit_download_task(
                 std::move(*brpc_response.mutable_file_cache_block_metas()));
     } else {
@@ -208,12 +239,21 @@ void CloudBackendService::check_warm_up_cache_async(TCheckWarmUpCacheAsyncRespon
                                                     const TCheckWarmUpCacheAsyncRequest& request) {
     std::ostringstream oss;
     oss << "[";
+<<<<<<< HEAD
     for (size_t i = 0; i < request.tablets.size(); ++i) {
+=======
+    for (size_t i = 0; i < request.tablets.size() && i < 10; ++i) {
+>>>>>>> 3.0.7-rc01
         if (i > 0) oss << ",";
         oss << request.tablets[i];
     }
     oss << "]";
+<<<<<<< HEAD
     LOG(INFO) << "check_warm_up_cache_async: enter, request tablet_ids=" << oss.str();
+=======
+    LOG(INFO) << "check_warm_up_cache_async: enter, request tablets num=" << request.tablets.size()
+              << ", tablet_ids=" << oss.str();
+>>>>>>> 3.0.7-rc01
     std::map<int64_t, bool> task_done;
     _engine.file_cache_block_downloader().check_download_task(request.tablets, &task_done);
     DBUG_EXECUTE_IF("CloudBackendService.check_warm_up_cache_async.return_task_false", {
@@ -224,7 +264,11 @@ void CloudBackendService::check_warm_up_cache_async(TCheckWarmUpCacheAsyncRespon
     response.__set_task_done(task_done);
 
     for (const auto& [tablet_id, done] : task_done) {
+<<<<<<< HEAD
         LOG(INFO) << "check_warm_up_cache_async: tablet_id=" << tablet_id << ", done=" << done;
+=======
+        VLOG_DEBUG << "check_warm_up_cache_async: tablet_id=" << tablet_id << ", done=" << done;
+>>>>>>> 3.0.7-rc01
     }
 
     Status st = Status::OK();

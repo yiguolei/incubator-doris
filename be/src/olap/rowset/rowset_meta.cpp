@@ -21,7 +21,9 @@
 #include <glog/logging.h>
 
 #include <memory>
+#include <random>
 
+#include "cloud/cloud_storage_engine.h"
 #include "common/logging.h"
 #include "google/protobuf/util/message_differencer.h"
 #include "io/fs/file_writer.h"
@@ -112,16 +114,23 @@ Result<const StorageResource*> RowsetMeta::remote_storage_resource() {
     }
 
     if (!_storage_resource.fs) {
-        // not initialized yet
-        auto storage_resource = get_storage_resource(resource_id());
-        if (storage_resource) {
+        if (auto storage_resource = get_storage_resource(resource_id())) {
             _storage_resource = std::move(storage_resource->first);
         } else {
+            if (config::is_cloud_mode()) {
+                // When creating a new cluster or creating a storage resource, BE may not sync storage resource,
+                // at the moment a query is coming, the BetaRowsetReader call loadSegment and use this method
+                // to get the storage resource, so we need to sync storage resource here.
+                ExecEnv::GetInstance()->storage_engine().to_cloud().sync_storage_vault();
+                if (auto retry_resource = get_storage_resource(resource_id())) {
+                    _storage_resource = std::move(retry_resource->first);
+                    return &_storage_resource;
+                }
+            }
             return ResultError(Status::InternalError("cannot find storage resource. resource_id={}",
                                                      resource_id()));
         }
     }
-
     return &_storage_resource;
 }
 
@@ -210,7 +219,7 @@ void RowsetMeta::add_segments_file_size(const std::vector<size_t>& seg_file_size
     }
 }
 
-int64_t RowsetMeta::segment_file_size(int seg_id) {
+int64_t RowsetMeta::segment_file_size(int seg_id) const {
     DCHECK(_rowset_meta_pb.segments_file_size().empty() ||
            _rowset_meta_pb.segments_file_size_size() > seg_id)
             << _rowset_meta_pb.segments_file_size_size() << ' ' << seg_id;
@@ -221,6 +230,34 @@ int64_t RowsetMeta::segment_file_size(int seg_id) {
                    : -1;
 }
 
+void RowsetMeta::set_segments_key_bounds(const std::vector<KeyBoundsPB>& segments_key_bounds) {
+    for (const KeyBoundsPB& key_bounds : segments_key_bounds) {
+        KeyBoundsPB* new_key_bounds = _rowset_meta_pb.add_segments_key_bounds();
+        *new_key_bounds = key_bounds;
+    }
+
+    int32_t truncation_threshold = config::segments_key_bounds_truncation_threshold;
+    if (config::random_segments_key_bounds_truncation) {
+        std::mt19937 generator(std::random_device {}());
+        std::uniform_int_distribution<int> distribution(-10, 40);
+        truncation_threshold = distribution(generator);
+    }
+    bool really_do_truncation {false};
+    if (truncation_threshold > 0) {
+        for (auto& segment_key_bounds : *_rowset_meta_pb.mutable_segments_key_bounds()) {
+            if (segment_key_bounds.min_key().size() > truncation_threshold) {
+                really_do_truncation = true;
+                segment_key_bounds.mutable_min_key()->resize(truncation_threshold);
+            }
+            if (segment_key_bounds.max_key().size() > truncation_threshold) {
+                really_do_truncation = true;
+                segment_key_bounds.mutable_max_key()->resize(truncation_threshold);
+            }
+        }
+    }
+    set_segments_key_bounds_truncated(really_do_truncation || is_segments_key_bounds_truncated());
+}
+
 void RowsetMeta::merge_rowset_meta(const RowsetMeta& other) {
     set_num_segments(num_segments() + other.num_segments());
     set_num_rows(num_rows() + other.num_rows());
@@ -228,6 +265,8 @@ void RowsetMeta::merge_rowset_meta(const RowsetMeta& other) {
     set_total_disk_size(total_disk_size() + other.total_disk_size());
     set_index_disk_size(index_disk_size() + other.index_disk_size());
     set_total_disk_size(data_disk_size() + index_disk_size());
+    set_segments_key_bounds_truncated(is_segments_key_bounds_truncated() ||
+                                      other.is_segments_key_bounds_truncated());
     for (auto&& key_bound : other.get_segments_key_bounds()) {
         add_segment_key_bounds(key_bound);
     }

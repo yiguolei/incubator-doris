@@ -193,3 +193,18 @@ user_guid	feature	sk	feature_value	2021-01-01T00:00
 -- !point_select --
 user_guid	feature	sk	feature_value	2021-01-01T00:00
 
+<<<<<<< HEAD
+=======
+-- !point_select --
+
+-- !point_select --
+
+-- !point_select --
+
+-- !sql --
+4
+
+-- !sql --
+v1
+
+>>>>>>> 3.0.7-rc01
