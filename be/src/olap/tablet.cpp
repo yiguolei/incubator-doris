@@ -861,11 +861,8 @@ void Tablet::delete_expired_stale_rowset() {
     if (config::enable_mow_verbose_log) {
         LOG_INFO("finish delete_expired_stale_rowset for tablet={}", tablet_id());
     }
-<<<<<<< HEAD
-=======
     DBUG_EXECUTE_IF("Tablet.delete_expired_stale_rowset.start_delete_unused_rowset",
                     { _engine.start_delete_unused_rowset(); });
->>>>>>> 3.0.7-rc01
 }
 
 Status Tablet::check_version_integrity(const Version& version, bool quiet) {

@@ -242,10 +242,7 @@ public:
                                          ColumnPB* column);
 
     std::shared_ptr<DeleteBitmap> delete_bitmap() { return _delete_bitmap; }
-<<<<<<< HEAD
-=======
     void remove_rowset_delete_bitmap(const RowsetId& rowset_id, const Version& version);
->>>>>>> 3.0.7-rc01
 
     bool enable_unique_key_merge_on_write() const { return _enable_unique_key_merge_on_write; }
 
