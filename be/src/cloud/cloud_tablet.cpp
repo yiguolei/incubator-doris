@@ -95,13 +95,10 @@ bool CloudTablet::exceed_version_limit(int32_t limit) {
     return _approximate_num_rowsets.load(std::memory_order_relaxed) > limit;
 }
 
-<<<<<<< HEAD
-=======
 std::string CloudTablet::tablet_path() const {
     return "";
 }
 
->>>>>>> 3.0.7-rc01
 Status CloudTablet::capture_rs_readers(const Version& spec_version,
                                        std::vector<RowSetSplits>* rs_splits,
                                        bool skip_missing_version) {
@@ -377,10 +374,6 @@ void CloudTablet::add_rowsets(std::vector<RowsetSharedPtr> to_add, bool version_
                 //  2. cumu compaction picks single overlapping input rowset to perform compaction
 
                 // add existed rowset to unused_rowsets to remove delete bitmap and recycle cached data
-<<<<<<< HEAD
-
-=======
->>>>>>> 3.0.7-rc01
                 std::vector<RowsetSharedPtr> unused_rowsets;
                 if (auto find_it = _rs_version_map.find(rs->version());
                     find_it != _rs_version_map.end()) {
@@ -498,16 +491,11 @@ uint64_t CloudTablet::delete_expired_stale_rowsets() {
         _reconstruct_version_tracker_if_necessary();
     }
     _tablet_meta->delete_bitmap()->remove_stale_delete_bitmap_from_queue(version_to_delete);
-<<<<<<< HEAD
-    recycle_cached_data(expired_rowsets);
-    add_unused_rowsets(expired_rowsets);
-=======
     auto recycled_rowsets = recycle_cached_data(expired_rowsets);
     if (!recycled_rowsets.empty()) {
         auto& manager = ExecEnv::GetInstance()->storage_engine().to_cloud().cloud_warm_up_manager();
         manager.recycle_cache(tablet_id(), recycled_rowsets);
     }
->>>>>>> 3.0.7-rc01
     if (config::enable_mow_verbose_log) {
         LOG_INFO("finish delete_expired_stale_rowset for tablet={}", tablet_id());
     }
@@ -529,33 +517,6 @@ void CloudTablet::add_unused_rowsets(const std::vector<RowsetSharedPtr>& rowsets
 }
 
 void CloudTablet::remove_unused_rowsets() {
-<<<<<<< HEAD
-    int64_t removed_rowsets_num = 0;
-    OlapStopWatch watch;
-    std::lock_guard<std::mutex> lock(_gc_mutex);
-    // 1. remove unused rowsets's cache data and delete bitmap
-    for (auto it = _unused_rowsets.begin(); it != _unused_rowsets.end();) {
-        // it->second is std::shared_ptr<Rowset>
-        auto&& rs = it->second;
-        if (rs.use_count() > 1) {
-            LOG(WARNING) << "tablet_id:" << tablet_id() << " rowset: " << rs->rowset_id() << " has "
-                         << rs.use_count() << " references, it cannot be removed";
-            ++it;
-            continue;
-        }
-        rs->clear_cache();
-        it = _unused_rowsets.erase(it);
-        g_unused_rowsets_count << -1;
-        removed_rowsets_num++;
-    }
-
-    if (removed_rowsets_num > 0) {
-        LOG(INFO) << "tablet_id=" << tablet_id()
-                  << ", unused_rowset size=" << _unused_rowsets.size()
-                  << ", removed_rowsets_num=" << removed_rowsets_num
-                  << ", cost(us)=" << watch.get_elapse_time_us();
-    }
-=======
     std::vector<std::shared_ptr<Rowset>> removed_rowsets;
     OlapStopWatch watch;
 
@@ -603,7 +564,6 @@ void CloudTablet::remove_unused_rowsets() {
     LOG(INFO) << "tablet_id=" << tablet_id() << ", unused_rowset size=" << _unused_rowsets.size()
               << ", removed_rowsets_num=" << removed_rowsets.size()
               << ", cost(us)=" << watch.get_elapse_time_us();
->>>>>>> 3.0.7-rc01
 }
 
 void CloudTablet::update_base_size(const Rowset& rs) {

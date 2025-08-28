@@ -273,12 +273,9 @@ public:
     void add_unused_rowsets(const std::vector<RowsetSharedPtr>& rowsets);
     void remove_unused_rowsets();
 
-<<<<<<< HEAD
-=======
     static std::vector<RecycledRowsets> recycle_cached_data(
             const std::vector<RowsetSharedPtr>& rowsets);
 
->>>>>>> 3.0.7-rc01
 private:
     // FIXME(plat1ko): No need to record base size if rowsets are ordered by version
     void update_base_size(const Rowset& rs);
