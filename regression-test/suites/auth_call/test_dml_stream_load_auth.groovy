@@ -19,15 +19,6 @@ import org.junit.Assert;
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
 suite("test_dml_stream_load_auth","p0,auth_call") {
-    def authComputeToUser = { String user ->
-        //cloud-mode
-        if (isCloudMode()) {
-            def clusters = sql " SHOW CLUSTERS; "
-            assertTrue(!clusters.isEmpty())
-            def validCluster = clusters[0][0]
-            sql """GRANT USAGE_PRIV ON CLUSTER `${validCluster}` TO ${user}""";
-        }
-    }
     String user = 'test_dml_stream_load_auth_user'
     String pwd = 'C123_567p'
     String dbName = 'test_dml_stream_load_auth_db'
@@ -36,8 +27,6 @@ suite("test_dml_stream_load_auth","p0,auth_call") {
     try_sql("DROP USER ${user}")
     try_sql """drop database if exists ${dbName}"""
     sql """CREATE USER '${user}' IDENTIFIED BY '${pwd}'"""
-<<<<<<< HEAD
-=======
     //cloud-mode
     if (isCloudMode()) {
         def clusters = sql " SHOW CLUSTERS; "
@@ -45,9 +34,7 @@ suite("test_dml_stream_load_auth","p0,auth_call") {
         def validCluster = clusters[0][0]
         sql """GRANT USAGE_PRIV ON CLUSTER `${validCluster}` TO ${user}""";
     }
->>>>>>> 3.0.7-rc01
     sql """grant select_priv on regression_test to ${user}"""
-    authComputeToUser(user)
     sql """create database ${dbName}"""
     sql """create table ${dbName}.${tableName} (
                 id BIGINT,
