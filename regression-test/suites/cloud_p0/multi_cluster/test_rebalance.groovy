@@ -76,21 +76,13 @@ suite('test_rebalance_in_cloud', 'multi_cluster,docker') {
             // add a be
             cluster.addBackend(1, null)
             
-<<<<<<< HEAD
-            dockerAwaitUntil(30) {
-=======
             awaitUntil(30) {
->>>>>>> 3.0.7-rc01
                 def bes = sql """show backends"""
                 log.info("bes: {}", bes)
                 bes.size() == 2
             }
 
-<<<<<<< HEAD
-            dockerAwaitUntil(5) {
-=======
             awaitUntil(5) {
->>>>>>> 3.0.7-rc01
                 def ret = sql """ADMIN SHOW REPLICA DISTRIBUTION FROM table100"""
                 log.info("replica distribution table100: {}", ret)
                 ret.size() == 2
@@ -110,11 +102,7 @@ suite('test_rebalance_in_cloud', 'multi_cluster,docker') {
                 }
             }
 
-<<<<<<< HEAD
-            dockerAwaitUntil(5) {
-=======
             awaitUntil(5) {
->>>>>>> 3.0.7-rc01
                 def ret = sql """ADMIN SHOW REPLICA DISTRIBUTION FROM table_p2 PARTITION(p1992)"""
                 log.info("replica distribution table_p2: {}", ret)
                 ret.size() == 2
@@ -193,21 +181,13 @@ suite('test_rebalance_in_cloud', 'multi_cluster,docker') {
             sql """admin set frontend config("enable_cloud_warm_up_for_rebalance"="true")"""
 
             // test rebalance thread still work
-<<<<<<< HEAD
-            dockerAwaitUntil(30) {
-=======
             awaitUntil(30) {
->>>>>>> 3.0.7-rc01
                 def bes = sql """show backends"""
                 log.info("bes: {}", bes)
                 bes.size() == 3
             }
 
-<<<<<<< HEAD
-            dockerAwaitUntil(5) {
-=======
             awaitUntil(5) {
->>>>>>> 3.0.7-rc01
                 def ret = sql """ADMIN SHOW REPLICA DISTRIBUTION FROM table100"""
                 log.info("replica distribution table100: {}", ret)
                 ret.size() == 3
@@ -225,11 +205,7 @@ suite('test_rebalance_in_cloud', 'multi_cluster,docker') {
                 sleep(1 * 1000)
             }
             GetDebugPoint().disableDebugPointForAllFEs("CloudTabletRebalancer.checkInflghtWarmUpCacheAsync.beNull");
-<<<<<<< HEAD
-            dockerAwaitUntil(10) {
-=======
             awaitUntil(10) {
->>>>>>> 3.0.7-rc01
                 def ret = sql_return_maparray """ADMIN SHOW REPLICA DISTRIBUTION FROM table100"""
                 log.info("replica distribution table100: {}", ret)
                 ret.any { row -> 

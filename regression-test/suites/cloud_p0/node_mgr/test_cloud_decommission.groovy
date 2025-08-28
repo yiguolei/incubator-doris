@@ -25,11 +25,7 @@ suite("cloud_decommission", 'p0, docker') {
 
     def checkStatus = { ms, decommissionBeUniqueId, decommissionBe ->
         boolean found = false
-<<<<<<< HEAD
-        dockerAwaitUntil(600) {
-=======
         awaitUntil(600) {
->>>>>>> 3.0.7-rc01
             found = false
             def resp = get_cluster.call(decommissionBeUniqueId, ms)
             resp.each { cluster ->
@@ -47,11 +43,7 @@ suite("cloud_decommission", 'p0, docker') {
 
     def dropAndCheckBe = { host, heartbeatPort ->
         sql """ ALTER SYSTEM DROPP BACKEND "${host}:${heartbeatPort}" """
-<<<<<<< HEAD
-        dockerAwaitUntil(600) {
-=======
         awaitUntil(600) {
->>>>>>> 3.0.7-rc01
             def result = sql_return_maparray """ SHOW BACKENDS """ 
             log.info("show backends result {}", result)
             def ret = result.find {it.Host == host && it.HeartbeatPort == heartbeatPort}
@@ -68,11 +60,7 @@ suite("cloud_decommission", 'p0, docker') {
 
         def result = sql """ ADMIN SHOW REPLICA DISTRIBUTION FROM decommission_table """
         assertEquals(result.size(), beNum)
-<<<<<<< HEAD
-        dockerAwaitUntil(600) {
-=======
         awaitUntil(600) {
->>>>>>> 3.0.7-rc01
             result = sql_return_maparray """ ADMIN SHOW REPLICA DISTRIBUTION FROM decommission_table """
             if (beNum == 3) {
                 result.every { Integer.valueOf((String) it.ReplicaNum) >= 15 && Integer.valueOf((String) it.ReplicaNum) <= 17 }
@@ -107,11 +95,7 @@ suite("cloud_decommission", 'p0, docker') {
         d_node.call(firstDecommissionBeUniqueId, firstDecommissionBe.Host, firstDecommissionBe.HeartbeatPort,
                 firstDecommissionBeClusterName, firstDecommissionBeCloudClusterId, ms)
 
-<<<<<<< HEAD
-        dockerAwaitUntil(600) {
-=======
         awaitUntil(600) {
->>>>>>> 3.0.7-rc01
             result = sql_return_maparray """ ADMIN SHOW REPLICA DISTRIBUTION FROM decommission_table """ 
             result.any { Integer.valueOf((String) it.ReplicaNum) == 0 }
         }
@@ -143,11 +127,7 @@ suite("cloud_decommission", 'p0, docker') {
         result = sql """ ADMIN SHOW REPLICA DISTRIBUTION FROM decommission_table """ 
         assertEquals(result.size(), beNum - 1)
 
-<<<<<<< HEAD
-        dockerAwaitUntil(600) {
-=======
         awaitUntil(600) {
->>>>>>> 3.0.7-rc01
             result = sql_return_maparray """ ADMIN SHOW REPLICA DISTRIBUTION FROM decommission_table """ 
             log.info("show replica result {}", result)
             def ret = result.findAll { Integer.valueOf((String) it.ReplicaNum) == 0 }
