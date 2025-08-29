@@ -44,16 +44,10 @@
 #include "common/logging.h"
 #include "common/util.h"
 #include "cpp/sync_point.h"
-<<<<<<< HEAD
-#include "meta-service/keys.h"
-#include "meta-service/txn_kv.h"
-#include "meta-service/txn_kv_error.h"
-#ifdef ENABLE_HDFS
-=======
 #include "meta-store/keys.h"
 #include "meta-store/txn_kv.h"
 #include "meta-store/txn_kv_error.h"
->>>>>>> 3.0.7-rc01
+#ifdef ENABLE_HDFS
 #include "recycler/hdfs_accessor.h"
 #endif
 #include "recycler/s3_accessor.h"
