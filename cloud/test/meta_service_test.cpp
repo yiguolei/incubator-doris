@@ -9098,14 +9098,11 @@ TEST(MetaServiceTest, CheckJobExisted) {
 
     std::string instance_id = "check_job_existed_instance_id";
     auto sp = SyncPoint::get_instance();
-<<<<<<< HEAD
-    std::unique_ptr<int, std::function<void(int*)>> defer(
-            (int*)0x01, [](int*) { SyncPoint::get_instance()->clear_all_call_backs(); });
-=======
+
     DORIS_CLOUD_DEFER {
         SyncPoint::get_instance()->clear_all_call_backs();
     };
->>>>>>> 3.0.7-rc01
+
     sp->set_call_back("get_instance_id", [&](auto&& args) {
         auto* ret = try_any_cast_ret<std::string>(args);
         ret->first = instance_id;
@@ -9476,8 +9473,6 @@ TEST(MetaServiceTest, StaleCommitRowset) {
     ASSERT_EQ(res.status().code(), MetaServiceCode::INVALID_ARGUMENT) << res.status().code();
 }
 
-<<<<<<< HEAD
-=======
 TEST(MetaServiceTest, AlterObjInfoTest) {
     auto meta_service = get_meta_service();
 
@@ -9779,5 +9774,4 @@ TEST(MetaServiceTest, AlterS3StorageVaultWithRoleArnTest) {
     SyncPoint::get_instance()->disable_processing();
     SyncPoint::get_instance()->clear_all_call_backs();
 }
->>>>>>> 3.0.7-rc01
 } // namespace doris::cloud
