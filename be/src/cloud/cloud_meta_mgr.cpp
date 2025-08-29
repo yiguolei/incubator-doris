@@ -158,11 +158,8 @@ bvar::LatencyRecorder g_cloud_commit_txn_resp_redirect_latency("cloud_table_stat
 bvar::Adder<uint64_t> g_cloud_meta_mgr_rpc_timeout_count("cloud_meta_mgr_rpc_timeout_count");
 bvar::Window<bvar::Adder<uint64_t>> g_cloud_ms_rpc_timeout_count_window(
         "cloud_meta_mgr_rpc_timeout_qps", &g_cloud_meta_mgr_rpc_timeout_count, 30);
-<<<<<<< HEAD
-=======
 bvar::LatencyRecorder g_cloud_be_mow_get_dbm_lock_backoff_sleep_time(
         "cloud_be_mow_get_dbm_lock_backoff_sleep_time");
->>>>>>> 3.0.7-rc01
 
 class MetaServiceProxy {
 public:
@@ -430,11 +427,7 @@ Status retry_rpc(std::string_view op_name, const Request& req, Response* res,
             error_msg = res->status().msg();
         }
 
-<<<<<<< HEAD
-        if (cntl.ErrorCode() == brpc::ERPCTIMEDOUT) {
-=======
         if (error_code == brpc::ERPCTIMEDOUT) {
->>>>>>> 3.0.7-rc01
             g_cloud_meta_mgr_rpc_timeout_count << 1;
         }
 
@@ -606,8 +599,6 @@ Status CloudMetaMgr::sync_tablet_rowsets_unlocked(CloudTablet* tablet,
                 return st;
             }
             tablet->tablet_meta()->delete_bitmap()->merge(delete_bitmap);
-<<<<<<< HEAD
-=======
             if (config::enable_mow_verbose_log && !resp.rowset_meta().empty() &&
                 delete_bitmap.cardinality() > 0) {
                 std::vector<std::string> new_rowset_msgs;
@@ -678,7 +669,6 @@ Status CloudMetaMgr::sync_tablet_rowsets_unlocked(CloudTablet* tablet,
                         .tag("new_rowsets(rowset,count,cardinality)",
                              fmt::format("[{}]", fmt::join(new_rowset_msgs, ", ")));
             }
->>>>>>> 3.0.7-rc01
         }
         DBUG_EXECUTE_IF("CloudMetaMgr::sync_tablet_rowsets.before.modify_tablet_meta", {
             auto target_tablet_id = dp->param<int64_t>("tablet_id", -1);
@@ -997,11 +987,7 @@ Status CloudMetaMgr::prepare_rowset(const RowsetMeta& rs_meta, const std::string
     return st;
 }
 
-<<<<<<< HEAD
-Status CloudMetaMgr::commit_rowset(const RowsetMeta& rs_meta, const std::string& job_id,
-=======
 Status CloudMetaMgr::commit_rowset(RowsetMeta& rs_meta, const std::string& job_id,
->>>>>>> 3.0.7-rc01
                                    RowsetMetaSharedPtr* existed_rs_meta) {
     VLOG_DEBUG << "commit rowset, tablet_id: " << rs_meta.tablet_id()
                << ", rowset_id: " << rs_meta.rowset_id() << " txn_id: " << rs_meta.txn_id();
