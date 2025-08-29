@@ -959,21 +959,6 @@ void TabletMeta::delete_stale_rs_meta_by_version(const Version& version) {
     auto it = _stale_rs_metas.begin();
     while (it != _stale_rs_metas.end()) {
         if ((*it)->version() == version) {
-<<<<<<< HEAD
-            if (_enable_unique_key_merge_on_write) {
-                // remove rowset delete bitmap
-                delete_bitmap()->remove({(*it)->rowset_id(), 0, 0},
-                                        {(*it)->rowset_id(), UINT32_MAX, 0});
-                rowset_cache_version_size =
-                        delete_bitmap()->remove_rowset_cache_version((*it)->rowset_id());
-                if (config::enable_mow_verbose_log) {
-                    LOG_INFO(
-                            "delete stale rowset's delete bitmap. tablet={}, version={}, rowset={}",
-                            tablet_id(), version.to_string(), (*it)->rowset_id().to_string());
-                }
-            }
-=======
->>>>>>> 3.0.7-rc01
             it = _stale_rs_metas.erase(it);
         } else {
             it++;
@@ -1587,11 +1572,6 @@ DeleteBitmap DeleteBitmap::diffset(const std::set<BitmapKey>& key_set) const {
     }
     return dbm;
 }
-<<<<<<< HEAD
-
-std::atomic<DeleteBitmap::AggCachePolicy*> DeleteBitmap::AggCache::s_repr {nullptr};
-=======
->>>>>>> 3.0.7-rc01
 
 std::string tablet_state_name(TabletState state) {
     switch (state) {

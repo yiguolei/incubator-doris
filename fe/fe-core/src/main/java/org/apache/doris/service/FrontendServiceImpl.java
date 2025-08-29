@@ -2777,10 +2777,6 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 }
                 List<Backend> backends;
                 if (Config.isCloudMode()) {
-<<<<<<< HEAD
-                    CloudReplica cloudReplica = (CloudReplica) replica;
-                    backends = cloudReplica.getAllPrimaryBes();
-=======
                     if (request.isSetWarmUpJobId()) {
                         CloudReplica cloudReplica = (CloudReplica) replica;
                         Backend primaryBackend = cloudReplica.getPrimaryBackend(clusterId);
@@ -2789,7 +2785,6 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                         CloudReplica cloudReplica = (CloudReplica) replica;
                         backends = cloudReplica.getAllPrimaryBes();
                     }
->>>>>>> 3.0.7-rc01
                 } else {
                     Backend backend = Env.getCurrentSystemInfo().getBackend(replica.getBackendIdWithoutException());
                     backends = Lists.newArrayList(backend);

@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -17,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
->>>>>>> 3.0.7-rc01
 #include <brpc/controller.h>
 #include <bthread/bthread.h>
 #include <bthread/countdown_event.h>
@@ -94,11 +91,7 @@ static bvar::LatencyRecorder g_remote_fetch_tablet_rowsets_latency("remote_fetch
         if (skip_by_option && !options.enable_fetch_rowsets_from_peers) {
             return version_path;
         }
-<<<<<<< HEAD
-        if (tablet_id != -1 && (tablet_id == _tablet_meta->tablet_id()) || tablet_id == -2) {
-=======
         if ((tablet_id != -1 && tablet_id == _tablet_meta->tablet_id()) || tablet_id == -2) {
->>>>>>> 3.0.7-rc01
             return ResultError(Status::Error<VERSION_ALREADY_MERGED>("version already merged"));
         }
     });

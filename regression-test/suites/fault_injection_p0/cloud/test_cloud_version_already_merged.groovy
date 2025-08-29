@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -17,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
->>>>>>> 3.0.7-rc01
 import org.apache.doris.regression.util.NodeType
 
 suite("test_cloud_version_already_merged", "nonConcurrent") {
@@ -126,8 +123,4 @@ suite("test_cloud_version_already_merged", "nonConcurrent") {
         GetDebugPoint().clearDebugPointsForAllFEs()
         GetDebugPoint().clearDebugPointsForAllBEs()
     }
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 3.0.7-rc01
