@@ -219,11 +219,7 @@ public class CloudClusterChecker extends MasterDaemon {
 
         String remotePrivateEndpoint = remoteClusterPb.getPrivateEndpoint();
         String localPrivateEndpoint = be.getTagMap().get(Tag.CLOUD_CLUSTER_PRIVATE_ENDPOINT);
-<<<<<<< HEAD
-        if ((localPrivateEndpoint == null && !Strings.isNullOrEmpty(remotePrivateEndpoint))
-=======
         if (localPrivateEndpoint == null && !Strings.isNullOrEmpty(remotePrivateEndpoint)
->>>>>>> 3.0.7-rc01
                 || (localPrivateEndpoint != null && !localPrivateEndpoint.equals(remotePrivateEndpoint))) {
             LOG.info("be {} has changed private_endpoint from {} to {}",
                     be, localPrivateEndpoint, remotePrivateEndpoint);

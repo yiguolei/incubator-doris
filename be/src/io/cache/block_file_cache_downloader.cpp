@@ -84,8 +84,6 @@ void FileCacheBlockDownloader::submit_download_task(DownloadTask task) {
             ++_inflight_tablets[meta.tablet_id()];
             LOG(INFO) << "submit_download_task: inflight_tablets[" << meta.tablet_id()
                       << "] = " << _inflight_tablets[meta.tablet_id()];
-<<<<<<< HEAD
-=======
             if (meta.size() > 0) {
                 g_file_cache_download_submitted_size << meta.size();
             }
@@ -94,7 +92,6 @@ void FileCacheBlockDownloader::submit_download_task(DownloadTask task) {
         int64_t download_size = std::get<1>(task.task_message).download_size;
         if (download_size > 0) {
             g_file_cache_download_submitted_size << download_size;
->>>>>>> 3.0.7-rc01
         }
     }
 
@@ -113,13 +110,8 @@ void FileCacheBlockDownloader::submit_download_task(DownloadTask task) {
             _task_queue.pop_front(); // Eliminate the earliest task in the queue
             block_file_cache_downloader_task_total << -1;
         }
-<<<<<<< HEAD
-        LOG(INFO) << "submit_download_task: push task, queue size before push: "
-                  << _task_queue.size();
-=======
         VLOG_DEBUG << "submit_download_task: push task, queue size before push: "
                    << _task_queue.size();
->>>>>>> 3.0.7-rc01
         _task_queue.push_back(std::move(task));
         block_file_cache_downloader_task_total << 1;
         _empty.notify_all();
@@ -141,24 +133,15 @@ void FileCacheBlockDownloader::polling_download_task() {
 
             task = std::move(_task_queue.front());
             _task_queue.pop_front();
-<<<<<<< HEAD
-            LOG(INFO) << "polling_download_task: pop task, queue size after pop: "
-                      << _task_queue.size();
-=======
             block_file_cache_downloader_task_total << -1;
             VLOG_DEBUG << "polling_download_task: pop task, queue size after pop: "
                        << _task_queue.size();
->>>>>>> 3.0.7-rc01
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
                                                              task.atime)
                     .count() < hot_interval) {
-<<<<<<< HEAD
-            LOG(INFO) << "polling_download_task: submit download_blocks to thread pool";
-=======
             VLOG_DEBUG << "polling_download_task: submit download_blocks to thread pool";
->>>>>>> 3.0.7-rc01
             auto st = _workers->submit_func(
                     [this, task_ = std::move(task)]() mutable { download_blocks(task_); });
             if (!st.ok()) {
@@ -189,15 +172,9 @@ std::unordered_map<std::string, RowsetMetaSharedPtr> snapshot_rs_metas(BaseTable
 void FileCacheBlockDownloader::download_file_cache_block(
         const DownloadTask::FileCacheBlockMetaVec& metas) {
     std::ranges::for_each(metas, [&](const FileCacheBlockMeta& meta) {
-<<<<<<< HEAD
-        LOG(INFO) << "download_file_cache_block: start, tablet_id=" << meta.tablet_id()
-                  << ", rowset_id=" << meta.rowset_id() << ", segment_id=" << meta.segment_id()
-                  << ", offset=" << meta.offset() << ", size=" << meta.size();
-=======
         VLOG_DEBUG << "download_file_cache_block: start, tablet_id=" << meta.tablet_id()
                    << ", rowset_id=" << meta.rowset_id() << ", segment_id=" << meta.segment_id()
                    << ", offset=" << meta.offset() << ", size=" << meta.size();
->>>>>>> 3.0.7-rc01
         CloudTabletSPtr tablet;
         if (auto res = _engine.tablet_mgr().get_tablet(meta.tablet_id(), false); !res.has_value()) {
             LOG(INFO) << "failed to find tablet " << meta.tablet_id() << " : " << res.error();
@@ -209,13 +186,8 @@ void FileCacheBlockDownloader::download_file_cache_block(
         auto id_to_rowset_meta_map = snapshot_rs_metas(tablet.get());
         auto find_it = id_to_rowset_meta_map.find(meta.rowset_id());
         if (find_it == id_to_rowset_meta_map.end()) {
-<<<<<<< HEAD
-            LOG(WARNING) << "download_file_cache_block: rowset_id not found, rowset_id="
-                         << meta.rowset_id();
-=======
             LOG(WARNING) << "download_file_cache_block: tablet_id=" << meta.tablet_id()
                          << "rowset_id not found, rowset_id=" << meta.rowset_id();
->>>>>>> 3.0.7-rc01
             return;
         }
 
@@ -233,18 +205,6 @@ void FileCacheBlockDownloader::download_file_cache_block(
                 LOG(WARNING) << "inflight ref cnt not exist, tablet id " << tablet_id;
             } else {
                 it->second--;
-<<<<<<< HEAD
-                LOG(INFO) << "download_file_cache_block: inflight_tablets[" << tablet_id
-                          << "] = " << it->second;
-                if (it->second <= 0) {
-                    DCHECK_EQ(it->second, 0) << it->first;
-                    _inflight_tablets.erase(it);
-                    LOG(INFO) << "download_file_cache_block: erase inflight_tablets[" << tablet_id
-                              << "]";
-                }
-            }
-            LOG(INFO) << "download_file_cache_block: download_done, status=" << st.to_string();
-=======
                 VLOG_DEBUG << "download_file_cache_block: inflight_tablets[" << tablet_id
                            << "] = " << it->second;
                 if (it->second <= 0) {
@@ -256,7 +216,6 @@ void FileCacheBlockDownloader::download_file_cache_block(
             }
             LOG(INFO) << "download_file_cache_block: download_done, tablet_Id=" << tablet_id
                       << "status=" << st.to_string();
->>>>>>> 3.0.7-rc01
         };
 
         DownloadFileMeta download_meta {
@@ -311,12 +270,8 @@ void FileCacheBlockDownloader::download_segment_file(const DownloadFileMeta& met
         size_t size =
                 std::min(one_single_task_size, static_cast<size_t>(meta.download_size - offset));
         size_t bytes_read;
-<<<<<<< HEAD
-        LOG(INFO) << "download_segment_file: read_at offset=" << offset << ", size=" << size;
-=======
         VLOG_DEBUG << "download_segment_file, path=" << meta.path << ", read_at offset=" << offset
                    << ", size=" << size;
->>>>>>> 3.0.7-rc01
         // TODO(plat1ko):
         //  1. Directly append buffer data to file cache
         //  2. Provide `FileReader::async_read()` interface
