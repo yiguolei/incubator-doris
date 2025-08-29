@@ -719,11 +719,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_SCHEMA_SCAN_FROM_MASTER_FE = "enable_schema_scan_from_master_fe";
 
-<<<<<<< HEAD
-=======
     public static final String SHOW_COLUMN_COMMENT_IN_DESCRIBE = "show_column_comment_in_describe";
 
->>>>>>> 3.0.7-rc01
     public static final String SQL_CONVERTOR_CONFIG = "sql_convertor_config";
 
     public static final String PREFER_UDF_OVER_BUILTIN = "prefer_udf_over_builtin";
@@ -2473,8 +2470,6 @@ public class SessionVariable implements Serializable, Writable {
     })
     public boolean enableSchemaScanFromMasterFe = true;
 
-<<<<<<< HEAD
-=======
     @VariableMgr.VarAttr(name = SHOW_COLUMN_COMMENT_IN_DESCRIBE, needForward = true,
             description = {
                     "是否在 DESCRIBE TABLE 语句中显示列注释",
@@ -2482,7 +2477,6 @@ public class SessionVariable implements Serializable, Writable {
             })
     public boolean showColumnCommentInDescribe = false;
 
->>>>>>> 3.0.7-rc01
     @VariableMgr.VarAttr(name = SQL_CONVERTOR_CONFIG, needForward = true,
             description = {
                     "SQL 转换器的相关配置，使用 Json 格式。以 {} 为根元素。",
