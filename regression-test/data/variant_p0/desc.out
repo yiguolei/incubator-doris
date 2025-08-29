@@ -16,11 +16,7 @@ v.b	json	Yes	false	\N	NONE
 v.c.c	smallint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.ddd.aaa	tinyint	Yes	false	\N	NONE
-<<<<<<< HEAD
-v.ddd.mxmxm	json	Yes	false	\N	NONE
-=======
 v.ddd.mxmxm	array<json>	Yes	false	\N	NONE
->>>>>>> 3.0.7-rc01
 v.oooo.xxxx.xxx	tinyint	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
 
@@ -41,11 +37,7 @@ v.b	json	Yes	false	\N	NONE
 v.c.c	smallint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.ddd.aaa	tinyint	Yes	false	\N	NONE
-<<<<<<< HEAD
-v.ddd.mxmxm	json	Yes	false	\N	NONE
-=======
 v.ddd.mxmxm	array<json>	Yes	false	\N	NONE
->>>>>>> 3.0.7-rc01
 v.oooo.xxxx.xxx	tinyint	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
 
@@ -74,11 +66,7 @@ v.b	json	Yes	false	\N	NONE
 v.c.c	smallint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.ddd.aaa	tinyint	Yes	false	\N	NONE
-<<<<<<< HEAD
-v.ddd.mxmxm	json	Yes	false	\N	NONE
-=======
 v.ddd.mxmxm	array<json>	Yes	false	\N	NONE
->>>>>>> 3.0.7-rc01
 v.oooo.xxxx.xxx	tinyint	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
 
