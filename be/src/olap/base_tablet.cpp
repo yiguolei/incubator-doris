@@ -1719,12 +1719,8 @@ void TabletReadSource::fill_delete_predicates() {
 
 int32_t BaseTablet::max_version_config() {
     int32_t max_version = tablet_meta()->compaction_policy() == CUMULATIVE_TIME_SERIES_POLICY
-<<<<<<< HEAD
-                                  ? config::time_series_max_tablet_version_num
-=======
                                   ? std::max(config::time_series_max_tablet_version_num,
                                              config::max_tablet_version_num)
->>>>>>> 3.0.7-rc01
                                   : config::max_tablet_version_num;
     return max_version;
 }

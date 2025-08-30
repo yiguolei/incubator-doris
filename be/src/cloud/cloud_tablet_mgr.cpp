@@ -364,16 +364,6 @@ Status CloudTabletMgr::get_topn_tablets_to_compact(
     using namespace std::chrono;
     auto now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
     auto skip = [now, compaction_type](CloudTablet* t) {
-<<<<<<< HEAD
-        if (compaction_type == CompactionType::BASE_COMPACTION) {
-            bool is_recent_failure = now - t->last_base_compaction_failure_time() < config::min_compaction_failure_interval_ms;
-            bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
-                   && now - t->last_base_compaction_success_time_ms < config::base_compaction_freeze_interval_s * 1000
-                   && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
-            g_base_compaction_not_frozen_tablet_num << !is_frozen;
-            return is_recent_failure || is_frozen;
-        }
-=======
         auto* cloud_cluster_info = static_cast<CloudClusterInfo*>(ExecEnv::GetInstance()->cluster_info());
         if (config::enable_standby_passive_compaction && cloud_cluster_info->is_in_standby()) {
             if (t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num * config::standby_compaction_version_ratio) {
@@ -390,16 +380,11 @@ Status CloudTabletMgr::get_topn_tablets_to_compact(
             g_base_compaction_not_frozen_tablet_num << !is_frozen;
             return is_recent_failure || is_frozen;
         }
->>>>>>> 3.0.7-rc01
         
         // If tablet has too many rowsets but not be compacted for a long time, compaction should be performed
         // regardless of whether there is a load job recently.
         bool is_recent_failure = now - t->last_cumu_compaction_failure_time() < config::min_compaction_failure_interval_ms;
         bool is_recent_no_suitable_version = now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms;
-<<<<<<< HEAD
-        int32_t max_version_config = t->max_version_config();
-=======
->>>>>>> 3.0.7-rc01
         bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
                && now - t->last_cumu_compaction_success_time_ms < config::cumu_compaction_interval_s * 1000
                && t->fetch_add_approximate_num_rowsets(0) < max_version_config / 2);
