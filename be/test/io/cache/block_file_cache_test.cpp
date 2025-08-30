@@ -7752,7 +7752,6 @@ TEST_F(BlockFileCacheTest, test_upgrade_cache_dir_version) {
     }
 }
 
-<<<<<<< HEAD
 void move_dir_to_version1(const std::string& dirPath) {
     try {
         // layer 1
@@ -7823,18 +7822,11 @@ TEST_F(BlockFileCacheTest, test_upgrade_cache_dir_version) {
         *try_any_cast<Status*>(args[0]) = Status::IOError("inject io error");
     });
 
-=======
-TEST_F(BlockFileCacheTest, cached_remote_file_reader_ttl_index) {
-    if (fs::exists(cache_base_path)) {
-        fs::remove_all(cache_base_path);
-    }
->>>>>>> 3.0.7-rc01
     fs::create_directories(cache_base_path);
     TUniqueId query_id;
     query_id.hi = 1;
     query_id.lo = 1;
     io::FileCacheSettings settings;
-<<<<<<< HEAD
 
     settings.ttl_queue_size = 5000000;
     settings.ttl_queue_elements = 50000;
@@ -8149,7 +8141,23 @@ TEST_F(BlockFileCacheTest, cached_remote_file_reader_ttl_index) {
         }
     }
     sp->clear_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename");
-=======
+
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+}
+
+TEST_F(BlockFileCacheTest, cached_remote_file_reader_ttl_index) {
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+
+    fs::create_directories(cache_base_path);
+    TUniqueId query_id;
+    query_id.hi = 1;
+    query_id.lo = 1;
+    io::FileCacheSettings settings;
+
     settings.query_queue_size = 6291456;
     settings.query_queue_elements = 6;
     settings.index_queue_size = 1048576;
@@ -8296,13 +8304,7 @@ TEST_F(BlockFileCacheTest, cached_remote_file_reader_normal_index) {
 
 TEST_F(BlockFileCacheTest, test_reset_capacity) {
     std::string cache_path2 = caches_dir / "cache2" / "";
->>>>>>> 3.0.7-rc01
 
-    if (fs::exists(cache_base_path)) {
-        fs::remove_all(cache_base_path);
-    }
-<<<<<<< HEAD
-=======
     if (fs::exists(cache_path2)) {
         fs::remove_all(cache_path2);
     }
@@ -8372,7 +8374,6 @@ TEST_F(BlockFileCacheTest, test_reset_capacity) {
     FileCacheFactory::instance()->_caches.clear();
     FileCacheFactory::instance()->_path_to_cache.clear();
     FileCacheFactory::instance()->_capacity = 0;
->>>>>>> 3.0.7-rc01
 }
 
 } // namespace doris::io
