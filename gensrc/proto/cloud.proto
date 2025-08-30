@@ -1018,10 +1018,7 @@ message CreateRowsetRequest {
     optional bool temporary = 3;
     optional int64 txn_id = 4;
     optional string tablet_job_id = 5;
-<<<<<<< HEAD
-=======
     optional string request_ip = 6;
->>>>>>> 3.0.7-rc01
 }
 
 message CreateRowsetResponse {

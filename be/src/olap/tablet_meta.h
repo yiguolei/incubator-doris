@@ -591,39 +591,6 @@ public:
      * @return Deletebitmap containning all entries in diffset
     */
     DeleteBitmap diffset(const std::set<BitmapKey>& key_set) const;
-<<<<<<< HEAD
-
-    class AggCachePolicy : public LRUCachePolicy {
-    public:
-        AggCachePolicy(size_t capacity)
-                : LRUCachePolicy(CachePolicy::CacheType::DELETE_BITMAP_AGG_CACHE, capacity,
-                                 LRUCacheType::SIZE,
-                                 config::delete_bitmap_agg_cache_stale_sweep_time_sec, 256) {}
-    };
-
-    class AggCache {
-    public:
-        class Value : public LRUCacheValueBase {
-        public:
-            roaring::Roaring bitmap;
-        };
-
-        AggCache(size_t size_in_bytes) {
-            static std::once_flag once;
-            std::call_once(once, [size_in_bytes] {
-                auto* tmp = new AggCachePolicy(size_in_bytes);
-                AggCache::s_repr.store(tmp, std::memory_order_release);
-            });
-
-            while (!s_repr.load(std::memory_order_acquire)) {
-            }
-        }
-
-        static LRUCachePolicy* repr() { return s_repr.load(std::memory_order_acquire); }
-        static std::atomic<AggCachePolicy*> s_repr;
-    };
-=======
->>>>>>> 3.0.7-rc01
 
 private:
     DeleteBitmap::Version _get_rowset_cache_version(const BitmapKey& bmk) const;

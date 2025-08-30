@@ -180,11 +180,8 @@ void finish_rpc(std::string_view func_name, brpc::Controller* ctrl, Response* re
             res->clear_cumulative_compaction_cnts();
             res->clear_cumulative_points();
         }
-<<<<<<< HEAD
-=======
         LOG(INFO) << "finish " << func_name << " remote caller: " << ctrl->remote_side()
                   << " status=" << res->status().ShortDebugString();
->>>>>>> 3.0.7-rc01
     } else if constexpr (std::is_same_v<Response, GetObjStoreInfoResponse> ||
                          std::is_same_v<Response, GetStageResponse>) {
         std::string debug_string = encryt_sk(res->DebugString());

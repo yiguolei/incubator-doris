@@ -149,7 +149,6 @@ Status BaseRowsetBuilder::init_mow_context(std::shared_ptr<MowContext>& mow_cont
 
 Status RowsetBuilder::check_tablet_version_count() {
     bool injection = false;
-    int32_t max_version_config = _tablet->max_version_config();
     DBUG_EXECUTE_IF("RowsetBuilder.check_tablet_version_count.too_many_version",
                     { injection = true; });
     int32_t max_version_config = _tablet->max_version_config();
