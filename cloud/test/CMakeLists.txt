@@ -96,15 +96,11 @@ target_link_libraries(rpc_kv_bvar_test ${TEST_LINK_LIBS})
 
 target_link_libraries(s3_accessor_test ${TEST_LINK_LIBS})
 
-<<<<<<< HEAD
+target_link_libraries(s3_accessor_mock_test ${TEST_LINK_LIBS})
+
 if (ENABLE_HDFS)
     target_link_libraries(hdfs_accessor_test ${TEST_LINK_LIBS})
 endif()
-=======
-target_link_libraries(s3_accessor_mock_test ${TEST_LINK_LIBS})
-
-target_link_libraries(hdfs_accessor_test ${TEST_LINK_LIBS})
->>>>>>> 3.0.6.2
 
 target_link_libraries(stopwatch_test ${TEST_LINK_LIBS})
 
