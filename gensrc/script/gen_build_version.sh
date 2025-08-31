@@ -27,20 +27,15 @@
 
 set -eo pipefail
 
-<<<<<<< HEAD
-build_version_prefix="selectdb"
-build_version_major=4
-=======
-vendor=doris
+vendor=selectdb
 if [[ $1 != "" ]]; then
     vendor=$1
 fi
 
 build_version_prefix="${vendor}"
-build_version_major=3
->>>>>>> 3.0.8-rc02
+build_version_major=4
 build_version_minor=0
-build_version_patch=8
+build_version_patch=7
 build_version_hotfix=0
 build_version_rc_version=""
 

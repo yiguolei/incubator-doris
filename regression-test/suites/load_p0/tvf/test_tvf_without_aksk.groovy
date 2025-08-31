@@ -40,10 +40,7 @@ suite("test_tvf_without_aksk", "load_p0") {
                 (
                     "uri" = "s3://${s3BucketName}/regression/load/data/example_0.csv",
                     "s3.endpoint" = "${getS3Endpoint()}",
-<<<<<<< HEAD
                     "provider" = "${getS3Provider()}",
-=======
->>>>>>> 3.0.8-rc02
                     "column_separator" = ",",
                     "format" = "csv"
                 );
@@ -56,10 +53,7 @@ suite("test_tvf_without_aksk", "load_p0") {
                 (
                     "uri" = "s3://${s3BucketName}/regression/load/data/example_*.csv",
                     "s3.endpoint" = "${getS3Endpoint()}",
-<<<<<<< HEAD
                     "provider" = "${getS3Provider()}",
-=======
->>>>>>> 3.0.8-rc02
                     "column_separator" = ",",
                     "format" = "csv"
                 );
