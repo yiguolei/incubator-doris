@@ -1190,14 +1190,6 @@ Status CompactionMixin::modify_rowsets() {
                     missed_rows.get(), location_map.get(), *_tablet->tablet_meta()->delete_bitmap(),
                     &output_rowset_delete_bitmap);
 
-            if (missed_rows) {
-                DCHECK_EQ(missed_rows->size(), missed_rows_size);
-                if (missed_rows->size() != missed_rows_size) {
-                    LOG(WARNING) << "missed rows don't match, before: " << missed_rows_size
-                                 << " after: " << missed_rows->size();
-                }
-            }
-
             if (location_map) {
                 RETURN_IF_ERROR(tablet()->check_rowid_conversion(_output_rowset, *location_map));
             }
@@ -1440,6 +1432,8 @@ Status CloudCompactionMixin::construct_output_rowset_writer(RowsetWriterContext&
                            (config::enable_file_cache_keep_base_compaction_output &&
                             compaction_type() == ReaderType::READER_BASE_COMPACTION);
     ctx.file_cache_ttl_sec = _tablet->ttl_seconds();
+    ctx.approximate_bytes_to_write = _input_rowsets_total_size;
+
     _output_rs_writer = DORIS_TRY(_tablet->create_rowset_writer(ctx, _is_vertical));
     RETURN_IF_ERROR(
             _engine.meta_mgr().prepare_rowset(*_output_rs_writer->rowset_meta().get(), _uuid));

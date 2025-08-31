@@ -118,6 +118,7 @@ CONF_mInt64(recycle_task_threshold_seconds, "10800"); // 3h
 // **just for TEST**
 CONF_Bool(force_immediate_recycle, "false");
 
+CONF_mBool(enable_checker_for_meta_key_check, "false");
 CONF_String(test_s3_ak, "");
 CONF_String(test_s3_sk, "");
 CONF_String(test_s3_endpoint, "");
@@ -281,7 +282,10 @@ CONF_Int32(txn_lazy_max_rowsets_per_batch, "1000");
 // max TabletIndexPB num for batch get
 CONF_Int32(max_tablet_index_num_per_batch, "1000");
 
-CONF_Bool(enable_cloud_txn_lazy_commit_fuzzy_test, "false");
+// the possibility to use a lazy commit for a doris txn, ranges from 0 to 100,
+// usually for testing
+// 0 for never, 100 for always
+CONF_mInt32(cloud_txn_lazy_commit_fuzzy_possibility, "0");
 
 CONF_Bool(enable_check_instance_id, "true");
 

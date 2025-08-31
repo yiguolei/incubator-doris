@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <initializer_list>
 #include <numeric>
@@ -1311,6 +1312,7 @@ int InstanceRecycler::recycle_partitions() {
                 partition_version_keys.push_back(partition_version_key(
                         {instance_id_, part_pb.db_id(), part_pb.table_id(), partition_id}));
             }
+            metrics_context.total_recycled_num = num_recycled;
             metrics_context.report();
         }
         return ret;
@@ -1733,7 +1735,11 @@ int InstanceRecycler::delete_rowset_data(
         const auto& rowset_id = rs.rowset_id_v2();
         int64_t tablet_id = rs.tablet_id();
         int64_t num_segments = rs.num_segments();
-        if (num_segments <= 0) continue;
+        if (num_segments <= 0) {
+            metrics_context.total_recycled_num++;
+            metrics_context.total_recycled_data_size += rs.total_disk_size();
+            continue;
+        }
 
         // Process inverted indexes
         std::vector<std::pair<int64_t, std::string>> index_ids;
@@ -2366,7 +2372,7 @@ int InstanceRecycler::recycle_rowsets() {
 
     int64_t earlest_ts = std::numeric_limits<int64_t>::max();
 
-    auto handle_rowset_kv = [&, this](std::string_view k, std::string_view v) -> int {
+    auto handle_rowset_kv = [&](std::string_view k, std::string_view v) -> int {
         ++num_scanned;
         total_rowset_key_size += k.size();
         total_rowset_value_size += v.size();
@@ -2376,13 +2382,13 @@ int InstanceRecycler::recycle_rowsets() {
             return -1;
         }
 
-        int final_expiration = calculate_rowset_expired_time(instance_id_, rowset, &earlest_ts);
+        int64_t current_time = ::time(nullptr);
+        int64_t expiration = calculate_rowset_expired_time(instance_id_, rowset, &earlest_ts);
 
         VLOG_DEBUG << "recycle rowset scan, key=" << hex(k) << " num_scanned=" << num_scanned
-                   << " num_expired=" << num_expired << " expiration=" << final_expiration
+                   << " num_expired=" << num_expired << " expiration=" << expiration
                    << " RecycleRowsetPB=" << rowset.ShortDebugString();
-        int64_t current_time = ::time(nullptr);
-        if (current_time < final_expiration) { // not expired
+        if (current_time < expiration) { // not expired
             return 0;
         }
         ++num_expired;
@@ -2445,9 +2451,8 @@ int InstanceRecycler::recycle_rowsets() {
         } else {
             num_compacted += rowset.type() == RecycleRowsetPB::COMPACT;
             rowset_keys.emplace_back(k);
-            if (rowset_meta->num_segments() > 0) { // Skip empty rowset
-                rowsets.emplace(rowset_meta->rowset_id_v2(), std::move(*rowset_meta));
-            } else {
+            rowsets.emplace(rowset_meta->rowset_id_v2(), std::move(*rowset_meta));
+            if (rowset_meta->num_segments() <= 0) { // Skip empty rowset
                 ++num_empty_rowset;
             }
         }
@@ -2596,9 +2601,7 @@ int InstanceRecycler::recycle_tmp_rowsets() {
                   << " num_expired=" << num_expired;
 
         tmp_rowset_keys.push_back(k);
-        if (rowset.num_segments() > 0) { // Skip empty rowset
-            tmp_rowsets.emplace(rowset.rowset_id_v2(), std::move(rowset));
-        }
+        tmp_rowsets.emplace(rowset.rowset_id_v2(), std::move(rowset));
         return 0;
     };
 
@@ -2895,6 +2898,7 @@ int InstanceRecycler::recycle_expired_txn_label() {
         return 0;
     };
 
+    // int 0 for success, 1 for conflict, -1 for error
     auto delete_recycle_txn_kv = [&](const std::string& k) -> int {
         std::string_view k1 = k;
         //RecycleTxnKeyInfo 0:instance_id  1:db_id  2:txn_id
@@ -2960,17 +2964,33 @@ int InstanceRecycler::recycle_expired_txn_label() {
         }
         if (txn_label.txn_ids().empty()) {
             txn->remove(label_key);
+            TEST_SYNC_POINT_CALLBACK(
+                    "InstanceRecycler::recycle_expired_txn_label.remove_label_before");
         } else {
             if (!txn_label.SerializeToString(&label_val)) {
                 LOG(WARNING) << "failed to serialize txn label, key=" << hex(label_key);
                 return -1;
             }
+            TEST_SYNC_POINT_CALLBACK(
+                    "InstanceRecycler::recycle_expired_txn_label.update_label_before");
             txn->atomic_set_ver_value(label_key, label_val);
+            TEST_SYNC_POINT_CALLBACK(
+                    "InstanceRecycler::recycle_expired_txn_label.update_label_after");
         }
         // Remove recycle txn kv
         txn->remove(k);
+        TEST_SYNC_POINT_CALLBACK("InstanceRecycler::recycle_expired_txn_label.before_commit");
         err = txn->commit();
         if (err != TxnErrorCode::TXN_OK) {
+            if (err == TxnErrorCode::TXN_CONFLICT) {
+                TEST_SYNC_POINT_CALLBACK(
+                        "InstanceRecycler::recycle_expired_txn_label.txn_conflict");
+                // log the txn_id and label
+                LOG(WARNING) << "txn conflict, txn_id=" << txn_id
+                             << " txn_label_pb=" << txn_label.ShortDebugString()
+                             << " txn_label=" << txn_info.label();
+                return 1;
+            }
             LOG(WARNING) << "failed to delete expired txn, err=" << err << " key=" << hex(k);
             return -1;
         }
@@ -2990,7 +3010,24 @@ int InstanceRecycler::recycle_expired_txn_label() {
                 &recycle_txn_info_keys);
         for (const auto& k : recycle_txn_info_keys) {
             concurrent_delete_executor.add([&]() {
-                if (delete_recycle_txn_kv(k) != 0) {
+                int ret = delete_recycle_txn_kv(k);
+                if (ret == 1) {
+                    constexpr int MAX_RETRY = 10;
+                    for (size_t i = 1; i <= MAX_RETRY; ++i) {
+                        LOG(WARNING) << "txn conflict, retry times=" << i << " key=" << hex(k);
+                        ret = delete_recycle_txn_kv(k);
+                        // clang-format off
+                        TEST_SYNC_POINT_CALLBACK(
+                                "InstanceRecycler::recycle_expired_txn_label.delete_recycle_txn_kv_error", &ret);
+                        // clang-format off
+                        if (ret != 1) {
+                            break;
+                        }
+                        // random sleep 0-100 ms to retry
+                        std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
+                    }
+                }
+                if (ret != 0) {
                     LOG_WARNING("failed to delete recycle txn kv")
                             .tag("instance id", instance_id_)
                             .tag("key", hex(k));
@@ -3783,15 +3820,10 @@ int InstanceRecycler::scan_and_statistics_rowsets() {
                 return 0;
             }
         }
-        if (rowset.type() != RecycleRowsetPB::PREPARE) {
-            if (rowset_meta->num_segments() > 0) {
-                metrics_context.total_need_recycle_num++;
-                segment_metrics_context_.total_need_recycle_num += rowset_meta->num_segments();
-                segment_metrics_context_.total_need_recycle_data_size +=
-                        rowset_meta->total_disk_size();
-                metrics_context.total_need_recycle_data_size += rowset_meta->total_disk_size();
-            }
-        }
+        metrics_context.total_need_recycle_num++;
+        metrics_context.total_need_recycle_data_size += rowset_meta->total_disk_size();
+        segment_metrics_context_.total_need_recycle_num += rowset_meta->num_segments();
+        segment_metrics_context_.total_need_recycle_data_size += rowset_meta->total_disk_size();
         return 0;
     };
     return scan_and_recycle(recyc_rs_key0, recyc_rs_key1, std::move(handle_rowset_kv),
@@ -3835,16 +3867,13 @@ int InstanceRecycler::scan_and_statistics_tmp_rowsets() {
             if (rowset.num_segments() > 0) [[unlikely]] { // impossible
                 return 0;
             }
-            metrics_context.total_need_recycle_num++;
             return 0;
         }
 
         metrics_context.total_need_recycle_num++;
-        if (rowset.num_segments() > 0) {
-            metrics_context.total_need_recycle_data_size += rowset.total_disk_size();
-            segment_metrics_context_.total_need_recycle_data_size += rowset.total_disk_size();
-            segment_metrics_context_.total_need_recycle_num += rowset.num_segments();
-        }
+        metrics_context.total_need_recycle_data_size += rowset.total_disk_size();
+        segment_metrics_context_.total_need_recycle_data_size += rowset.total_disk_size();
+        segment_metrics_context_.total_need_recycle_num += rowset.num_segments();
         return 0;
     };
     return scan_and_recycle(tmp_rs_key0, tmp_rs_key1, std::move(handle_tmp_rowsets_kv),

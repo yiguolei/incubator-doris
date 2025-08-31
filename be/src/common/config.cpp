@@ -245,7 +245,7 @@ DEFINE_mInt32(report_task_interval_seconds, "10");
 // the interval time(seconds) for refresh storage policy from FE
 DEFINE_mInt32(storage_refresh_storage_policy_task_interval_seconds, "5");
 // the interval time(seconds) for agent report disk state to FE
-DEFINE_mInt32(report_disk_state_interval_seconds, "60");
+DEFINE_mInt32(report_disk_state_interval_seconds, "30");
 // the interval time(seconds) for agent report olap table to FE
 DEFINE_mInt32(report_tablet_interval_seconds, "60");
 // the max download speed(KB/s)
@@ -1122,7 +1122,13 @@ DEFINE_mBool(enbale_dump_error_file, "false");
 DEFINE_mInt64(file_cache_error_log_limit_bytes, "209715200"); // 200MB
 DEFINE_mInt64(cache_lock_wait_long_tail_threshold_us, "30000000");
 DEFINE_mInt64(cache_lock_held_long_tail_threshold_us, "30000000");
+
+// enable_file_cache_keep_base_compaction_output true means force base compaction output rowsets
+// write to file cache, enable_file_cache_adaptive_write true means when file cache is enough, it
+// will write to file cache; satisfying any of the two conditions will write to file cache.
 DEFINE_mBool(enable_file_cache_keep_base_compaction_output, "false");
+DEFINE_mBool(enable_file_cache_adaptive_write, "true");
+
 DEFINE_mInt64(file_cache_remove_block_qps_limit, "1000");
 DEFINE_mInt64(file_cache_background_gc_interval_ms, "100");
 DEFINE_mBool(enable_reader_dryrun_when_download_file_cache, "true");
@@ -1495,7 +1501,12 @@ DEFINE_Bool(enable_table_size_correctness_check, "false");
 DEFINE_Bool(force_regenerate_rowsetid_on_start_error, "false");
 DEFINE_mBool(enable_sleep_between_delete_cumu_compaction, "false");
 
-DEFINE_mInt32(compaction_num_per_round, "4");
+// The number of compaction tasks generated each time.
+// -1 means automatic number, other values mean fixed number.
+DEFINE_mInt32(compaction_num_per_round, "-1");
+// Max automatic compaction task generated num per round.
+// Only valid if "compaction_num_per_round = 0"
+DEFINE_mInt32(max_automatic_compaction_num_per_round, "64");
 
 DEFINE_mInt32(check_tablet_delete_bitmap_interval_seconds, "300");
 DEFINE_mInt32(check_tablet_delete_bitmap_score_top_n, "10");
