@@ -402,9 +402,6 @@ suite("test_point_query", "nonConcurrent") {
         qe_point_select partial_prepared_stmt
         qe_point_select partial_prepared_stmt
     }
-<<<<<<< HEAD
-} 
-=======
     // test shrink char type
     sql "DROP TABLE IF EXISTS table_with_chars"
     sql """
@@ -456,4 +453,3 @@ suite("test_point_query", "nonConcurrent") {
     qt_sql "select col2['k1'] from test_with_variant where col1=1"
 
 }
->>>>>>> 3.0.7-rc01
