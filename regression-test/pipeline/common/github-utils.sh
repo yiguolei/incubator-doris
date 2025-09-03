@@ -22,8 +22,8 @@ function create_an_issue_comment() {
     if [[ -z "${COMMENT_BODY}" ]]; then return 1; fi
     if [[ -z "${GITHUB_TOKEN}" ]]; then return 1; fi
 
-    local OWNER='apache'
-    local REPO='doris'
+    local OWNER='selectdb'
+    local REPO='selectdb-core'
     COMMENT_BODY=$(echo "${COMMENT_BODY}" | sed -e ':a;N;$!ba;s/\t/\\t/g;s/\n/\\n/g') # 将所有的 Tab字符替换为\t 换行符替换为\n
     if ret=$(curl -s \
         -X POST \
