@@ -233,7 +233,7 @@ skip_build() {
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/apache/doris/statuses/${COMMIT_ID_FROM_TRIGGER:-}" \
+        "https://api.github.com/repos/selectdb/selectdb-core/statuses/${COMMIT_ID_FROM_TRIGGER:-}" \
         -d "${payload}"; then
         set +x
         echo "INFO: Skipped ${COMMIT_ID_FROM_TRIGGER} ${COMMENT_TRIGGER_TYPE}"
