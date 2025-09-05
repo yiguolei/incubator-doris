@@ -46,6 +46,7 @@ suite("test_array_map") {
                 '&nbsp;', ' '
             ), "Ⅰ", "I"), "Ⅱ", "II"), "Ⅲ", "III"),".", ". ");
     """
+    sql """ DROP FUNCTION IF EXISTS clean_html_tag_test(string) """
     sql """ CREATE ALIAS FUNCTION clean_html_tag_test(string) WITH  PARAMETER(html) AS REGEXP_REPLACE(html, '</?[^>]+>', ''); """
     sql """
     CREATE TABLE `mock_table` (
