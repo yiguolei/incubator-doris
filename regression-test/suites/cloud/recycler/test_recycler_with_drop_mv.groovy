@@ -64,7 +64,7 @@ suite("test_recycler_with_drop_mv") {
     logger.info("tabletIdSet1:${tabletIdSet1}")
     assertTrue(tabletIdSet1.size() > 0)
 
-    sql "create materialized view ${mvName} as select C_CUSTKEY, C_ADDRESS from ${tableName};"
+    sql "create materialized view ${mvName} as select C_CUSTKEY as C_CUSTKEY_T, C_ADDRESS as C_ADDRESS_T from ${tableName};"
     waitMvJobFinished(tableName)
 
     String[][] tabletInfoList2 = sql """ show tablets from ${tableName}; """
