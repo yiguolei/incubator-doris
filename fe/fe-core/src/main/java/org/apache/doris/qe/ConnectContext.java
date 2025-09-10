@@ -861,8 +861,6 @@ public class ConnectContext {
         // Close channel to break connection with client
         closeChannel();
         returnRows = 0;
-        deleteTempTable();
-        Env.getCurrentEnv().unregisterSessionInfo(this.sessionId);
     }
 
     /**
@@ -957,7 +955,11 @@ public class ConnectContext {
             killConnection();
         }
         // Now, cancel running query.
+<<<<<<< HEAD
         cancelQuery("cancel query by user from " + getRemoteHostPortString());
+=======
+        cancelQuery(new Status(TStatusCode.CANCELLED, "cancel query by user from " + getRemoteHostPortString()));
+>>>>>>> 829a8148894... [fix](connection)Fix kill connection will make current connection killed (#55809)
     }
 
     // kill operation with no protect by timeout.
