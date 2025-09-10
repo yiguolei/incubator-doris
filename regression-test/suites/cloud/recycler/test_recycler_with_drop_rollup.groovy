@@ -53,7 +53,7 @@ suite("test_recycler_with_drop_rollup") {
     """
 
     checkBrokerLoadFinished(loadLabel)
-    rowCount = sql "select count(*) from ${tableName}"
+    def rowCount = sql "select count(*) from ${tableName}"
     logger.info("rowCount:{}", rowCount)
     assertEquals(rowCount[0][0], 150000)
 

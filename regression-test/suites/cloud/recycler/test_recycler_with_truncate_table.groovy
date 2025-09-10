@@ -47,7 +47,7 @@ suite("test_recycler_with_truncate_table") {
                     lo_shippriority,lo_quantity,lo_extendedprice,lo_ordtotalprice,lo_discount, 
                     lo_revenue,lo_supplycost,lo_tax,lo_commitdate,lo_shipmode,lo_dummy"""
 
-    for (i = 0; i < 1; i++) {
+    for (def i = 0; i < 1; i++) {
         streamLoad {
             table tableName
 
