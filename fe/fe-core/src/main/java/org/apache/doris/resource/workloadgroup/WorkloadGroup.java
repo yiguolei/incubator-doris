@@ -843,6 +843,7 @@ public class WorkloadGroup implements Writable, GsonPostProcessable {
         properties.remove(MEMORY_LIMIT);
         properties.remove(SPILL_THRESHOLD_HIGH_WATERMARK);
         properties.remove(SPILL_THRESHOLD_LOW_WATERMARK);
+        properties.remove("write_buffer_ratio");
         // The from json method just uses reflection logic to create a new workload group
         // but workload group's contructor need create other objects, like queue, so need
         // init queue here after workload group is created from json
