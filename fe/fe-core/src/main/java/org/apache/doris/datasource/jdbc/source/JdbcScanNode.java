@@ -208,7 +208,9 @@ public class JdbcScanNode extends ExternalScanNode {
                 || jdbcType == TOdbcTableType.TRINO
                 || jdbcType == TOdbcTableType.PRESTO
                 || jdbcType == TOdbcTableType.OCEANBASE
-                || jdbcType == TOdbcTableType.GBASE)) {
+                || jdbcType == TOdbcTableType.GBASE
+                || jdbcType == TOdbcTableType.DAMENG
+                || jdbcType == TOdbcTableType.KINGBASE)) {
             sql.append(" LIMIT ").append(limit);
         }
 

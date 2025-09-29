@@ -77,6 +77,8 @@ public class JdbcResource extends Resource {
     public static final String JDBC_OCEANBASE = "jdbc:oceanbase";
     public static final String JDBC_DB2 = "jdbc:db2";
     public static final String JDBC_GBASE = "jdbc:gbase";
+    public static final String JDBC_DAMENG = "jdbc:dm";
+    public static final String JDBC_KINGBASE = "jdbc:kingbase8";
 
     public static final String MYSQL = "MYSQL";
     public static final String POSTGRESQL = "POSTGRESQL";
@@ -90,6 +92,8 @@ public class JdbcResource extends Resource {
     public static final String OCEANBASE_ORACLE = "OCEANBASE_ORACLE";
     public static final String DB2 = "DB2";
     public static final String GBASE = "GBASE";
+    public static final String DAMENG = "DAMENG";
+    public static final String KINGBASE = "KINGBASE";
 
     public static final String JDBC_PROPERTIES_PREFIX = "jdbc.";
     public static final String JDBC_URL = "jdbc_url";
@@ -333,6 +337,10 @@ public class JdbcResource extends Resource {
             return DB2;
         } else if (url.startsWith(JDBC_GBASE)) {
             return GBASE;
+        } else if (url.startsWith(JDBC_DAMENG)) {
+            return DAMENG;
+        } else if (url.startsWith(JDBC_KINGBASE)) {
+            return KINGBASE;
         }
         throw new DdlException("Unsupported jdbc database type, please check jdbcUrl: " + url);
     }
