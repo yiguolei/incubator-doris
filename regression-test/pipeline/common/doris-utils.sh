@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-function get_doris_conf_value() {
+function _get_doris_conf_value() {
     local conf_file="$1"
     local conf_key="$2"
     if [[ -z "${conf_key}" ]]; then return 1; fi
@@ -28,7 +28,7 @@ function get_doris_conf_value() {
         echo "${conf_value}"
         return 0
     else
-        echo "ERROR: can not find ${conf_key} in ${conf_file}"
+        # echo "ERROR: can not find ${conf_key} in ${conf_file}"
         return 1
     fi
 }
@@ -51,18 +51,124 @@ function set_doris_conf_value() {
 # get_doris_conf_value "$1" "$2"
 # set_doris_conf_value "$1" "$2" "$3"
 
-function start_doris_fe() {
+function get_doris_conf_value() {
+    local conf_dir="$1"
+    local conf_key="$2"
+    if [[ -z "${conf_key}" ]]; then return 1; fi
+
+    if [[ -f "${conf_dir}"/fe_custom.conf ]] &&
+        _get_doris_conf_value "${conf_dir}"/fe_custom.conf "${conf_key}"; then
+        return 0
+    fi
+    if [[ -f "${conf_dir}"/fe.conf ]] &&
+        _get_doris_conf_value "${conf_dir}"/fe.conf "${conf_key}"; then
+        return 0
+    fi
+
+    if [[ -f "${conf_dir}"/be_custom.conf ]] &&
+        _get_doris_conf_value "${conf_dir}"/be_custom.conf "${conf_key}"; then
+        return 0
+    fi
+    if [[ -f "${conf_dir}"/be.conf ]] &&
+        _get_doris_conf_value "${conf_dir}"/be.conf "${conf_key}"; then
+        return 0
+    fi
+
+    if [[ -f "${conf_dir}"/doris_cloud.conf ]] &&
+        _get_doris_conf_value "${conf_dir}"/doris_cloud.conf "${conf_key}"; then
+        return 0
+    fi
+
+    return 1
+}
+
+function start_doris_ms() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    cd "${DORIS_HOME}"/ms || return 1
+    if ! ./bin/start.sh --meta-service --daemonized; then
+        echo "ERROR: start doris meta-service failed." && return 1
+    fi
+    local i=1
+    while [[ $((i++)) -lt 5 ]]; do
+        if ! pgrep -fia 'doris_cloud --meta-service' >/dev/null; then
+            echo "ERROR: start doris meta-service failed." && return 1
+        else
+            sleep 1
+        fi
+    done
+    if [[ ${i} -ge 5 ]]; then
+        echo -e "INFO: doris meta-service started,\n$("${DORIS_HOME}"/ms/lib/doris_cloud --version)"
+    fi
+    cd - || return 1
+}
+
+function start_doris_recycler() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    cd "${DORIS_HOME}"/recycler || return 1
+    if ! ./bin/start.sh --recycler --daemonized; then
+        echo "ERROR: start doris recycler failed." && return 1
+    fi
+    local i=1
+    while [[ $((i++)) -lt 5 ]]; do
+        if ! pgrep -fia 'doris_cloud --recycler' >/dev/null; then
+            echo "ERROR: start doris recycler failed." && return 1
+        else
+            sleep 1
+        fi
+    done
+    if [[ ${i} -ge 5 ]]; then
+        echo -e "INFO: doris recycler started,\n$("${DORIS_HOME}"/ms/lib/doris_cloud --version)"
+    fi
+    cd - || return 1
+}
+
+function install_java() {
     if ! java -version >/dev/null ||
         [[ -z "$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*')" ]]; then
         sudo apt update && sudo apt install openjdk-8-jdk -y >/dev/null
     fi
-    JAVA_HOME="$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*' | sed -n '1p')"
-    export JAVA_HOME
+    # doris master branch use java-17
+    if ! java -version >/dev/null ||
+        [[ -z "$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-17-*')" ]]; then
+        sudo apt update && sudo apt install openjdk-17-jdk -y >/dev/null
+    fi
+}
+
+install_maven() {
+    if ! mvn -v >/dev/null; then
+        sudo apt update && sudo apt install maven -y >/dev/null
+        PATH="/usr/share/maven/bin:${PATH}"
+        export PATH
+    fi
+    if ! mvn -v >/dev/null; then
+        wget -c -t3 -q "${MAVEN_DOWNLOAD_URL:-https://dlcdn.apache.org/maven/maven-3/3.9.8/binaries/apache-maven-3.9.8-bin.tar.gz}"
+        tar -xf apache-maven-3.9.8-bin.tar.gz -C /usr/share/
+        PATH="/usr/share/apache-maven-3.9.8/bin:${PATH}"
+        export PATH
+    fi
+    if ! mvn -v >/dev/null; then
+        echo "ERROR: install maven failed" && return 1
+    fi
+}
+
+function start_doris_fe() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    if install_java && [[ -z "${JAVA_HOME}" ]]; then
+        # default to use java-8
+        JAVA_HOME="$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*' | sed -n '1p')"
+        export JAVA_HOME
+    fi
+    if [[ ! -f /usr/local/jacoco/lib/jacocoagent.jar ]]; then
+        rm -rf /usr/local/jacoco/ && mkdir -p /usr/local/jacoco/
+        wget -c -t3 -q "${JACOCO_DOWNLOAD_URL:-https://qa-build-hk.oss-cn-hongkong.aliyuncs.com/tools/jacoco-0.8.13.zip}"
+        if ! command -v unzip >/dev/null; then sudo apt update && sudo apt install -y unzip; fi
+        unzip -o jacoco-0.8.13.zip -d /usr/local/jacoco/ >/dev/null
+    fi
+    export JACOCO_COVERAGE_OPT="-javaagent:/usr/local/jacoco/lib/jacocoagent.jar=excludes=org.apache.doris.thrift:org.apache.doris.proto:org.apache.parquet.format:com.aliyun*:com.amazonaws*:org.apache.hadoop.hive.metastore:org.apache.parquet.format,output=file,append=true,destfile=${DORIS_HOME}/fe/fe_cov.exec"
     "${DORIS_HOME}"/fe/bin/start_fe.sh --daemon
 
     if ! mysql --version >/dev/null; then sudo apt update && sudo apt install -y mysql-client; fi
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
     local i=1
     while [[ $((i++)) -lt 60 ]]; do
@@ -70,25 +176,30 @@ function start_doris_fe() {
         if [[ -n "${fe_version}" ]] && [[ "${fe_version}" != "NULL" ]]; then
             echo "INFO: doris fe started, fe version: ${fe_version}" && return 0
         else
-            echo "${i}/60, Wait for Frontend ready, sleep 2 seconds ..." && sleep 2
+            echo "${i}/60, Wait for Frontend ready, sleep 5 seconds ..." && sleep 5
         fi
     done
-    if [[ ${i} -ge 60 ]]; then echo "ERROR: Start Doris Frontend Failed after 2 mins wait..." && return 1; fi
+    if [[ ${i} -ge 60 ]]; then echo "ERROR: Start Doris Frontend Failed after 5 mins wait..." && return 1; fi
 }
 
 function start_doris_be() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
-    if ! java -version >/dev/null ||
-        [[ -z "$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*')" ]]; then
-        sudo apt update && sudo apt install openjdk-8-jdk -y >/dev/null
+    if install_java && [[ -z "${JAVA_HOME}" ]]; then
+        # default to use java-8
+        JAVA_HOME="$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*' | sed -n '1p')"
+        export JAVA_HOME
     fi
-    JAVA_HOME="$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*' | sed -n '1p')"
-    export JAVA_HOME
+    cd "${DORIS_HOME}"/be || return 1
+    ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
+    if [[ -z "${ASAN_SYMBOLIZER_PATH}" ]]; then ASAN_SYMBOLIZER_PATH='/var/local/ldb-toolchain/bin/llvm-symbolizer'; fi
+    export ASAN_SYMBOLIZER_PATH
+    export ASAN_OPTIONS="symbolize=1:abort_on_error=1:disable_coredump=0:unmap_shadow_on_exit=1:use_sigaltstack=0:detect_leaks=0:fast_unwind_on_malloc=0:check_malloc_usable_size=0"
+    export TCMALLOC_SAMPLE_PARAMETER=524288
     sysctl -w vm.max_map_count=2000000 &&
         ulimit -n 200000 &&
         ulimit -c unlimited &&
         swapoff -a &&
-        "${DORIS_HOME}"/be/bin/start_be.sh --daemon
+        ./bin/start_be.sh --daemon
 
     sleep 2
     local i=1
@@ -100,28 +211,34 @@ function start_doris_be() {
         fi
     done
     if [[ ${i} -ge 5 ]]; then
-        echo "INFO: doris be started, be version: $("${DORIS_HOME}"/be/lib/doris_be --version)"
+        echo "INFO: doris be started, be version: $("${DORIS_HOME}"/be/bin/start_be.sh --version)"
     fi
+    cd - || return 1
 }
 
 function add_doris_be_to_fe() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
     if ! mysql --version >/dev/null; then sudo sudo apt update && apt install -y mysql-client; fi
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
-    heartbeat_service_port=$(get_doris_conf_value "${DORIS_HOME}"/be/conf/be.conf heartbeat_service_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
+    heartbeat_service_port=$(get_doris_conf_value "${DORIS_HOME}"/be/conf heartbeat_service_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
+    # try to add be, maybe Same backend already exists[127.0.0.1:9050], it's ok
     if ${cl} -e "ALTER SYSTEM ADD BACKEND '127.0.0.1:${heartbeat_service_port}';"; then echo; else echo; fi
+    check_doris_ready
+}
 
+function check_doris_ready() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
     i=1
     while [[ $((i++)) -lt 60 ]]; do
         if be_ready_count=$(${cl} -e 'show backends\G' | grep -c 'Alive: true') &&
             [[ ${be_ready_count} -eq 1 ]]; then
-            echo -e "INFO: add doris be success, be version: \n$(${cl} -e 'show backends\G' | grep 'Version')" && break
+            echo -e "INFO: Doris cluster ready, be version: \n$(${cl} -e 'show backends\G' | grep 'Version')" && break
         else
-            echo 'Wait for Backends ready, sleep 2 seconds ...' && sleep 2
+            echo 'Wait for backends ready, sleep 5 seconds ...' && sleep 5
         fi
     done
-    if [[ ${i} -ge 60 ]]; then echo "ERROR: Add Doris Backend Failed after 2 mins wait..." && return 1; fi
+    if [[ ${i} -ge 60 ]]; then echo "ERROR: Doris cluster not ready after 5 mins wait..." && return 1; fi
 
     # wait 10s for doris totally started, otherwize may encounter the error below,
     # ERROR 1105 (HY000) at line 102: errCode = 2, detailMessage = Failed to find enough backend, please check the replication num,replication tag and storage medium.
@@ -129,16 +246,170 @@ function add_doris_be_to_fe() {
 }
 
 function stop_doris() {
-    if "${DORIS_HOME}"/fe/bin/stop_fe.sh &&
-        "${DORIS_HOME}"/be/bin/stop_be.sh; then
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    if "${DORIS_HOME}"/be/bin/stop_be.sh && "${DORIS_HOME}"/fe/bin/stop_fe.sh; then
         echo "INFO: normally stoped doris"
     else
         pgrep -fi doris | xargs kill -9 &>/dev/null
         echo "WARNING: force stoped doris"
     fi
+    if [[ -f "${DORIS_HOME}"/ms/bin/stop.sh ]]; then bash "${DORIS_HOME}"/ms/bin/stop.sh; fi
+    if [[ -f "${DORIS_HOME}"/recycler/bin/stop.sh ]]; then bash "${DORIS_HOME}"/recycler/bin/stop.sh; fi
 }
 
-function restart_doris() {
+function stop_doris_grace() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    local ret=0
+    local keywords="detected memory leak|undefined-behavior|AddressSanitizer: CHECK failed"
+    sudo mkdir -p /tmp/be/bin && cp -rf "${DORIS_HOME}"/be/bin/be.pid /tmp/be/bin/be.pid
+    if timeout -v "${DORIS_STOP_GRACE_TIMEOUT:-"10m"}" bash "${DORIS_HOME}"/be/bin/stop_be.sh --grace; then
+        echo "INFO: doris be stopped gracefully."
+        if [[ -n "${DORIS_STOP_GRACE_CHECK_KEYWORD:=''}" && "${DORIS_STOP_GRACE_CHECK_KEYWORD,,}" == "true" ]]; then
+            echo "INFO: try to find keywords ${keywords} in be.out"
+            if [[ -f "${DORIS_HOME}"/be/log/be.out ]]; then
+                if grep -E "${keywords}" "${DORIS_HOME}"/be/log/be.out; then
+                    echo "##teamcity[buildProblem description='Ubsan or Lsan fail']"
+                    echo "====================================head -n 200 be/log/be.out===================================="
+                    head -n 200 "${DORIS_HOME}"/be/log/be.out
+                    echo "================================================================================================="
+                    echo "ERROR: found memory leaks or undefined behavior in be.out" && ret=1
+                else
+                    echo "INFO: no memory leaks or undefined behavior found in be.out"
+                fi
+            else
+                echo "##teamcity[buildProblem description='Stop BE grace fail']"
+                echo "ERROR: be.out not find, which is not expected" && ret=1
+            fi
+        fi
+    else
+        echo "ERROR: doris be stop grace failed." && ret=1
+    fi
+    if timeout -v "${DORIS_STOP_GRACE_TIMEOUT:-"10m"}" bash "${DORIS_HOME}"/fe/bin/stop_fe.sh --grace; then
+        echo "INFO: doris fe stopped gracefully."
+    else
+        echo "ERROR: doris fe stop grace failed." && ret=1
+    fi
+    if [[ -f "${DORIS_HOME}"/ms/bin/stop.sh ]]; then
+        sudo mkdir -p /tmp/ms/bin && cp -rf "${DORIS_HOME}"/ms/bin/doris_cloud.pid /tmp/ms/bin/doris_cloud.pid
+        if timeout -v "${DORIS_STOP_GRACE_TIMEOUT:-"10m"}" bash "${DORIS_HOME}"/ms/bin/stop.sh --grace; then
+            echo "INFO: doris ms stopped gracefully."
+            if [[ -n "${DORIS_STOP_GRACE_CHECK_KEYWORD:=''}" && "${DORIS_STOP_GRACE_CHECK_KEYWORD,,}" == "true" ]]; then
+                echo "INFO: try to find keywords ${keywords} in doris_cloud.out"
+                if [[ -f "${DORIS_HOME}"/ms/log/doris_cloud.out ]]; then
+                    if grep -E "${keywords}" "${DORIS_HOME}"/ms/log/doris_cloud.out; then
+                        echo "##teamcity[buildProblem description='Ubsan or Lsan fail']"
+                        echo "====================================head -n 200 ms/log/doris_cloud.out===================================="
+                        head -n 200 "${DORIS_HOME}"/ms/log/doris_cloud.out
+                        echo "=========================================================================================================="
+                        echo "ERROR: found memory leaks or undefined behavior in ms/log/doris_cloud.out" && ret=1
+                    else
+                        echo "INFO: no memory leaks or undefined behavior found in ms/log/doris_cloud.out"
+                    fi
+                else
+                    echo "ERROR: ms/log/doris_cloud.out not find, which is not expected" && ret=1
+                fi
+            fi
+        else
+            echo "##teamcity[buildProblem description='Stop MS grace fail']"
+            echo "ERROR: doris ms stop grace failed." && ret=1
+        fi
+    fi
+    if [[ -f "${DORIS_HOME}"/recycler/bin/stop.sh ]]; then
+        sudo mkdir -p /tmp/recycler/bin && cp -rf "${DORIS_HOME}"/recycler/bin/doris_cloud.pid /tmp/recycler/bin/doris_cloud.pid
+        if timeout -v "${DORIS_STOP_GRACE_TIMEOUT:-"10m"}" bash "${DORIS_HOME}"/recycler/bin/stop.sh --grace; then
+            echo "INFO: doris recycler stopped gracefully."
+            # if [[ -n "${DORIS_STOP_GRACE_CHECK_KEYWORD:=''}" && "${DORIS_STOP_GRACE_CHECK_KEYWORD,,}" == "true" ]]; then
+            #     echo "INFO: try to find keywords ${keywords} in doris_cloud.out"
+            #     if [[ -f "${DORIS_HOME}"/recycler/log/doris_cloud.out ]]; then
+            #         if grep -E "${keywords}" "${DORIS_HOME}"/recycler/log/doris_cloud.out; then
+            #             echo "##teamcity[buildProblem description='Ubsan or Lsan fail']"
+            #             echo "=================================head -n 200 recycler/log/doris_cloud.out================================="
+            #             head -n 200 "${DORIS_HOME}"/recycler/log/doris_cloud.out
+            #             echo "=========================================================================================================="
+            #             echo "ERROR: found memory leaks or undefined behavior in recycler/log/doris_cloud.out" && ret=1
+            #         else
+            #             echo "INFO: no memory leaks or undefined behavior found in recycler/log/doris_cloud.out"
+            #         fi
+            #     else
+            #         echo "ERROR: recycler/log/doris_cloud.out not find, which is not expected" && ret=1
+            #     fi
+            # fi
+        else
+            echo "##teamcity[buildProblem description='Stop RECYCLER grace fail']"
+            echo "ERROR: doris recycler stop grace failed." && ret=1
+        fi
+    fi
+    return "${ret}"
+}
+
+function clean_fdb() {
+    instance_id="$1"
+    if [[ -z "${instance_id:-}" ]]; then return 1; fi
+    if fdbcli --exec "writemode on;clearrange \x01\x10instance\x00\x01\x10${instance_id}\x00\x01 \x01\x10instance\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10meta\x00\x01\x10${instance_id}\x00\x01 \x01\x10meta\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10txn\x00\x01\x10${instance_id}\x00\x01 \x01\x10txn\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10version\x00\x01\x10${instance_id}\x00\x01 \x01\x10version\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10stats\x00\x01\x10${instance_id}\x00\x01 \x01\x10stats\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10recycle\x00\x01\x10${instance_id}\x00\x01 \x01\x10recycle\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10job\x00\x01\x10${instance_id}\x00\x01 \x01\x10job\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x01\x10copy\x00\x01\x10${instance_id}\x00\x01 \x01\x10copy\x00\x01\x10${instance_id}\x00\xff\x00\x01" &&
+        fdbcli --exec "writemode on;clearrange \x00 \xff" &&
+        rm -f /var/log/foundationdb/*; then
+        echo "INFO: fdb cleaned."
+    else
+        echo "ERROR: failed to clean fdb" && return 1
+    fi
+}
+
+function install_fdb() {
+    if fdbcli --exec 'status' >/dev/null; then return; fi
+    wget -c -t3 -q https://github.com/apple/foundationdb/releases/download/7.1.23/foundationdb-clients_7.1.23-1_amd64.deb
+    wget -c -t3 -q https://github.com/apple/foundationdb/releases/download/7.1.23/foundationdb-server_7.1.23-1_amd64.deb
+    sudo dpkg -i foundationdb-clients_7.1.23-1_amd64.deb foundationdb-server_7.1.23-1_amd64.deb
+    # /usr/lib/foundationdb/fdbmonitor --daemonize
+    # fdbcli --exec 'configure new single ssd'
+    if fdbcli --exec 'status'; then
+        echo "INFO: foundationdb installed."
+    else
+        return 1
+    fi
+}
+
+deploy_doris_sql_converter() {
+    # https://doris.apache.org/zh-CN/docs/dev/lakehouse/sql-dialect/
+    if ${DEBUG:-false}; then
+        download_url="https://selectdb-doris.oss-cn-beijing.aliyuncs.com/doris-sql-convertor/doris-sql-convertor-1.0.6-bin-x86.tar.gz"
+    else
+        download_url="${doris_sql_converter_download_url}"
+    fi
+    if [[ -z "${doris_sql_converter_download_url}" ]]; then
+        echo "INFO: doris_sql_converter_download_url not set, skip download doris-sql-converter." && return 0
+    fi
+    if wget -c -t3 -q "${download_url}"; then
+        download_file_name="$(basename "${download_url}")"
+        extract_dir_name="doris_sql_converter"
+        mkdir -p "${extract_dir_name}"
+        tar -xf "${download_file_name}" --strip-components 1 -C "${extract_dir_name}"
+        if [[ ! -f "${extract_dir_name}"/conf/config.conf ]]; then
+            echo "ERROR: miss file ${extract_dir_name}/conf/config.conf" && return 1
+        fi
+        doris_sql_converter_port="${doris_sql_converter_port:-5001}"
+        sed -i "/port=.*/d" "${extract_dir_name}"/conf/config.conf
+        echo "port=${doris_sql_converter_port}" >>"${extract_dir_name}"/conf/config.conf
+        echo "INFO: changed doris-sql-converter port to ${doris_sql_converter_port}"
+        if bash "${extract_dir_name}"/bin/stop.sh && fuser -k 5002/tcp; then echo; fi
+        if bash "${extract_dir_name}"/bin/start.sh &&
+            sleep 2s && lsof -i:"${doris_sql_converter_port}"; then
+            echo "INFO: doris-sql-converter start success."
+        else
+            echo "ERROR: doris-sql-converter start failed." && return 1
+        fi
+    else
+        echo "ERROR: download doris-sql-converter ${download_url} failed." && return 1
+    fi
+}
+
+function _restart_doris() {
     if stop_doris; then echo; fi
     if ! start_doris_fe; then return 1; fi
     if ! start_doris_be; then return 1; fi
@@ -148,14 +419,19 @@ function restart_doris() {
             [[ ${be_ready_count} -eq 1 ]]; then
             echo -e "INFO: ${be_ready_count} Backends ready, version: \n$(${cl} -e 'show backends\G' | grep 'Version')" && break
         else
-            echo 'Wait for Backends ready, sleep 2 seconds ...' && sleep 2
+            echo 'Wait for Backends ready, sleep 5 seconds ...' && sleep 5
         fi
     done
-    if [[ ${i} -ge 60 ]]; then echo "ERROR: Backend not ready after 2 mins wait..." && return 1; fi
+    if [[ ${i} -ge 60 ]]; then echo "ERROR: Backend not ready after 5 mins wait..." && return 1; fi
 
     # wait 10s for doris totally started, otherwize may encounter the error below,
     # ERROR 1105 (HY000) at line 102: errCode = 2, detailMessage = Failed to find enough backend, please check the replication num,replication tag and storage medium.
     sleep 10s
+}
+
+function restart_doris() {
+    # restart BE may block on JVM_MonitorWait() for a long time, here try twice
+    _restart_doris || _restart_doris
 }
 
 function check_tpch_table_rows() {
@@ -164,7 +440,7 @@ function check_tpch_table_rows() {
     scale_factor="$2"
     if [[ -z "${scale_factor}" ]]; then return 1; fi
 
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
     declare -A table_rows
     if [[ "${scale_factor}" == "1" ]]; then
@@ -189,7 +465,7 @@ function check_tpcds_table_rows() {
     scale_factor="$2"
     if [[ -z "${scale_factor}" ]]; then return 1; fi
 
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
     declare -A table_rows
     if [[ "${scale_factor}" == "1" ]]; then
@@ -216,7 +492,7 @@ function check_clickbench_table_rows() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
     db_name="$1"
     if [[ -z "${db_name}" ]]; then return 1; fi
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
     declare -A table_rows
     table_rows=(['hits']=99997497)
@@ -295,7 +571,7 @@ get_session_variable() {
     "
     if [[ -z "$1" ]]; then echo "${usage}" && return 1; else sv="$1"; fi
 
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
 
     if ret=$(${cl} -e"show variables like '${sv}'\G" | grep " Value: "); then
@@ -305,37 +581,14 @@ get_session_variable() {
     fi
 }
 
-set_session_variables_from_file() {
-    usage="
-    usage:
-        set_session_variables_from_file FILE
-        FILE content lile '
-        session_variable_key session_variable_value
-        ...
-        '
-    "
+show_session_variables() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
-    if [[ -z "$1" ]]; then echo "${usage}" && return 1; else sv_file="$1"; fi
-
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
-    cl="mysql -h127.0.0.1 -P${query_port} -uroot "
-
-    ret=0
-    while read -r sv; do
-        if [[ "${sv}" == "#"* ]]; then continue; fi
-        k=$(echo "${sv}" | awk '{print $1}')
-        v=$(echo "${sv}" | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
-        if ${cl} -e"set global ${k}=${v};"; then
-            if [[ "$(get_session_variable "${k}" | tr '[:upper:]' '[:lower:]')" == "${v}" ]]; then
-                echo "INFO:      set global ${k}=${v};"
-            else
-                echo "ERROR:     set global ${k}=${v};" && ret=1
-            fi
-        else
-            ret=1
-        fi
-    done <"${sv_file}"
-    return "${ret}"
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
+    if mysql -h127.0.0.1 -P"${query_port}" -uroot -e"show session variables;"; then
+        return
+    else
+        return 1
+    fi
 }
 
 set_session_variable() {
@@ -343,9 +596,9 @@ set_session_variable() {
     k="$1"
     v="$2"
     if [[ -z "${v}" ]]; then return 1; fi
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
-    if ${cl} -e"set global ${k}=${v};"; then
+    if ${cl} -e"set global ${k}='${v}';"; then
         if [[ "$(get_session_variable "${k}" | tr '[:upper:]' '[:lower:]')" == "${v}" ]]; then
             echo "INFO:      set global ${k}=${v};"
         else
@@ -356,10 +609,20 @@ set_session_variable() {
     fi
 }
 
+set_default_storage_vault() {
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
+    cl="mysql -h127.0.0.1 -P${query_port} -uroot "
+    if ${cl} -e"set built_in_storage_vault as default storage vault;"; then
+        echo "INFO:      set built_in_storage_vault as default storage vault;"
+    else
+        echo "ERROR:     set built_in_storage_vault as default storage vault;" && return 1
+    fi
+}
+
 function reset_doris_session_variables() {
     # reset all session variables to default
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
-    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf/fe.conf query_port)
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
     cl="mysql -h127.0.0.1 -P${query_port} -uroot "
     # Variable_name    Value    Default_Value    Changed
     # "\x27" means single quote in awk
@@ -376,17 +639,179 @@ function reset_doris_session_variables() {
     fi
 }
 
+function set_doris_session_variables_from_file() {
+    # set session variables from file
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    session_variables_file="$1"
+    if [[ -z ${session_variables_file} ]]; then echo "ERROR: session_variables_file required" && return 1; fi
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
+    if mysql -h127.0.0.1 -P"${query_port}" -uroot -e"source ${session_variables_file};"; then
+        echo "INFO: set session variables from file ${session_variables_file}, succeed"
+    else
+        echo "ERROR: set session variables from file ${session_variables_file}, failed" && return 1
+    fi
+}
+
+_monitor_regression_log() {
+    if ! command -v inotifywait >/dev/null; then
+        apt install inotify-tools -y
+    fi
+
+    # Path to the log directory
+    local LOG_DIR="${DORIS_HOME}"/regression-test/log
+
+    # keyword to search for in the log files
+    local KEYWORD="Reach limit of connections"
+
+    local query_port
+    query_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf query_port)
+
+    echo "INFO: start monitoring the log files in ${LOG_DIR} for the keyword '${KEYWORD}'"
+
+    local start_row=1
+    local filepath=""
+    set +x
+    # Monitor the log directory for new files and changes, only one file
+    # shellcheck disable=SC2034
+    inotifywait -m -e modify "${LOG_DIR}" | while read -r directory events filename; do
+        filepath="${directory}${filename}"
+        if [[ ! -f "${filepath}" ]]; then continue; fi
+        total_rows=$(wc -l "${filepath}" | awk '{print $1}')
+        if [[ -n ${total_rows} ]] && [[ ${start_row} -ge ${total_rows} ]]; then
+            start_row=${total_rows}
+        fi
+        # shellcheck disable=SC2250
+        if sed -n "${start_row},\$p" "${filepath}" | grep -a -q "${KEYWORD}"; then
+            matched=$(grep -a -n "${KEYWORD}" "${filepath}")
+            start_row=$(echo "${matched}" | tail -n1 | cut -d: -f1)
+            echo "WARNING: find '${matched}' in ${filepath}, run 'show processlist;' to check the connections" | tee -a "${DORIS_HOME}"/fe/log/monitor_regression_log.out
+            mysql -h127.0.0.1 -P"${query_port}" -uroot -e'show processlist;' | tee -a "${DORIS_HOME}"/fe/log/monitor_regression_log.out
+        fi
+        start_row=$((start_row + 1))
+        # echo "start_row ${start_row}" | tee -a "${DORIS_HOME}"/fe/log/monitor_regression_log.out
+    done
+
+}
+
 archive_doris_logs() {
     if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
-    archive_name="$1"
-    if [[ -z ${archive_name} ]]; then echo "ERROR: archive file name required" && return 1; fi
+    local archive_name="$1"
+    if [[ -z ${archive_name} || ${archive_name} != *".tar.gz" ]]; then
+        echo "USAGE: ${FUNCNAME[0]} xxxx.tar.gz" && return 1
+    fi
+    local archive_dir="${archive_name%.tar.gz}"
+    rm -rf "${DORIS_HOME:?}/${archive_dir}"
+    mkdir -p "${DORIS_HOME}/${archive_dir}"
+    (
+        cd "${DORIS_HOME}" || return 1
+        cp --parents -rf "fe/conf" "${archive_dir}"/
+        cp --parents -rf "fe/log" "${archive_dir}"/
+        cp --parents -rf "be/conf" "${archive_dir}"/
+        cp --parents -rf "be/log" "${archive_dir}"/
+        if [[ -d "${DORIS_HOME}"/regression-test/log ]]; then
+            # try to hide ak and sk
+            if sed -i "s/${cos_ak:-}//g;s/${cos_sk:-}//g" regression-test/log/* &>/dev/null; then :; fi
+            cp --parents -rf "regression-test/log" "${archive_dir}"/
+        fi
+        if [[ -d "${DORIS_HOME}"/../regression-test/conf ]]; then
+            # try to hide ak and sk
+            if sed -i "s/${cos_ak:-}//g;s/${cos_sk:-}//g" ../regression-test/conf/* &>/dev/null; then :; fi
+            mkdir -p "${archive_dir}"/regression-test/conf
+            cp -rf ../regression-test/conf/* "${archive_dir}"/regression-test/conf/
+        fi
+        if [[ -f "${DORIS_HOME}"/session_variables ]]; then
+            cp --parents -rf "session_variables" "${archive_dir}"/
+        fi
+        if [[ -d "${DORIS_HOME}"/ms ]]; then
+            mkdir -p "${archive_dir}"/foundationdb/log
+            cp -rf /var/log/foundationdb/* "${archive_dir}"/foundationdb/log/
+            cp --parents -rf "ms/conf" "${archive_dir}"/
+            cp --parents -rf "ms/log" "${archive_dir}"/
+        fi
+        if [[ -d "${DORIS_HOME}"/recycler ]]; then
+            cp --parents -rf "recycler/conf" "${archive_dir}"/
+            cp --parents -rf "recycler/log" "${archive_dir}"/
+        fi
+        if [[ -d "${DORIS_HOME}"/be/storage/error_log ]]; then
+            cp --parents -rf "be/storage/error_log" "${archive_dir}"/
+        fi
+    )
+
     if tar -I pigz \
         --directory "${DORIS_HOME}" \
         -cf "${DORIS_HOME}/${archive_name}" \
-        fe/conf \
-        fe/log \
-        be/conf \
-        be/log; then
+        "${archive_dir}"; then
+        rm -rf "${DORIS_HOME:?}/${archive_dir}"
+        echo "${DORIS_HOME}/${archive_name}"
+    else
+        return 1
+    fi
+}
+
+wait_coredump_file_ready() {
+    # if the size of coredump file does not changed in 5 seconds, we think it has generated done
+    local coredump_file="$1"
+    if [[ -z "${coredump_file}" ]]; then echo "ERROR: coredump_file is required" && return 1; fi
+    initial_size=$(stat -c %s "${coredump_file}")
+    while true; do
+        sleep 5
+        current_size=$(stat -c %s "${coredump_file}")
+        if [[ ${initial_size} -eq ${current_size} ]]; then
+            break
+        else
+            initial_size=${current_size}
+        fi
+    done
+}
+
+clear_coredump() {
+    echo -e "INFO: clear coredump files \n$(ls /var/lib/apport/coredump/)"
+    rm -rf /var/lib/apport/coredump/*
+}
+
+archive_doris_coredump() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    archive_name="$1"
+    COREDUMP_SIZE_THRESHOLD="${COREDUMP_SIZE_THRESHOLD:-85899345920}" # if coredump size over 80G, do not archive"
+    if [[ -z ${archive_name} ]]; then echo "ERROR: archive file name required" && return 1; fi
+    local archive_dir="${archive_name%.tar.gz}"
+    rm -rf "${DORIS_HOME:?}/${archive_dir}"
+    mkdir -p "${DORIS_HOME}/${archive_dir}"
+    declare -A pids
+    pids['be']="$(cat /tmp/be/bin/be.pid)"
+    pids['ms']="$(cat /tmp/ms/bin/doris_cloud.pid)"
+    pids['recycler']="$(cat /tmp/recycler/bin/doris_cloud.pid)"
+    local has_core=false
+    for p in "${!pids[@]}"; do
+        pid="${pids[${p}]}"
+        if [[ -z "${pid}" ]]; then continue; fi
+        if coredump_file=$(find /var/lib/apport/coredump/ -maxdepth 1 -type f -name "core.*${pid}.*") &&
+            [[ -n "${coredump_file}" ]]; then
+            wait_coredump_file_ready "${coredump_file}"
+            file_size=$(stat -c %s "${coredump_file}")
+            if ((file_size <= COREDUMP_SIZE_THRESHOLD)); then
+                mkdir -p "${DORIS_HOME}/${archive_dir}/${p}"
+                if [[ "${p}" == "be" ]]; then
+                    mv "${DORIS_HOME}"/be/lib/doris_be "${DORIS_HOME}/${archive_dir}/${p}"
+                elif [[ "${p}" == "ms" ]]; then
+                    mv "${DORIS_HOME}"/ms/lib/doris_cloud "${DORIS_HOME}/${archive_dir}/${p}"
+                elif [[ "${p}" == "recycler" ]]; then
+                    mv "${DORIS_HOME}"/recycler/lib/doris_cloud "${DORIS_HOME}/${archive_dir}/${p}"
+                fi
+                mv "${coredump_file}" "${DORIS_HOME}/${archive_dir}/${p}"
+                has_core=true
+            else
+                echo -e "\n\n\n\nERROR: --------------------tail -n 100 ${DORIS_HOME}/be/log/be.out--------------------"
+                tail -n 100 "${DORIS_HOME}"/be/log/be.out
+            fi
+        fi
+    done
+
+    if ${has_core} && tar -I pigz \
+        --directory "${DORIS_HOME}" \
+        -cf "${DORIS_HOME}/${archive_name}" \
+        "${archive_dir}"; then
+        rm -rf "${DORIS_HOME:?}/${archive_dir}"
         echo "${DORIS_HOME}/${archive_name}"
     else
         return 1
@@ -409,4 +834,204 @@ print_doris_be_log() {
     echo -e "\n\n\n\nWARNING: --------------------tail -n 100 ${DORIS_HOME}/be/log/be.INFO--------------------"
     tail -n 100 "${DORIS_HOME}"/be/log/be.INFO
     echo -e "WARNING: ----------------------------------------\n\n\n\n"
+}
+
+print_fdb_log() {
+    echo
+}
+
+print_doris_conf() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    echo -e "\n\n\n\nINFO: --------------------cat ${DORIS_HOME}/fe/conf/fe.conf--------------------"
+    cat "${DORIS_HOME}"/fe/conf/fe.conf
+    if [[ -f ${DORIS_HOME}/fe/conf/fe_custom.conf ]]; then
+        echo -e "\n\n\n\nINFO: --------------------cat ${DORIS_HOME}/fe/conf/fe_custom.conf--------------------"
+        cat "${DORIS_HOME}"/fe/conf/fe_custom.conf
+    fi
+    echo -e "\n\n\n\nINFO: --------------------tail -n 100 ${DORIS_HOME}/be/conf/be.conf--------------------"
+    tail -n 100 "${DORIS_HOME}"/be/conf/be.conf
+    if [[ -f ${DORIS_HOME}/be/conf/be_custom.conf ]]; then
+        echo -e "\n\n\n\nINFO: --------------------cat ${DORIS_HOME}/be/conf/be_custom.conf--------------------"
+        cat "${DORIS_HOME}"/be/conf/be_custom.conf
+    fi
+    if [[ -f ${DORIS_HOME}/ms/conf/doris_cloud.conf ]]; then
+        echo -e "\n\n\n\nINFO: --------------------cat ${DORIS_HOME}/ms/conf/doris_cloud.conf--------------------"
+        cat "${DORIS_HOME}"/ms/conf/doris_cloud.conf
+    fi
+    if [[ -f ${DORIS_HOME}/recycler/conf/doris_cloud.conf ]]; then
+        echo -e "\n\n\n\nINFO: --------------------cat ${DORIS_HOME}/recycler/conf/doris_cloud.conf--------------------"
+        cat "${DORIS_HOME}"/recycler/conf/doris_cloud.conf
+    fi
+    echo -e "INFO: ----------------------------------------\n\n\n\n"
+}
+
+function create_warehouse() {
+    if [[ -z ${oss_ak} || -z ${oss_sk} ]]; then
+        echo "ERROR: env oss_ak and oss_sk are required." && return 1
+    fi
+    if curl "127.0.0.1:5000/MetaService/http/create_instance?token=greedisgood9999" -d "{
+        \"instance_id\": \"cloud_instance_0\",
+        \"name\":\"cloud_instance_0\",
+        \"user_id\":\"user-id\",
+        \"obj_info\": {
+            \"provider\": \"OSS\",
+            \"region\": \"oss-cn-hongkong\",
+            \"bucket\": \"doris-community-test\",
+            \"prefix\": \"cloud_regression\",
+            \"endpoint\": \"oss-cn-hongkong-internal.aliyuncs.com\",
+            \"external_endpoint\": \"oss-cn-hongkong-internal.aliyuncs.com\",
+            \"ak\": \"${oss_ak}\",
+            \"sk\": \"${oss_sk}\"
+        }
+    }"; then
+        echo
+    else
+        return 1
+    fi
+}
+
+function create_warehouse_vault() {
+    if [[ -z ${oss_ak} || -z ${oss_sk} ]]; then
+        echo "ERROR: env oss_ak and oss_sk are required." && return 1
+    fi
+
+    if curl "127.0.0.1:5000/MetaService/http/create_instance?token=greedisgood9999" -d "{
+        \"instance_id\": \"cloud_instance_0\",
+        \"name\":\"cloud_instance_0\",
+        \"user_id\":\"user-id\",
+        \"vault\": {
+            \"obj_info\": {
+                \"provider\": \"OSS\",
+                \"region\": \"oss-cn-hongkong\",
+                \"bucket\": \"doris-community-test\",
+                \"prefix\": \"cloud_regression_vault\",
+                \"endpoint\": \"oss-cn-hongkong-internal.aliyuncs.com\",
+                \"external_endpoint\": \"oss-cn-hongkong-internal.aliyuncs.com\",
+                \"ak\": \"${oss_ak}\",
+                \"sk\": \"${oss_sk}\"
+            }
+        }
+    }"; then
+        echo
+    else
+        return 1
+    fi
+}
+
+function warehouse_add_fe() {
+    local ret
+    local edit_log_port
+    edit_log_port=$(get_doris_conf_value "${DORIS_HOME}"/fe/conf edit_log_port)
+    if curl "127.0.0.1:5000/MetaService/http/add_cluster?token=greedisgood9999" -d "{
+        \"instance_id\": \"cloud_instance_0\",
+        \"cluster\":{
+            \"type\":\"SQL\",
+            \"cluster_name\":\"RESERVED_CLUSTER_NAME_FOR_SQL_SERVER\",
+            \"cluster_id\":\"RESERVED_CLUSTER_ID_FOR_SQL_SERVER\",
+            \"nodes\":[
+                {
+                    \"cloud_unique_id\":\"cloud_unique_id_sql_server00\",
+                    \"ip\":\"127.0.0.1\",
+                    \"edit_log_port\":\"${edit_log_port}\",
+                    \"node_type\":\"FE_MASTER\"
+                }
+            ]
+        }
+    }"; then
+        # check
+        if ret=$(curl "127.0.0.1:5000/MetaService/http/get_cluster?token=greedisgood9999" -d "{
+            \"instance_id\": \"cloud_instance_0\",
+            \"cloud_unique_id\":\"cloud_unique_id_sql_server00\",
+            \"cluster_name\":\"RESERVED_CLUSTER_NAME_FOR_SQL_SERVER\",
+            \"cluster_id\":\"RESERVED_CLUSTER_ID_FOR_SQL_SERVER\"
+        }"); then
+            echo -e "warehouse_add_fe:\n${ret}"
+        fi
+    else
+        return 1
+    fi
+
+}
+
+function warehouse_add_be() {
+    local ret
+    local heartbeat_service_port
+    heartbeat_service_port=$(get_doris_conf_value "${DORIS_HOME}"/be/conf heartbeat_service_port)
+    if curl "127.0.0.1:5000/MetaService/http/add_cluster?token=greedisgood9999" -d "{
+        \"instance_id\": \"cloud_instance_0\",
+        \"cluster\":{
+            \"type\":\"COMPUTE\",
+            \"cluster_name\":\"cluster_name0\",
+            \"cluster_id\":\"cluster_id0\",
+            \"nodes\":[
+                {
+                    \"cloud_unique_id\":\"cloud_unique_id_compute_node0\",
+                    \"ip\":\"127.0.0.1\",
+                    \"heartbeat_port\":\"${heartbeat_service_port}\"
+                }
+            ]
+        }
+    }"; then
+        # check
+        if ret=$(curl "127.0.0.1:5000/MetaService/http/get_cluster?token=greedisgood9999" -d "{
+            \"instance_id\": \"cloud_instance_0\",
+            \"cloud_unique_id\":\"cloud_unique_id_compute_node0\",
+            \"cluster_name\":\"cluster_name0\",
+            \"cluster_id\":\"cluster_id0\"
+        }"); then
+            echo -e "warehouse_add_be:\n${ret}"
+        fi
+    else
+        return 1
+    fi
+}
+
+function check_if_need_gcore() {
+    exit_flag="$1"
+    if [[ ${exit_flag} == "124" ]]; then # 124 is from command timeout
+        echo "INFO: run regression timeout, gcore to find out reason"
+        be_pid=$(pgrep "doris_be")
+        if [[ -n "${be_pid}" ]]; then
+            kill -ABRT "${be_pid}"
+            sleep 10
+        fi
+    else
+        echo "ERROR: exit_flag ${exit_flag} is not 124(timeout), no need to gcore" && return 1
+    fi
+}
+
+prepare_java_udf() {
+    if [[ ! -d "${DORIS_HOME:-}" ]]; then return 1; fi
+    # custom_lib相关的case需要在fe启动前把编译好的jar放到 $DORIS_HOME/fe/custom_lib/
+    install_java
+    install_maven
+    OLD_JAVA_HOME=${JAVA_HOME}
+    JAVA_HOME="$(find /usr/lib/jvm -maxdepth 1 -type d -name 'java-8-*' | sed -n '1p')"
+    export JAVA_HOME
+    if bash "${DORIS_HOME}"/../run-regression-test.sh --clean &&
+        bash "${DORIS_HOME}"/../run-regression-test.sh --compile; then
+        echo
+    else
+        echo "ERROR: failed to compile java udf"
+    fi
+    JAVA_HOME=${OLD_JAVA_HOME}
+    export JAVA_HOME
+
+    if ls "${DORIS_HOME}"/fe/custom_lib/*.jar &&
+        ls "${DORIS_HOME}"/be/custom_lib/*.jar; then
+        echo "INFO: java udf prepared."
+    else
+        echo "ERROR: failed to prepare java udf"
+        return 1
+    fi
+}
+
+function print_running_pipeline_tasks() {
+    webserver_port=$(get_doris_conf_value "${DORIS_HOME}"/be/conf webserver_port)
+    mkdir -p "${DORIS_HOME}"/be/log/
+    echo "------------------------${FUNCNAME[0]}--------------------------"
+    echo "curl -m 10 http://127.0.0.1:${webserver_port}/api/running_pipeline_tasks/30"
+    echo ""
+    curl -m 10 "http://127.0.0.1:${webserver_port}/api/running_pipeline_tasks/30" 2>&1 | tee "${DORIS_HOME}"/be/log/running_pipeline_tasks_30
+    echo "------------------------${FUNCNAME[0]}--------------------------"
 }

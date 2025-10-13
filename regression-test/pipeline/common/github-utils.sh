@@ -22,8 +22,8 @@ function create_an_issue_comment() {
     if [[ -z "${COMMENT_BODY}" ]]; then return 1; fi
     if [[ -z "${GITHUB_TOKEN}" ]]; then return 1; fi
 
-    local OWNER='apache'
-    local REPO='doris'
+    local OWNER='selectdb'
+    local REPO='selectdb-core'
     COMMENT_BODY=$(echo "${COMMENT_BODY}" | sed -e ':a;N;$!ba;s/\t/\\t/g;s/\n/\\n/g') # 将所有的 Tab字符替换为\t 换行符替换为\n
     if ret=$(curl -s \
         -X POST \
@@ -59,7 +59,7 @@ function create_an_issue_comment_tpch() {
 
 \`\`\`
 machine: '${machine}'
-scripts: https://github.com/apache/doris/tree/master/tools/tpch-tools
+scripts: https://github.com/selectdb/selectdb-core/tree/master/tools/tpch-tools
 ${COMMENT_BODY_DETAIL}
 \`\`\`
 </details>
@@ -78,7 +78,7 @@ function create_an_issue_comment_tpcds() {
 
 \`\`\`
 machine: '${machine}'
-scripts: https://github.com/apache/doris/tree/master/tools/tpcds-tools
+scripts: https://github.com/selectdb/selectdb-core/tree/master/tools/tpcds-tools
 ${COMMENT_BODY_DETAIL}
 \`\`\`
 </details>
@@ -97,7 +97,7 @@ function create_an_issue_comment_clickbench() {
 
 \`\`\`
 machine: '${machine}'
-scripts: https://github.com/apache/doris/tree/master/tools/clickbench-tools
+scripts: https://github.com/selectdb/selectdb-core/tree/master/tools/clickbench-tools
 ${COMMENT_BODY_DETAIL}
 \`\`\`
 </details>
@@ -125,8 +125,8 @@ _get_pr_changed_files_count() {
         return 1
     fi
 
-    OWNER="${OWNER:=apache}"
-    REPO="${REPO:=doris}"
+    OWNER="${OWNER:=selectdb}"
+    REPO="${REPO:=selectdb-core}"
     try_times=10
     while [[ ${try_times} -gt 0 ]]; do
         set -x
@@ -147,7 +147,7 @@ _get_pr_changed_files_count() {
 _get_pr_changed_files() {
     usage_str="Usage:
     _get_pr_changed_files <PULL_NUMBER> [OPTIONS]
-    note: https://github.com/apache/doris/pull/13259, PULL_NUMBER is 13259
+    note: https://github.com/selectdb/selectdb-core/pull/13259, PULL_NUMBER is 13259
     OPTIONS can be one of [all|added|modified|removed], default is all
     "
     if [[ -z "$1" ]]; then echo -e "${usage_str}" && return 1; fi
@@ -156,7 +156,7 @@ _get_pr_changed_files() {
 
     PULL_NUMBER="$1"
     which_file="$2"
-    pr_url="https://github.com/${OWNER:=apache}/${REPO:=doris}/pull/${PULL_NUMBER}"
+    pr_url="https://github.com/${OWNER:=selectdb}/${REPO:=selectdb-core}/pull/${PULL_NUMBER}"
     # The number of results per page (max 100), Default 30.
     per_page=100
     file_name='pr_changed_files'
@@ -195,7 +195,7 @@ _get_pr_changed_files() {
     echo "${removed_files}" >removed_files
 
     echo -e "
-https://github.com/apache/doris/pull/${PULL_NUMBER}/files all change files:
+https://github.com/selectdb/selectdb-core/pull/${PULL_NUMBER}/files all change files:
 ---------------------------------------------------------------"
     if [[ "${which_file:-all}" == "all" ]]; then
         echo -e "${all_files}\n"
@@ -245,6 +245,7 @@ file_changed_fe_ut() {
     if [[ -z ${all_files} ]]; then echo "return need" && return 0; fi
     for af in ${all_files}; do
         if [[ "${af}" == 'fe'* ]] ||
+            [[ "${af}" == 'gensrc'* ]] ||
             [[ "${af}" == 'fe_plugins'* ]] ||
             [[ "${af}" == 'bin/start_fe.sh' ]] ||
             [[ "${af}" == 'docs/zh-CN/docs/sql-manual/'* ]] ||
@@ -262,6 +263,8 @@ file_changed_be_ut() {
     if [[ -z ${all_files} ]]; then echo "return need" && return 0; fi
     for af in ${all_files}; do
         if [[ "${af}" == 'be'* ]] ||
+            [[ "${af}" == 'gensrc'* ]] ||
+            [[ "${af}" == 'common/cpp'* ]] ||
             [[ "${af}" == 'contrib'* ]] ||
             [[ "${af}" == 'thirdparty'* ]] ||
             [[ "${af}" == 'bin/start_be.sh' ]] ||
@@ -271,6 +274,58 @@ file_changed_be_ut() {
         fi
     done
     echo "return no need" && return 1
+}
+
+file_changed_cloud_ut() {
+    local all_files
+    all_files=$(cat all_files)
+    if _only_modified_regression_conf; then echo "return no need" && return 1; fi
+    if [[ -z ${all_files} ]]; then echo "return need" && return 0; fi
+    for af in ${all_files}; do
+        if [[ "${af}" == 'cloud/src/'* ]] ||
+            [[ "${af}" == 'cloud/script/'* ]] ||
+            [[ "${af}" == 'gensrc'* ]] ||
+            [[ "${af}" == 'common/cpp'* ]] ||
+            [[ "${af}" == 'cloud/test/'* ]]; then
+            echo "cloud-ut related file changed, return need" && return 0
+        fi
+    done
+    echo "return no need" && return 1
+}
+
+file_changed_cloud_p0() {
+    local all_files
+    all_files=$(cat all_files)
+    if _only_modified_regression_conf; then echo "return no need" && return 1; fi
+    if [[ -z ${all_files} ]]; then echo "return need" && return 0; fi
+    for af in ${all_files}; do
+        if [[ "${af}" == 'be'* ]] ||
+            [[ "${af}" == 'bin'* ]] ||
+            [[ "${af}" == 'conf'* ]] ||
+            [[ "${af}" == 'contrib'* ]] ||
+            [[ "${af}" == 'fe'* ]] ||
+            [[ "${af}" == 'fe_plugins'* ]] ||
+            [[ "${af}" == 'gensrc'* ]] ||
+            [[ "${af}" == 'regression-test'* ]] ||
+            [[ "${af}" == 'thirdparty'* ]] ||
+            [[ "${af}" == 'docker'* ]] ||
+            [[ "${af}" == 'ui'* ]] ||
+            [[ "${af}" == 'webroot'* ]] ||
+            [[ "${af}" == 'build.sh' ]] ||
+            [[ "${af}" == 'env.sh' ]] ||
+            [[ "${af}" == 'run-regression-test.sh' ]] ||
+            [[ "${af}" == 'cloud/CMakeLists.txt' ]] ||
+            [[ "${af}" == 'cloud/src/'* ]] ||
+            [[ "${af}" == 'cloud/cmake/'* ]] ||
+            [[ "${af}" == 'cloud/test/'* ]]; then
+            echo "cloud-p0 related file changed, return need" && return 0
+        fi
+    done
+    echo "return no need" && return 1
+}
+
+file_changed_cloud_p1() {
+    file_changed_cloud_p0
 }
 
 file_changed_regression_p0() {
@@ -322,6 +377,7 @@ file_changed_performance() {
             [[ "${af}" == 'regression-test/pipeline/common/doris-utils.sh' ]] ||
             [[ "${af}" == 'regression-test/pipeline/common/oss-utils.sh' ]] ||
             [[ "${af}" == 'regression-test/pipeline/performance/'* ]] ||
+            [[ "${af}" == 'tools/clickbench-tools/run-clickbench-queries.sh' ]] ||
             [[ "${af}" == 'tools/tpch-tools/bin/run-tpch-queries.sh' ]] ||
             [[ "${af}" == 'tools/tpcds-tools/bin/run-tpcds-queries.sh' ]] ||
             [[ "${af}" == 'regression-test/pipeline/tpch/tpch-sf100/'* ]]; then
@@ -329,4 +385,21 @@ file_changed_performance() {
         fi
     done
     echo "return no need" && return 1
+}
+
+file_changed_meta() {
+    local all_files
+    all_files=$(cat all_files)
+    if [[ -z ${all_files} ]]; then echo "Failed to get pr changed files." && return 0; fi
+    for af in ${all_files}; do
+        if [[ "${af}" == 'fe/fe-common/src/main/java/org/selectdb/selectdb-core/common/FeMetaVersion.java' ||
+            "${af}" == 'fe/fe-core/src/main/java/org/selectdb/selectdb-core/persist/OperationType.java' ||
+            "${af}" == 'fe/fe-core/src/main/java/org/selectdb/selectdb-core/persist/meta/PersistMetaModules.java' ||
+            "${af}" == 'fe/fe-core/src/main/java/org/selectdb/selectdb-core/persist/EditLog.java' ||
+            "${af}" == 'gensrc/thrift/'* ||
+            "${af}" == 'gensrc/proto/'* ]]; then
+            echo "selectdb-core meta changed" && return 0
+        fi
+    done
+    echo "selectdb-core meta not changed" && return 1
 }
