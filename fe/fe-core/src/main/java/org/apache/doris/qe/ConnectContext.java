@@ -861,8 +861,6 @@ public class ConnectContext {
         // Close channel to break connection with client
         closeChannel();
         returnRows = 0;
-        deleteTempTable();
-        Env.getCurrentEnv().unregisterSessionInfo(this.sessionId);
     }
 
     /**
