@@ -21,17 +21,12 @@ package pipeline.external.conf
 // **Note**: default db will be create if not exist
 defaultDb = "regression_test"
 
-jdbcUrl = "jdbc:mysql://172.19.0.2:9131/?useLocalSessionState=true&allowLoadLocalInfile=true"
-targetJdbcUrl = "jdbc:mysql://172.19.0.2:9131/?useLocalSessionState=true&allowLoadLocalInfile=true"
+jdbcUrl = "jdbc:mysql://127.0.0.1:9030/?useLocalSessionState=true&allowLoadLocalInfile=true"
+targetJdbcUrl = "jdbc:mysql://127.0.0.1:9030/?useLocalSessionState=true&allowLoadLocalInfile=true"
 jdbcUser = "root"
 jdbcPassword = ""
 
-feSourceThriftAddress = "127.0.0.1:9020"
-feTargetThriftAddress = "127.0.0.1:9020"
-feSyncerUser = "root"
-feSyncerPassword = ""
-
-feHttpAddress = "172.19.0.2:8131"
+feHttpAddress = "127.0.0.1:8030"
 feHttpUser = "root"
 feHttpPassword = ""
 
@@ -46,7 +41,7 @@ realDataPath = "${DORIS_HOME}/regression-test/realdata"
 
 // will test <group>/<suite>.groovy
 // empty group will test all group
-testGroups = ""
+testGroups = "external"
 // empty suite will test all suite
 testSuites = ""
 // empty directories will test all directories
