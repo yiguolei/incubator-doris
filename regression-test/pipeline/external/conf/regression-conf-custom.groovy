@@ -1,4 +1,3 @@
-package pipeline.external.conf
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -41,14 +40,14 @@ realDataPath = "${DORIS_HOME}/regression-test/realdata"
 
 // will test <group>/<suite>.groovy
 // empty group will test all group
-testGroups = "external"
+testGroups = "external_docker"
 // empty suite will test all suite
 testSuites = ""
 // empty directories will test all directories
 testDirectories = ""
 
 // this groups will not be executed
-excludeGroups = ""
+excludeGroups = "p1,p2"
 // this suites will not be executed
 excludeSuites = "000_the_start_sentinel_do_not_touch," + // keep this line as the first line
     "test_analyze_stats_p1," +
@@ -111,7 +110,7 @@ enableIcebergTest=true
 
 enableEsTest=true
 es_5_port=59200
-es_6_port="19200/"
+es_6_port=19200
 es_7_port=29200
 es_8_port=39200
 
@@ -135,3 +134,17 @@ enableKerberosTest = true
 kerberosHmsPort=9883
 kerberosHdfsPort=8820
 enableNonCatalogKerberosTest = true
+
+// requires valid ak/sk, which will be set in regression-test/pipeline/external/run.sh
+ak='xxx'
+sk='xxx'
+hwYunAk='xxx'
+hwYunSk='xxx'
+txYunAk='xxx'
+txYunSk='xxx'
+aliYunAk='xxx'
+aliYunSk='xxx'
+aliYunBucket='doris-regression-hk'
+aliYunEndpoint='oss-cn-hongkong-internal.aliyuncs.com'
+AWSAK='xxx'
+AWSSK='xxx'
