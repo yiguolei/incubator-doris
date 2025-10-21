@@ -39,12 +39,12 @@ Usage: $0 <options>
      --no-load-data     do not load data into the components
 
   All valid components:
-    mysql,pg,oracle,sqlserver,clickhouse,es,hive2,hive3,iceberg,hudi,trino,kafka,mariadb,db2,oceanbase,lakesoul,kerberos,ranger
+    mysql,pg,oracle,sqlserver,clickhouse,es,hive2,hive3,iceberg,hudi,trino,kafka,mariadb,db2,oceanbase,kerberos,ranger
   "
     exit 1
 }
 DEFAULT_COMPONENTS="mysql,es,hive2,hive3,pg,oracle,sqlserver,clickhouse,mariadb,iceberg,db2,oceanbase,kerberos"
-ALL_COMPONENTS="${DEFAULT_COMPONENTS},hudi,trino,kafka,spark,lakesoul,ranger"
+ALL_COMPONENTS="${DEFAULT_COMPONENTS},hudi,trino,kafka,spark,ranger"
 COMPONENTS=$2
 HELP=0
 STOP=0
@@ -194,8 +194,6 @@ for element in "${COMPONENTS_ARR[@]}"; do
         RUN_KERBEROS=1
     elif [[ "${element}"x == "oceanbase"x ]];then
         RUN_OCEANBASE=1
-    elif [[ "${element}"x == "lakesoul"x ]]; then
-        RUN_LAKESOUL=1
     elif [[ "${element}"x == "ranger"x ]]; then
         RUN_RANGER=1
     else
@@ -577,39 +575,6 @@ start_mariadb() {
     fi
 }
 
-start_lakesoul() {
-    echo "RUN_LAKESOUL"
-    cp "${ROOT}"/docker-compose/lakesoul/lakesoul.yaml.tpl "${ROOT}"/docker-compose/lakesoul/lakesoul.yaml
-    sed -i "s/doris--/${CONTAINER_UID}/g" "${ROOT}"/docker-compose/lakesoul/lakesoul.yaml
-    sudo docker compose -f "${ROOT}"/docker-compose/lakesoul/lakesoul.yaml down
-    sudo rm -rf "${ROOT}"/docker-compose/lakesoul/data
-    if [[ "${STOP}" -ne 1 ]]; then
-        echo "PREPARE_LAKESOUL_DATA"
-        sudo docker compose -f "${ROOT}"/docker-compose/lakesoul/lakesoul.yaml up -d
-        ## import tpch data into lakesoul
-        ## install rustup
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain none -y
-        # shellcheck source=/dev/null
-        . "${HOME}/.cargo/env"
-        ## install rust nightly-2023-05-20
-        rustup install nightly-2023-05-20
-        ## download&generate tpch data
-        mkdir -p lakesoul/test_files/tpch/data
-        git clone https://github.com/databricks/tpch-dbgen.git
-        cd tpch-dbgen
-        make
-        ./dbgen -f -s 0.1
-        mv *.tbl ../lakesoul/test_files/tpch/data
-        cd ..
-        export TPCH_DATA=$(realpath lakesoul/test_files/tpch/data)
-        ## import tpch data
-        git clone https://github.com/lakesoul-io/LakeSoul.git
-        #    git checkout doris_dev
-        cd LakeSoul/rust
-        cargo test load_tpch_data --package lakesoul-datafusion --features=ci -- --nocapture
-    fi
-}
-
 start_kerberos() {
     echo "RUN_KERBEROS"
     eth_name=$(ifconfig -a | grep -E "^eth[0-9]" | sort -k1.4n | awk -F ':' '{print $1}' | head -n 1)
@@ -739,11 +704,6 @@ fi
 if [[ "${RUN_MARIADB}" -eq 1 ]]; then
     start_mariadb > start_mariadb.log 2>&1 &
     pids["mariadb"]=$!
-fi
-
-if [[ "${RUN_LAKESOUL}" -eq 1 ]]; then
-    start_lakesoul > start_lakesoule.log 2>&1 &
-    pids["lakesoul"]=$!
 fi
 
 if [[ "${RUN_KERBEROS}" -eq 1 ]]; then
