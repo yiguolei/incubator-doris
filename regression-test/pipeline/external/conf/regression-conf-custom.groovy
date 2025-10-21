@@ -78,7 +78,7 @@ enableBrokerLoad=true
 // See `docker/thirdparties/start-thirdparties-docker.sh`
 enableJdbcTest=true
 mysql_57_port=3316
-pg_14_port=7121
+pg_14_port=5442
 oracle_11_port=1521
 sqlserver_2022_port=1433
 clickhouse_22_port=8123
