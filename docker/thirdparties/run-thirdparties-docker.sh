@@ -194,6 +194,8 @@ for element in "${COMPONENTS_ARR[@]}"; do
         RUN_KERBEROS=1
     elif [[ "${element}"x == "oceanbase"x ]];then
         RUN_OCEANBASE=1
+    elif [[ "${element}"x == "lakesoul"x ]]; then
+        RUN_LAKESOUL=1
     elif [[ "${element}"x == "ranger"x ]]; then
         RUN_RANGER=1
     else
