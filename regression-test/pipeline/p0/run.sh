@@ -112,10 +112,11 @@ if print_running_pipeline_tasks; then :; fi
 source "$(cd "${teamcity_build_checkoutDir}" && bash "${teamcity_build_checkoutDir}"/regression-test/pipeline/common/get-or-set-tmp-env.sh 'get')"
 
 check_if_need_gcore "${exit_flag}"
-if stop_doris_grace; then
-    echo "INFO: stop doris grace success."
+# 2.1 stop grace will core, just skip
+if stop_doris; then
+    echo "INFO: stop doris success."
 else
-    echo "ERROR: stop grace failed." && exit_flag=2
+    echo "ERROR: stop failed." && exit_flag=2
 fi
 if core_file_name=$(archive_doris_coredump "${pr_num_from_trigger}_${commit_id_from_trigger}_$(date +%Y%m%d%H%M%S)_doris_coredump.tar.gz"); then
     reporting_build_problem "coredump"

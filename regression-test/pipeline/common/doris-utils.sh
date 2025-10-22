@@ -16,6 +16,17 @@
 # specific language governing permissions and limitations
 # under the License.
 
+_get_ip() {
+    # get ip address of eth0
+    my_ip=$(ip addr show eth0 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+    if [[ -z "${my_ip}" ]]; then
+        # get ip from hostname -I
+        my_ip=$(hostname -I | cut -d' ' -f1)
+    fi
+    export my_ip
+    echo "${my_ip}"
+}
+
 function _get_doris_conf_value() {
     local conf_file="$1"
     local conf_key="$2"
