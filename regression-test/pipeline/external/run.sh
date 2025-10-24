@@ -13,7 +13,7 @@ fi
 EOF
 ############################# run.sh content ########################################
 # shellcheck source=/dev/null
-# _monitor_regression_log, print_running_pipeline_tasks
+# _monitor_regression_log, print_running_pipeline_tasks, _get_ip
 source "${teamcity_build_checkoutDir}"/regression-test/pipeline/common/doris-utils.sh
 # shellcheck source=/dev/null
 # create_an_issue_comment
@@ -36,6 +36,8 @@ if [[ -z "${commit_id_from_trigger}" ]]; then echo "ERROR: env commit_id_from_tr
 if [[ -z "${s3SourceAk}" || -z "${s3SourceSk}" ]]; then echo "ERROR: env s3SourceAk or s3SourceSk not set" && exit 1; fi
 if [[ -z "${hwYunAk}" || -z "${hwYunSk}" ]]; then echo "WARNING: env hwYunAk or hwYunSk not set"; fi
 if [[ -z "${txYunAk}" || -z "${txYunSk}" ]]; then echo "WARNING: env txYunAk or txYunSk not set"; fi
+if [[ -z "${aliYunAk}" || -z "${aliYunSk}" ]]; then echo "WARNING: env aliYunAk or aliYunSk not set"; fi
+if [[ -z "${AWSAK}" || -z "${AWSSK}" ]]; then echo "WARNING: env AWSAK or AWSSK not set"; fi
 
 # shellcheck source=/dev/null
 source "$(bash "${teamcity_build_checkoutDir}"/regression-test/pipeline/common/get-or-set-tmp-env.sh 'get')"
@@ -46,6 +48,8 @@ DORIS_HOME="${teamcity_build_checkoutDir}/output"
 export DORIS_HOME
 exit_flag=0
 need_collect_log=false
+my_ip="$(_get_ip)"
+export my_ip
 
 # monitoring the log files in "${DORIS_HOME}"/regression-test/log/ for keyword 'Reach limit of connections'
 _monitor_regression_log &
@@ -68,6 +72,9 @@ run() {
         echo "aliYunSk='${aliYunSk:-}'"
         echo "AWSAK='${AWSAK:-}'"
         echo "AWSSK='${AWSSK:-}'"
+        echo "// externalEnvIp should use eth0 IP 172.xx.xx.xx instead of 127.0.0.1"
+        echo "externalEnvIp='${my_ip:-}'"
+        echo
     } >>"${teamcity_build_checkoutDir}"/regression-test/pipeline/external/conf/regression-conf-custom.groovy
     cp -f "${teamcity_build_checkoutDir}"/regression-test/pipeline/external/conf/regression-conf-custom.groovy \
         "${teamcity_build_checkoutDir}"/regression-test/conf/
@@ -128,10 +135,11 @@ if print_running_pipeline_tasks; then :; fi
 source "$(cd "${teamcity_build_checkoutDir}" && bash "${teamcity_build_checkoutDir}"/regression-test/pipeline/common/get-or-set-tmp-env.sh 'get')"
 
 check_if_need_gcore "${exit_flag}"
-if stop_doris_grace; then
-    echo "INFO: stop doris grace success."
+# 2.1 stop grace will core, just skip
+if stop_doris; then
+    echo "INFO: stop doris success."
 else
-    echo "ERROR: stop grace failed." && exit_flag=2
+    echo "ERROR: stop failed." && exit_flag=2
 fi
 if core_file_name=$(archive_doris_coredump "${pr_num_from_trigger}_${commit_id_from_trigger}_$(date +%Y%m%d%H%M%S)_doris_coredump.tar.gz"); then
     reporting_build_problem "coredump"
