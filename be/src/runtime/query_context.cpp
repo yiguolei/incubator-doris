@@ -238,8 +238,10 @@ QueryContext::~QueryContext() {
 
     DorisMetrics::instance()->query_ctx_cnt->increment(-1);
     ExecEnv::GetInstance()->fragment_mgr()->remove_query_context(this->_query_id);
+    LOG(INFO) << "test internal error " << Status::InternalError<true> << " just a test";
     // the only one msg shows query's end. any other msg should append to it if need.
     LOG_INFO("Query {} deconstructed, mem_tracker: {}", print_id(this->_query_id), mem_tracker_msg);
+    LOG(FATAL) << "ABC";
 }
 
 void QueryContext::set_ready_to_execute(Status reason) {
