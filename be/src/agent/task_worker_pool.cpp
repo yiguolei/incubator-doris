@@ -1079,6 +1079,7 @@ void report_disk_callback(StorageEngine& engine, const ClusterInfo* cluster_info
         disk.__set_used(root_path_info.is_used);
         request.disks[root_path_info.path] = disk;
     }
+    LOG(INFO) << "yyyyy " << CpuInfo::num_cores();
     request.__set_num_cores(CpuInfo::num_cores());
     request.__set_pipeline_executor_size(config::pipeline_executor_size > 0
                                                  ? config::pipeline_executor_size
