@@ -407,14 +407,14 @@ public class ComputeGroupTest {
         Assert.assertTrue(cg2.getBackendList().size() == 0);
 
         Set<Tag> tagSet1 = Sets.newHashSet(beTag1, beTag2);
-        Assert.assertTrue(cgmgr.getComputeGroup(tagSet1).getBackendList().size() == 4);
+        Assert.assertTrue(cgmgr.getComputeGroup("a", tagSet1).getBackendList().size() == 4);
 
         Tag beTag4 = Tag.create(Tag.TYPE_LOCATION, "abc");
         Set<Tag> tagset2 = Sets.newHashSet(beTag4);
-        Assert.assertTrue(cgmgr.getComputeGroup(tagset2).getBackendList().size() == 0);
+        Assert.assertTrue(cgmgr.getComputeGroup("a", tagset2).getBackendList().size() == 0);
 
         Set<Tag> emptyTagSet = Sets.newHashSet();
-        Assert.assertTrue(cgmgr.getComputeGroup(emptyTagSet).getBackendList().size() == 0);
+        Assert.assertTrue(cgmgr.getComputeGroup("a", emptyTagSet).getBackendList().size() == 0);
 
         Assert.assertTrue(cgmgr.getAllBackendComputeGroup().getBackendList().size() == 5);
 
