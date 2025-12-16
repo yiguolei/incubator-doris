@@ -58,20 +58,6 @@ public:
         _detected_source = true;
     }
 
-    Status set_tablet_schema(int32_t target_node_id, TabletSchemaSPtr tablet_schema) {
-        std::unique_lock<std::shared_mutex> wlock(_rwlock);
-        check_target_node_id(target_node_id);
-        if (_contexts[target_node_id].tablet_schema) {
-            return Status::OK();
-        }
-        RETURN_IF_ERROR(tablet_schema->have_column(_contexts[target_node_id].col_name));
-        _contexts[target_node_id].tablet_schema = tablet_schema;
-        int64_t index = DORIS_TRY(_contexts[target_node_id].get_field_index())
-                                _contexts[target_node_id]
-                                        .predicate = SharedPredicate::create_shared(index);
-        return Status::OK();
-    }
-
     std::shared_ptr<ColumnPredicate> get_predicate(int32_t target_node_id) {
         std::shared_lock<std::shared_mutex> rlock(_rwlock);
         check_target_node_id(target_node_id);
