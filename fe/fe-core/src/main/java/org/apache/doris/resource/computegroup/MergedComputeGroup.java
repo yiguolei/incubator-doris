@@ -30,8 +30,10 @@ import com.google.common.collect.Lists;
 import java.util.List;
 import java.util.Set;
 
-// MergedComputeGroup is a compute group which contains multiple compute groups. It is used in compute and storage Integration mode.
-// For example, the user may define resource group by adding tags to backend. And the user should bind resource group by adding tags to user.
+// MergedComputeGroup is a compute group which contains multiple compute groups.
+// It is used in compute and storage Integration mode.
+// For example, the user may define resource group by adding tags to backend.
+// And the user should bind resource group by adding tags to user.
 public class MergedComputeGroup extends ComputeGroup {
 
     private Set<String> computeGroupSet;

@@ -54,7 +54,7 @@ public class ComputeGroupMgr {
         }
     }
 
-    public ComputeGroup getComputeGroup(String username,Set<Tag> rgTags) {
+    public ComputeGroup getComputeGroup(String username, Set<Tag> rgTags) {
         Set<String> tagStrSet = Sets.newHashSet();
         for (Tag tag : rgTags) {
             tagStrSet.add(tag.value);
