@@ -176,7 +176,7 @@ public class UserPropertyMgr implements Writable {
             tags = Sets.newHashSet(Tag.DEFAULT_BACKEND_TAG);
         }
         if (!tags.isEmpty()) {
-            return Env.getCurrentEnv().getComputeGroupMgr().getComputeGroup(tags);
+            return Env.getCurrentEnv().getComputeGroupMgr().getComputeGroup(qualifiedUser, tags);
         } else {
             return Env.getCurrentEnv().getComputeGroupMgr().getAllBackendComputeGroup();
         }

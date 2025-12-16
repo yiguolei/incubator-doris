@@ -54,12 +54,12 @@ public class ComputeGroupMgr {
         }
     }
 
-    public ComputeGroup getComputeGroup(Set<Tag> rgTags) {
+    public ComputeGroup getComputeGroup(String username,Set<Tag> rgTags) {
         Set<String> tagStrSet = Sets.newHashSet();
         for (Tag tag : rgTags) {
             tagStrSet.add(tag.value);
         }
-        return new MergedComputeGroup(String.join(",", tagStrSet), tagStrSet, systemInfoService);
+        return new MergedComputeGroup(username + "@" + String.join(",", tagStrSet), tagStrSet, systemInfoService);
     }
 
     // to be compatible with resource tag's logic, if root/admin user not specify a resource tag,

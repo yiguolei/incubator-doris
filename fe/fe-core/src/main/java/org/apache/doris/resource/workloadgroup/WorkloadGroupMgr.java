@@ -124,17 +124,6 @@ public class WorkloadGroupMgr implements Writable, GsonPostProcessable {
         lock.writeLock().unlock();
     }
 
-    private WorkloadGroup getWorkloadGroupByComputeGroupUnlock(WorkloadGroupKey wgKey)
-            throws DdlException {
-        WorkloadGroup wg = keyToWorkloadGroup.get(wgKey);
-        if (wg == null) {
-            throw new DdlException(
-                    "Can not find workload group " + wgKey.getWorkloadGroupName() + " in compute group "
-                            + wgKey.getComputeGroup() + ".");
-        }
-        return wg;
-    }
-
     public WorkloadGroup getWorkloadGroupByComputeGroup(WorkloadGroupKey wgKey) {
         return keyToWorkloadGroup.get(wgKey);
     }

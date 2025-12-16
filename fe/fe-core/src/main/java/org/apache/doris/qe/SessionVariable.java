@@ -108,7 +108,6 @@ public class SessionVariable implements Serializable, Writable {
     public static final String AUTO_PROFILE_THRESHOLD_MS = "auto_profile_threshold_ms";
     public static final String SQL_MODE = "sql_mode";
     public static final String WORKLOAD_VARIABLE = "workload_group";
-    public static final String RESOURCE_VARIABLE = "resource_group";
     public static final String AUTO_COMMIT = "autocommit";
     public static final String TX_ISOLATION = "tx_isolation";
     public static final String TX_READ_ONLY = "tx_read_only";
@@ -1068,9 +1067,6 @@ public class SessionVariable implements Serializable, Writable {
 
     @VariableMgr.VarAttr(name = MAX_COLUMN_READER_NUM)
     public int maxColumnReaderNum = 20000;
-
-    @VariableMgr.VarAttr(name = RESOURCE_VARIABLE)
-    public String resourceGroup = "";
 
     // this is used to make mysql client happy
     // autocommit is actually a boolean value, but @@autocommit is type of BIGINT.
@@ -3699,14 +3695,6 @@ public class SessionVariable implements Serializable, Writable {
 
     public int getMaxColumnReaderNum() {
         return this.maxColumnReaderNum;
-    }
-
-    public String getResourceGroup() {
-        return resourceGroup;
-    }
-
-    public void setResourceGroup(String resourceGroup) {
-        this.resourceGroup = resourceGroup;
     }
 
     public boolean isDisableFileCache() {

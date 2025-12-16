@@ -30,6 +30,8 @@ import com.google.common.collect.Lists;
 import java.util.List;
 import java.util.Set;
 
+// MergedComputeGroup is a compute group which contains multiple compute groups. It is used in compute and storage Integration mode.
+// For example, the user may define resource group by adding tags to backend. And the user should bind resource group by adding tags to user.
 public class MergedComputeGroup extends ComputeGroup {
 
     private Set<String> computeGroupSet;
@@ -55,7 +57,9 @@ public class MergedComputeGroup extends ComputeGroup {
         for (String cgName : computeGroupSet) {
             WorkloadGroup wg = wgMgr.getWorkloadGroupByComputeGroup(WorkloadGroupKey.get(cgName, wgName));
             if (wg == null) {
-                throw new UserException("Can not find workload group " + wgName + " in compute group " + cgName);
+                throw new UserException("Can not find workload group " + wgName
+                        + " in resource group "
+                        + (computeGroupSet.size() > 1 ? "merged resource : " + getName() + ":" : "") + cgName);
             }
             wgList.add(wg);
         }
