@@ -128,6 +128,8 @@ public class JdbcDaMengClient extends JdbcClient {
                 return ScalarType.createDateV2Type();
             case "VARCHAR":
             case "VARCHAR2":
+            case "NVARCHAR":
+            case "NVARCHAR2":
             case "TEXT":
             case "LONGVARCHAR":
             case "CHAR":
