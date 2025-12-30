@@ -249,6 +249,10 @@ public:
         if (_cache == ExecEnv::GetInstance()->get_dummy_lru_cache()) {
             return 0;
         }
+        if (!_enable_prune) {
+            LOG(INFO) << "[MemoryGC] " << type_string(_type)
+                      << " cache prune disabled, so could not adjust capacity to free memory";
+        }
 
         size_t old_capacity = get_capacity();
         int64_t old_mem_consumption = mem_consumption();
@@ -276,6 +280,7 @@ public:
         return adjust_capacity_weighted_unlocked(adjust_weighted);
     }
 
+    // This is called by cache manager when user change the cache capacity using http api.
     int64_t reset_initial_capacity(double adjust_weighted) override {
         DCHECK(adjust_weighted != 0.0); // otherwise initial_capacity will always to be 0.
         std::lock_guard<std::mutex> l(_lock);
