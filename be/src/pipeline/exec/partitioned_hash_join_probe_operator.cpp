@@ -20,6 +20,7 @@
 #include <gen_cpp/Metrics_types.h>
 #include <glog/logging.h>
 
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -28,8 +29,11 @@
 #include "common/status.h"
 #include "pipeline/pipeline_task.h"
 #include "runtime/fragment_mgr.h"
+#include "runtime/query_context.h"
+#include "util/pretty_printer.h"
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
+#include "vec/spill/spill_repartitioner.h"
 #include "vec/spill/spill_stream.h"
 #include "vec/spill/spill_stream_manager.h"
 
@@ -152,8 +156,17 @@ void PartitionedHashJoinProbeLocalState::update_profile_from_inner() {
 
 Status PartitionedHashJoinProbeLocalState::open(RuntimeState* state) {
     RETURN_IF_ERROR(PipelineXSpillLocalState::open(state));
-    return _parent->cast<PartitionedHashJoinProbeOperatorX>()._partitioner->clone(state,
-                                                                                  _partitioner);
+    auto& p = _parent->cast<PartitionedHashJoinProbeOperatorX>();
+    RETURN_IF_ERROR(p._partitioner->clone(state, _partitioner));
+
+    // Create a FANOUT-sized partitioner for repartitioning.
+    // We do this once here to avoid repeated init/prepare/open during repartitioning.
+    _fanout_partitioner = std::make_unique<SpillPartitionerType>(SpillRepartitioner::FANOUT);
+    RETURN_IF_ERROR(_fanout_partitioner->init(p._probe_exprs));
+    RETURN_IF_ERROR(_fanout_partitioner->prepare(state, p._child->row_desc()));
+    RETURN_IF_ERROR(_fanout_partitioner->open(state));
+
+    return Status::OK();
 }
 Status PartitionedHashJoinProbeLocalState::close(RuntimeState* state) {
     SCOPED_TIMER(exec_time_counter());
@@ -161,6 +174,27 @@ Status PartitionedHashJoinProbeLocalState::close(RuntimeState* state) {
     if (_closed) {
         return Status::OK();
     }
+    // Clean up any remaining spill partition queue entries
+    for (auto& entry : _spill_partition_queue) {
+        if (entry.build_stream) {
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(entry.build_stream);
+        }
+        if (entry.probe_stream) {
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(entry.probe_stream);
+        }
+    }
+    _spill_partition_queue.clear();
+    if (_current_partition.build_stream) {
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                _current_partition.build_stream);
+    }
+    if (_current_partition.probe_stream) {
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                _current_partition.probe_stream);
+    }
+    _current_partition = SpillPartitionInfo {};
+    _queue_probe_blocks.clear();
+
     RETURN_IF_ERROR(PipelineXSpillLocalState::close(state));
     return Status::OK();
 }
@@ -484,6 +518,349 @@ bool PartitionedHashJoinProbeLocalState::is_blockable() const {
     return _shared_state->is_spilled;
 }
 
+Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
+        RuntimeState* state, SpillPartitionInfo& partition_info, bool& has_data) {
+    has_data = false;
+    auto& build_stream = partition_info.build_stream;
+    if (!build_stream || !build_stream->ready_for_reading()) {
+        return Status::OK();
+    }
+    build_stream->set_read_counters(operator_profile());
+
+    auto query_id = state->query_id();
+    auto read_func = [this, state, &build_stream] {
+        SCOPED_TIMER(_recovery_build_timer);
+        bool eos = false;
+        Status status;
+        while (!eos) {
+            vectorized::Block block;
+            status = build_stream->read_next_block_sync(&block, &eos);
+            if (!status.ok()) {
+                break;
+            }
+            COUNTER_UPDATE(_recovery_build_rows, block.rows());
+            COUNTER_UPDATE(_recovery_build_blocks, 1);
+            if (block.empty()) {
+                continue;
+            }
+            if (UNLIKELY(state->is_cancelled())) {
+                break;
+            }
+            if (!_recovered_build_block) {
+                _recovered_build_block = vectorized::MutableBlock::create_unique(std::move(block));
+            } else {
+                status = _recovered_build_block->merge(std::move(block));
+                if (!status.ok()) {
+                    break;
+                }
+            }
+            if (_recovered_build_block->allocated_bytes() >=
+                vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM) {
+                break;
+            }
+        }
+        if (eos) {
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(build_stream);
+            build_stream.reset();
+        }
+        return status;
+    };
+
+    auto exception_catch_func = [read_func, state, query_id]() {
+        auto status = [&]() {
+            RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
+            return Status::OK();
+        }();
+        return status;
+    };
+
+    has_data = true;
+    return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
+}
+
+Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
+        RuntimeState* state, SpillPartitionInfo& partition_info, bool& has_data) {
+    has_data = false;
+    auto& probe_stream = partition_info.probe_stream;
+    if (!probe_stream || !probe_stream->ready_for_reading()) {
+        return Status::OK();
+    }
+    probe_stream->set_read_counters(operator_profile());
+
+    // For multi-level queue partitions, store recovered probe blocks in _queue_probe_blocks.
+    auto& blocks = _queue_probe_blocks;
+    auto query_id = state->query_id();
+
+    auto read_func = [this, state, &probe_stream, &blocks] {
+        SCOPED_TIMER(_recovery_probe_timer);
+        vectorized::Block block;
+        bool eos = false;
+        Status st;
+        size_t read_size = 0;
+        while (!eos && !state->is_cancelled() && st.ok()) {
+            st = probe_stream->read_next_block_sync(&block, &eos);
+            if (!st.ok()) {
+                break;
+            }
+            if (!block.empty()) {
+                COUNTER_UPDATE(_recovery_probe_rows, block.rows());
+                COUNTER_UPDATE(_recovery_probe_blocks, 1);
+                read_size += block.allocated_bytes();
+                blocks.emplace_back(std::move(block));
+            }
+            if (read_size >= vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM) {
+                break;
+            }
+        }
+        if (eos) {
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(probe_stream);
+            probe_stream.reset();
+        }
+        return st;
+    };
+
+    auto exception_catch_func = [read_func, state, query_id]() {
+        auto status = [&]() {
+            RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
+            return Status::OK();
+        }();
+        return status;
+    };
+
+    has_data = true;
+    return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
+}
+
+Status PartitionedHashJoinProbeLocalState::repartition_current_partition(
+        RuntimeState* state, SpillPartitionInfo& partition) {
+    auto& p = _parent->cast<PartitionedHashJoinProbeOperatorX>();
+    const int new_level = partition.level + 1;
+
+    if (new_level >= SpillRepartitioner::MAX_DEPTH) {
+        return Status::InternalError(
+                "Hash join spill repartition exceeded max depth {}. "
+                "Likely due to extreme data skew.",
+                SpillRepartitioner::MAX_DEPTH);
+    }
+
+    VLOG_DEBUG << fmt::format(
+            "Query:{}, hash join probe:{}, task:{}, repartitioning partition at level {} to "
+            "level {}",
+            print_id(state->query_id()), p.node_id(), state->task_id(), partition.level, new_level);
+
+    // Create a partitioner with FANOUT as partition count for repartitioning.
+    // We clone from _fanout_partitioner which was pre-initialized with FANOUT=8.
+    std::unique_ptr<vectorized::PartitionerBase> fanout_clone;
+    RETURN_IF_ERROR(_fanout_partitioner->clone(state, fanout_clone));
+    _repartitioner.init(std::move(fanout_clone), operator_profile());
+
+    // Repartition build stream
+    std::vector<vectorized::SpillStreamSPtr> build_output_streams;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
+            state, p.node_id(), fmt::format("hash_build_repart_l{}", new_level), operator_profile(),
+            build_output_streams));
+
+    if (partition.build_stream && partition.build_stream->ready_for_reading()) {
+        partition.build_stream->set_read_counters(operator_profile());
+        bool done = false;
+        while (!done && !state->is_cancelled()) {
+            RETURN_IF_ERROR(_repartitioner.repartition(state, partition.build_stream,
+                                                       build_output_streams, &done));
+        }
+        // Input build stream fully consumed, clean up
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.build_stream);
+        partition.build_stream.reset();
+    } else if (partition.build_stream) {
+        // Stream exists but not ready for reading (empty or not finalized).
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.build_stream);
+        partition.build_stream.reset();
+    }
+    RETURN_IF_ERROR(SpillRepartitioner::finalize(build_output_streams));
+
+    // Repartition probe stream
+    std::vector<vectorized::SpillStreamSPtr> probe_output_streams;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
+            state, p.node_id(), fmt::format("hash_probe_repart_l{}", new_level), operator_profile(),
+            probe_output_streams));
+
+    if (partition.probe_stream && partition.probe_stream->ready_for_reading()) {
+        partition.probe_stream->set_read_counters(operator_profile());
+        // Re-init repartitioner with a fresh FANOUT partitioner clone for probe data
+        std::unique_ptr<vectorized::PartitionerBase> probe_fanout_clone;
+        RETURN_IF_ERROR(_fanout_partitioner->clone(state, probe_fanout_clone));
+        _repartitioner.init(std::move(probe_fanout_clone), operator_profile());
+
+        bool done = false;
+        while (!done && !state->is_cancelled()) {
+            RETURN_IF_ERROR(_repartitioner.repartition(state, partition.probe_stream,
+                                                       probe_output_streams, &done));
+        }
+        // Input probe stream fully consumed, clean up
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.probe_stream);
+        partition.probe_stream.reset();
+    } else if (partition.probe_stream) {
+        // Stream exists but not ready for reading (empty or not finalized).
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(partition.probe_stream);
+        partition.probe_stream.reset();
+    }
+    RETURN_IF_ERROR(SpillRepartitioner::finalize(probe_output_streams));
+
+    // Push sub-partitions into work queue (only those with build data)
+    for (int i = 0; i < SpillRepartitioner::FANOUT; ++i) {
+        if (build_output_streams[i] && build_output_streams[i]->get_written_bytes() > 0) {
+            _spill_partition_queue.emplace_back(std::move(build_output_streams[i]),
+                                                std::move(probe_output_streams[i]), new_level);
+        } else {
+            // Clean up empty streams
+            if (build_output_streams[i]) {
+                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                        build_output_streams[i]);
+            }
+            if (probe_output_streams[i]) {
+                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                        probe_output_streams[i]);
+            }
+        }
+    }
+
+    return Status::OK();
+}
+
+Status PartitionedHashJoinProbeLocalState::repartition_level0_partition(RuntimeState* state,
+                                                                        uint32_t partition_index) {
+    auto& p = _parent->cast<PartitionedHashJoinProbeOperatorX>();
+
+    VLOG_DEBUG << fmt::format(
+            "Query:{}, hash join probe:{}, task:{}, repartitioning level-0 partition {} "
+            "(build data in memory, probe data on disk)",
+            print_id(state->query_id()), p.node_id(), state->task_id(), partition_index);
+
+    // Create FANOUT build output streams
+    std::vector<vectorized::SpillStreamSPtr> build_output_streams;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
+            state, p.node_id(), "hash_build_repart_l1", operator_profile(), build_output_streams));
+
+    // Repartition the in-memory build data into FANOUT streams.
+    // The build data is in partitioned_build_blocks[partition_index].
+    auto& build_block_ptr = _shared_state->partitioned_build_blocks[partition_index];
+    if (build_block_ptr && build_block_ptr->rows() > 0) {
+        // Clone a FANOUT partitioner
+        std::unique_ptr<vectorized::PartitionerBase> fanout_clone;
+        RETURN_IF_ERROR(_fanout_partitioner->clone(state, fanout_clone));
+
+        auto block = build_block_ptr->to_block();
+        build_block_ptr.reset();
+
+        // Compute partitioning on the block
+        RETURN_IF_ERROR(fanout_clone->do_partitioning(state, &block));
+        const auto& channel_ids = fanout_clone->get_channel_ids();
+        const auto rows = block.rows();
+
+        // Build per-partition row index lists
+        std::vector<std::vector<uint32_t>> partition_indexes(SpillRepartitioner::FANOUT);
+        for (uint32_t i = 0; i < rows; ++i) {
+            partition_indexes[channel_ids[i]].emplace_back(i);
+        }
+
+        // Write each partition's rows to the corresponding output stream
+        for (int i = 0; i < SpillRepartitioner::FANOUT; ++i) {
+            if (partition_indexes[i].empty()) {
+                continue;
+            }
+            auto mutable_sub = vectorized::MutableBlock::create_unique(block.clone_empty());
+            RETURN_IF_ERROR(mutable_sub->add_rows(
+                    &block, partition_indexes[i].data(),
+                    partition_indexes[i].data() + partition_indexes[i].size()));
+            auto out_block = mutable_sub->to_block();
+            RETURN_IF_ERROR(build_output_streams[i]->spill_block(state, out_block, false));
+        }
+    }
+    RETURN_IF_ERROR(SpillRepartitioner::finalize(build_output_streams));
+
+    // Repartition probe stream (on disk)
+    std::vector<vectorized::SpillStreamSPtr> probe_output_streams;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
+            state, p.node_id(), "hash_probe_repart_l1", operator_profile(), probe_output_streams));
+
+    auto& probe_stream = _probe_spilling_streams[partition_index];
+    if (probe_stream && probe_stream->ready_for_reading()) {
+        probe_stream->set_read_counters(operator_profile());
+        std::unique_ptr<vectorized::PartitionerBase> probe_fanout_clone;
+        RETURN_IF_ERROR(_fanout_partitioner->clone(state, probe_fanout_clone));
+        _repartitioner.init(std::move(probe_fanout_clone), operator_profile());
+
+        bool done = false;
+        while (!done && !state->is_cancelled()) {
+            RETURN_IF_ERROR(
+                    _repartitioner.repartition(state, probe_stream, probe_output_streams, &done));
+        }
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(probe_stream);
+        probe_stream.reset();
+    } else if (probe_stream) {
+        ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(probe_stream);
+        probe_stream.reset();
+    }
+
+    // Also repartition any in-memory probe blocks for this partition.
+    // First, flush any unflushed _partitioned_blocks into _probe_blocks.
+    auto& partitioned_block = _partitioned_blocks[partition_index];
+    if (partitioned_block && !partitioned_block->empty()) {
+        _probe_blocks[partition_index].emplace_back(partitioned_block->to_block());
+        partitioned_block.reset();
+    }
+    if (!_probe_blocks[partition_index].empty()) {
+        std::unique_ptr<vectorized::PartitionerBase> probe_fanout_clone2;
+        RETURN_IF_ERROR(_fanout_partitioner->clone(state, probe_fanout_clone2));
+
+        for (auto& block : _probe_blocks[partition_index]) {
+            if (block.empty()) {
+                continue;
+            }
+            RETURN_IF_ERROR(probe_fanout_clone2->do_partitioning(state, &block));
+            const auto& channel_ids = probe_fanout_clone2->get_channel_ids();
+            const auto rows = block.rows();
+
+            std::vector<std::vector<uint32_t>> partition_indexes(SpillRepartitioner::FANOUT);
+            for (uint32_t i = 0; i < rows; ++i) {
+                partition_indexes[channel_ids[i]].emplace_back(i);
+            }
+
+            for (int i = 0; i < SpillRepartitioner::FANOUT; ++i) {
+                if (partition_indexes[i].empty()) {
+                    continue;
+                }
+                auto mutable_sub = vectorized::MutableBlock::create_unique(block.clone_empty());
+                RETURN_IF_ERROR(mutable_sub->add_rows(
+                        &block, partition_indexes[i].data(),
+                        partition_indexes[i].data() + partition_indexes[i].size()));
+                auto out_block = mutable_sub->to_block();
+                RETURN_IF_ERROR(probe_output_streams[i]->spill_block(state, out_block, false));
+            }
+        }
+        _probe_blocks[partition_index].clear();
+    }
+    RETURN_IF_ERROR(SpillRepartitioner::finalize(probe_output_streams));
+
+    // Push non-empty sub-partitions into the work queue
+    for (int i = 0; i < SpillRepartitioner::FANOUT; ++i) {
+        if (build_output_streams[i] && build_output_streams[i]->get_written_bytes() > 0) {
+            _spill_partition_queue.emplace_back(std::move(build_output_streams[i]),
+                                                std::move(probe_output_streams[i]), 1);
+        } else {
+            if (build_output_streams[i]) {
+                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                        build_output_streams[i]);
+            }
+            if (probe_output_streams[i]) {
+                ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
+                        probe_output_streams[i]);
+            }
+        }
+    }
+
+    return Status::OK();
+}
+
 PartitionedHashJoinProbeOperatorX::PartitionedHashJoinProbeOperatorX(ObjectPool* pool,
                                                                      const TPlanNode& tnode,
                                                                      int operator_id,
@@ -658,15 +1035,82 @@ Status PartitionedHashJoinProbeOperatorX::_setup_internal_operators(
     return Status::OK();
 }
 
+Status PartitionedHashJoinProbeOperatorX::_setup_internal_operators_from_partition(
+        PartitionedHashJoinProbeLocalState& local_state, RuntimeState* state) const {
+    local_state._shared_state->inner_runtime_state = RuntimeState::create_unique(
+            state->fragment_instance_id(), state->query_id(), state->fragment_id(),
+            state->query_options(), TQueryGlobals {}, state->exec_env(), state->get_query_ctx());
+
+    local_state._shared_state->inner_runtime_state->set_task_execution_context(
+            state->get_task_execution_context().lock());
+    local_state._shared_state->inner_runtime_state->set_be_number(state->be_number());
+
+    local_state._shared_state->inner_runtime_state->set_desc_tbl(&state->desc_tbl());
+    local_state._shared_state->inner_runtime_state->resize_op_id_to_local_state(-1);
+    local_state._shared_state->inner_runtime_state->set_runtime_filter_mgr(
+            state->local_runtime_filter_mgr());
+
+    local_state._in_mem_shared_state_sptr = _inner_sink_operator->create_shared_state();
+
+    LocalSinkStateInfo info {.task_idx = 0,
+                             .parent_profile = local_state._internal_runtime_profile.get(),
+                             .sender_id = -1,
+                             .shared_state = local_state._in_mem_shared_state_sptr.get(),
+                             .shared_state_map = {},
+                             .tsink = {}};
+    RETURN_IF_ERROR(_inner_sink_operator->setup_local_state(
+            local_state._shared_state->inner_runtime_state.get(), info));
+
+    LocalStateInfo state_info {.parent_profile = local_state._internal_runtime_profile.get(),
+                               .scan_ranges = {},
+                               .shared_state = local_state._in_mem_shared_state_sptr.get(),
+                               .shared_state_map = {},
+                               .task_idx = 0};
+    RETURN_IF_ERROR(_inner_probe_operator->setup_local_state(
+            local_state._shared_state->inner_runtime_state.get(), state_info));
+
+    auto* sink_local_state = local_state._shared_state->inner_runtime_state->get_sink_local_state();
+    DCHECK(sink_local_state != nullptr);
+    RETURN_IF_ERROR(sink_local_state->open(state));
+
+    auto* probe_local_state = local_state._shared_state->inner_runtime_state->get_local_state(
+            _inner_probe_operator->operator_id());
+    DCHECK(probe_local_state != nullptr);
+    RETURN_IF_ERROR(probe_local_state->open(state));
+
+    // Use the recovered build block from the partition stream
+    vectorized::Block block;
+    if (local_state._recovered_build_block && local_state._recovered_build_block->rows() > 0) {
+        block = local_state._recovered_build_block->to_block();
+        local_state._recovered_build_block.reset();
+    }
+
+    RETURN_IF_ERROR(_inner_sink_operator->sink(local_state._shared_state->inner_runtime_state.get(),
+                                               &block, true));
+    VLOG_DEBUG << fmt::format(
+            "Query:{}, hash join probe:{}, task:{},"
+            " internal build from partition (level:{}) finished, rows:{}, memory usage:{}",
+            print_id(state->query_id()), node_id(), state->task_id(),
+            local_state._current_partition.level, block.rows(),
+            _inner_sink_operator->get_memory_usage(
+                    local_state._shared_state->inner_runtime_state.get()));
+    return Status::OK();
+}
+
 Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
                                                vectorized::Block* output_block, bool* eos) const {
     auto& local_state = get_local_state(state);
+
+    // If we've exhausted level-0 partitions and are processing the spill queue,
+    // delegate to the queue processing path.
+    if (local_state._processing_spill_queue) {
+        return _pull_from_spill_queue(local_state, state, output_block, eos);
+    }
 
     const auto partition_index = local_state._partition_cursor;
     auto& probe_blocks = local_state._probe_blocks[partition_index];
 
     if (local_state._recovered_build_block && !local_state._recovered_build_block->empty()) {
-        local_state._estimate_memory_usage += local_state._recovered_build_block->allocated_bytes();
         auto& mutable_block = local_state._shared_state->partitioned_build_blocks[partition_index];
         if (!mutable_block) {
             mutable_block = std::move(local_state._recovered_build_block);
@@ -686,6 +1130,50 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
 
         *eos = false;
         RETURN_IF_ERROR(local_state.finish_spilling(partition_index));
+
+        // Pre-check: estimate whether the hash table will fit in memory.
+        // Hash table overhead is typically ~3x the raw data size (hash buckets, next arrays, etc.)
+        // If estimated usage exceeds available query memory, repartition instead of building.
+        static constexpr int64_t HASH_TABLE_OVERHEAD_FACTOR = 3;
+        auto& build_block_ptr =
+                local_state._shared_state->partitioned_build_blocks[partition_index];
+        int64_t build_data_bytes = build_block_ptr ? build_block_ptr->allocated_bytes() : 0;
+        int64_t estimated_hash_table_bytes = build_data_bytes * HASH_TABLE_OVERHEAD_FACTOR;
+
+        auto query_mem_tracker = state->get_query_ctx()->query_mem_tracker();
+        int64_t available_memory =
+                query_mem_tracker->limit() > 0
+                        ? (query_mem_tracker->limit() - query_mem_tracker->consumption())
+                        : std::numeric_limits<int64_t>::max();
+
+        if (estimated_hash_table_bytes > available_memory && build_data_bytes > 0) {
+            // Build data is too large for available memory — repartition directly.
+            // At this point build data is still in partitioned_build_blocks[partition_index].
+            VLOG_DEBUG << fmt::format(
+                    "Query:{}, hash join probe:{}, task:{},"
+                    " level-0 partition:{} build data too large for memory"
+                    " (estimated:{}, available:{}), repartitioning",
+                    print_id(state->query_id()), node_id(), state->task_id(), partition_index,
+                    PrettyPrinter::print_bytes(estimated_hash_table_bytes),
+                    PrettyPrinter::print_bytes(available_memory));
+
+            RETURN_IF_ERROR(local_state.repartition_level0_partition(state, partition_index));
+            local_state._shared_state->partitioned_build_blocks[partition_index].reset();
+
+            local_state._partition_cursor++;
+            if (local_state._partition_cursor == _partition_count) {
+                if (!local_state._spill_partition_queue.empty()) {
+                    local_state._processing_spill_queue = true;
+                    local_state._need_to_setup_queue_partition = true;
+                } else {
+                    *eos = true;
+                }
+            } else {
+                local_state._need_to_setup_internal_operators = true;
+            }
+            return Status::OK();
+        }
+
         RETURN_IF_ERROR(_setup_internal_operators(local_state, state));
         local_state._need_to_setup_internal_operators = false;
         auto& mutable_block = local_state._partitioned_blocks[partition_index];
@@ -734,9 +1222,145 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
         local_state._partition_cursor++;
         local_state.update_profile_from_inner();
         if (local_state._partition_cursor == _partition_count) {
-            *eos = true;
+            // All level-0 partitions done. Check if we have repartitioned partitions to process.
+            if (!local_state._spill_partition_queue.empty()) {
+                local_state._processing_spill_queue = true;
+                local_state._need_to_setup_queue_partition = true;
+            } else {
+                *eos = true;
+            }
         } else {
             local_state._need_to_setup_internal_operators = true;
+        }
+    }
+
+    return Status::OK();
+}
+
+Status PartitionedHashJoinProbeOperatorX::_pull_from_spill_queue(
+        PartitionedHashJoinProbeLocalState& local_state, RuntimeState* state,
+        vectorized::Block* output_block, bool* eos) const {
+    *eos = false;
+
+    if (local_state._need_to_setup_queue_partition) {
+        // If the queue is empty, we're done
+        if (local_state._spill_partition_queue.empty()) {
+            *eos = true;
+            return Status::OK();
+        }
+
+        // Pop next partition to process
+        if (!local_state._current_partition.build_stream) {
+            local_state._current_partition = std::move(local_state._spill_partition_queue.front());
+            local_state._spill_partition_queue.pop_front();
+            local_state._recovered_build_block.reset();
+            local_state._queue_probe_blocks.clear();
+
+            VLOG_DEBUG << fmt::format(
+                    "Query:{}, hash join probe:{}, task:{},"
+                    " processing queue partition at level:{}, queue remaining:{}",
+                    print_id(state->query_id()), node_id(), state->task_id(),
+                    local_state._current_partition.level,
+                    local_state._spill_partition_queue.size());
+
+            // Pre-check: if the build stream size is too large for available memory,
+            // repartition directly from the streams without loading into memory.
+            static constexpr int64_t HASH_TABLE_OVERHEAD_FACTOR = 3;
+            int64_t build_stream_bytes =
+                    local_state._current_partition.has_build_data()
+                            ? local_state._current_partition.build_stream->get_written_bytes()
+                            : 0;
+            int64_t estimated_hash_table_bytes = build_stream_bytes * HASH_TABLE_OVERHEAD_FACTOR;
+
+            auto query_mem_tracker = state->get_query_ctx()->query_mem_tracker();
+            int64_t available_memory =
+                    query_mem_tracker->limit() > 0
+                            ? (query_mem_tracker->limit() - query_mem_tracker->consumption())
+                            : std::numeric_limits<int64_t>::max();
+
+            if (estimated_hash_table_bytes > available_memory && build_stream_bytes > 0) {
+                VLOG_DEBUG << fmt::format(
+                        "Query:{}, hash join probe:{}, task:{},"
+                        " queue partition (level:{}) build data too large for memory"
+                        " (estimated:{}, available:{}), repartitioning from streams",
+                        print_id(state->query_id()), node_id(), state->task_id(),
+                        local_state._current_partition.level,
+                        PrettyPrinter::print_bytes(estimated_hash_table_bytes),
+                        PrettyPrinter::print_bytes(available_memory));
+
+                // Repartition directly from the partition's streams (still on disk)
+                RETURN_IF_ERROR(local_state.repartition_current_partition(
+                        state, local_state._current_partition));
+
+                local_state._current_partition = SpillPartitionInfo {};
+                local_state._need_to_setup_queue_partition = true;
+                return Status::OK();
+            }
+        }
+
+        // Recover build data from the partition's build stream
+        bool has_data = false;
+        RETURN_IF_ERROR(local_state.recover_build_blocks_from_partition(
+                state, local_state._current_partition, has_data));
+        if (has_data) {
+            return Status::OK();
+        }
+
+        // All build data recovered. Build hash table.
+        RETURN_IF_ERROR(_setup_internal_operators_from_partition(local_state, state));
+
+        local_state._need_to_setup_queue_partition = false;
+    }
+
+    // Probe phase: feed probe blocks from the current partition's probe stream
+    bool in_mem_eos = false;
+    auto* runtime_state = local_state._shared_state->inner_runtime_state.get();
+    auto& probe_blocks = local_state._queue_probe_blocks;
+
+    while (_inner_probe_operator->need_more_input_data(runtime_state)) {
+        if (probe_blocks.empty()) {
+            bool has_data = false;
+            RETURN_IF_ERROR(local_state.recover_probe_blocks_from_partition(
+                    state, local_state._current_partition, has_data));
+            if (!has_data) {
+                // No more probe data — send eos to inner probe
+                vectorized::Block block;
+                RETURN_IF_ERROR(_inner_probe_operator->push(runtime_state, &block, true));
+                VLOG_DEBUG << fmt::format(
+                        "Query:{}, hash join probe:{}, task:{},"
+                        " queue partition (level:{}) probe eos",
+                        print_id(state->query_id()), node_id(), state->task_id(),
+                        local_state._current_partition.level);
+                break;
+            } else {
+                return Status::OK();
+            }
+        }
+
+        auto block = std::move(probe_blocks.back());
+        probe_blocks.pop_back();
+        if (!block.empty()) {
+            RETURN_IF_ERROR(_inner_probe_operator->push(runtime_state, &block, false));
+        }
+    }
+
+    RETURN_IF_ERROR(_inner_probe_operator->pull(runtime_state, output_block, &in_mem_eos));
+
+    if (in_mem_eos) {
+        VLOG_DEBUG << fmt::format(
+                "Query:{}, hash join probe:{}, task:{},"
+                " queue partition (level:{}) probe done",
+                print_id(state->query_id()), node_id(), state->task_id(),
+                local_state._current_partition.level);
+        local_state.update_profile_from_inner();
+
+        // Reset for next queue entry
+        local_state._current_partition = SpillPartitionInfo {};
+        local_state._need_to_setup_queue_partition = true;
+        local_state._queue_probe_blocks.clear();
+
+        if (local_state._spill_partition_queue.empty()) {
+            *eos = true;
         }
     }
 
