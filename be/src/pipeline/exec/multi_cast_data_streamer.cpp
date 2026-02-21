@@ -258,7 +258,7 @@ Status MultiCastDataStreamer::_start_spill_task(RuntimeState* state,
         }
         VLOG_DEBUG << "Query: " << print_id(state->query_id()) << " multi cast write "
                    << blocks_count << " blocks";
-        return spill_stream->spill_eof();
+        return spill_stream->close();
     };
 
     auto exception_catch_func = [spill_func = std::move(spill_func),

@@ -424,7 +424,7 @@ Status PartitionedHashJoinSinkLocalState::_finish_spilling(RuntimeState* state) 
             leftover.reset();
             RETURN_IF_ERROR(stream->spill_block(state, block, false));
         }
-        RETURN_IF_ERROR(stream->spill_eof());
+        RETURN_IF_ERROR(stream->close());
     }
     return Status::OK();
 }

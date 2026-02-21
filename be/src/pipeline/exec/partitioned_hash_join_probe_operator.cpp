@@ -737,7 +737,7 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
             if (build_stream && build_stream->get_written_bytes() > 0) {
                 // Finalize probe stream for reading.
                 if (probe_stream) {
-                    RETURN_IF_ERROR(probe_stream->spill_eof());
+                    RETURN_IF_ERROR(probe_stream->close());
                     probe_stream->set_read_counters(local_state.operator_profile());
                 }
                 local_state._spill_partition_queue.emplace_back(std::move(build_stream),
@@ -1076,7 +1076,7 @@ Status PartitionedHashJoinProbeLocalState::revoke_build_data(RuntimeState* state
             _current_partition.build_stream.reset();
         }
 
-        RETURN_IF_ERROR(combined_stream->spill_eof());
+        RETURN_IF_ERROR(combined_stream->close());
         _current_partition.build_stream = std::move(combined_stream);
     }
     // If _recovered_build_block is empty but build_stream is still active,

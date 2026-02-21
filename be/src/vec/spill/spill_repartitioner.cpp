@@ -128,7 +128,7 @@ Status SpillRepartitioner::route_block(RuntimeState* state, vectorized::Block& b
 Status SpillRepartitioner::finalize(std::vector<vectorized::SpillStreamSPtr>& output_streams) {
     for (auto& stream : output_streams) {
         if (stream && stream->get_written_bytes() > 0) {
-            RETURN_IF_ERROR(stream->spill_eof());
+            RETURN_IF_ERROR(stream->close());
         }
     }
     return Status::OK();

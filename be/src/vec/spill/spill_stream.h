@@ -59,7 +59,10 @@ public:
 
     Status spill_block(RuntimeState* state, const Block& block, bool eof);
 
-    Status spill_eof();
+    // Finalizes the write side: flushes the file footer/meta, closes the underlying
+    // file writer, and marks the stream as ready for reading. Idempotent: safe to
+    // call even if the writer has already been closed (writer_ == nullptr).
+    Status close();
 
     Status read_next_block_sync(Block* block, bool* eos);
 

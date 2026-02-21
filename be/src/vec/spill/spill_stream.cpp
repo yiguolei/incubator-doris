@@ -136,17 +136,20 @@ Status SpillStream::spill_block(RuntimeState* state, const Block& block, bool eo
     });
     RETURN_IF_ERROR(writer_->write(state, block, written_bytes));
     if (eof) {
-        RETURN_IF_ERROR(spill_eof());
+        RETURN_IF_ERROR(close());
     } else {
         total_written_bytes_ = writer_->get_written_bytes();
     }
     return Status::OK();
 }
 
-Status SpillStream::spill_eof() {
+Status SpillStream::close() {
     DBUG_EXECUTE_IF("fault_inject::spill_stream::spill_eof", {
         return Status::Error<INTERNAL_ERROR>("fault_inject spill_stream spill_eof failed");
     });
+    if (!writer_) {
+        return Status::OK();
+    }
     auto status = writer_->close();
     total_written_bytes_ = writer_->get_written_bytes();
     writer_.reset();

@@ -108,7 +108,7 @@ public:
     Status route_block(RuntimeState* state, vectorized::Block& block,
                        std::vector<vectorized::SpillStreamSPtr>& output_streams);
 
-    /// Finalize all output streams that have data (call spill_eof).
+    /// Finalize all output streams that have data (call close()).
     /// Call after the last repartition() returns done == true.
     static Status finalize(std::vector<vectorized::SpillStreamSPtr>& output_streams);
 

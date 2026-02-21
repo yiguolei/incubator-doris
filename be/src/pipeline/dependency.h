@@ -482,7 +482,7 @@ struct AggSpillPartition {
         Status status;
         // avoid small spill files
         if (spilling_stream_->get_written_bytes() >= AGG_SPILL_FILE_SIZE) {
-            status = spilling_stream_->spill_eof();
+            status = spilling_stream_->close();
             spilling_stream_.reset();
         }
         return status;
@@ -491,7 +491,7 @@ struct AggSpillPartition {
     Status finish_current_spilling(bool eos = false) {
         if (spilling_stream_) {
             if (eos || spilling_stream_->get_written_bytes() >= AGG_SPILL_FILE_SIZE) {
-                auto status = spilling_stream_->spill_eof();
+                auto status = spilling_stream_->close();
                 spilling_stream_.reset();
                 return status;
             }
