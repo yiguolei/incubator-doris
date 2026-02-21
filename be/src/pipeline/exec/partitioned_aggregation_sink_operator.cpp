@@ -294,13 +294,10 @@ Status PartitionedAggSinkLocalState::_spill_partition(
         RuntimeState* state, HashTableCtxType& context, AggSpillPartitionSPtr& spill_partition,
         std::vector<KeyType>& keys, std::vector<vectorized::AggregateDataPtr>& values,
         const vectorized::AggregateDataPtr null_key_data, bool is_last) {
-    vectorized::SpillFileSPtr spill_file;
-    auto status = spill_partition->get_spill_file(state, Base::_parent->node_id(),
-                                                 Base::operator_profile(), spill_file);
+    vectorized::SpillStreamSPtr spill_stream;
+    auto status = spill_partition->get_spill_stream(state, Base::_parent->node_id(),
+                                                    Base::operator_profile(), spill_stream);
     RETURN_IF_ERROR(status);
-    // 用 SpillFile 创建 writer
-    auto writer = spill_file->create_writer(/*batch_rows*/1024, /*batch_bytes*/1024*1024);
-    RETURN_IF_ERROR(writer->open());
 
     status = to_block(context, keys, values, null_key_data);
     RETURN_IF_ERROR(status);

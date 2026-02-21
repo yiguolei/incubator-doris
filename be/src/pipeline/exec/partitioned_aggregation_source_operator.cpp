@@ -245,14 +245,9 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
             static constexpr int64_t HASH_TABLE_OVERHEAD_FACTOR = 3;
             auto& front_partition = local_state._shared_state->spill_partitions[0];
             int64_t partition_bytes = 0;
-            // 优先用 spill_file_ 获取 written_bytes
-            if (front_partition->spill_file_) {
-                partition_bytes += front_partition->spill_file_->get_written_bytes();
-            } else {
-                for (auto& stream : front_partition->spill_streams_) {
-                    if (stream) {
-                        partition_bytes += stream->get_written_bytes();
-                    }
+            for (auto& stream : front_partition->spill_streams_) {
+                if (stream) {
+                    partition_bytes += stream->get_written_bytes();
                 }
             }
             int64_t estimated_memory = partition_bytes * HASH_TABLE_OVERHEAD_FACTOR;
@@ -271,13 +266,9 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
                         PrettyPrinter::print_bytes(estimated_memory),
                         PrettyPrinter::print_bytes(available_memory));
 
-                // 优先用 spill_file_ 构造 AggSpillPartitionInfo
-                AggSpillPartitionInfo partition_info;
-                if (front_partition->spill_file_) {
-                    partition_info.spill_file = front_partition->spill_file_;
-                } else {
-                    partition_info.spill_streams = std::move(front_partition->spill_streams_);
-                }
+                // Convert the original AggSpillPartition to an AggSpillPartitionInfo
+                AggSpillPartitionInfo partition_info(std::move(front_partition->spill_streams_),
+                                                     /*level=*/0);
                 local_state._shared_state->spill_partitions.pop_front();
 
                 status = local_state.repartition_agg_partition(state, partition_info);
