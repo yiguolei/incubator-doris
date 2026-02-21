@@ -369,7 +369,7 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
         return status;
     };
 
-    auto exception_catch_func = [read_func, state, query_id]() {
+    auto exception_catch_func = [read_func, query_id]() {
         auto status = [&]() {
             RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
             return Status::OK();
@@ -426,7 +426,7 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
         return st;
     };
 
-    auto exception_catch_func = [read_func, state, query_id]() {
+    auto exception_catch_func = [read_func, query_id]() {
         auto status = [&]() {
             RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
             return Status::OK();
@@ -926,19 +926,9 @@ bool PartitionedHashJoinProbeOperatorX::need_more_input_data(RuntimeState* state
 }
 
 size_t PartitionedHashJoinProbeOperatorX::revocable_mem_size(RuntimeState* state) const {
-    auto& local_state = get_local_state(state);
-    // After _child_eos, we may still have recovered build data that is revocable (can be repartitioned)
-    size_t revocable_size = 0;
-    if (!local_state._child_eos) {
-        revocable_size = _revocable_mem_size(state, true);
-        if (_child) {
-            revocable_size += _child->revocable_mem_size(state);
-        }
-    } else {
-        // After child_eos, only consider build-side memory
-        revocable_size = _revocable_mem_size(state, true);
-    }
-    return revocable_size;
+    // Report only this operator's own revocable memory. The pipeline task
+    // iterates all operators to sum revocable sizes and revoke each individually.
+    return _revocable_mem_size(state, true);
 }
 
 size_t PartitionedHashJoinProbeOperatorX::_revocable_mem_size(RuntimeState* state,

@@ -641,11 +641,12 @@ Status PipelineTask::do_revoke_memory(const std::shared_ptr<SpillContext>& spill
         }
     }};
 
-    // If the root operator (probe/source side) also has revocable memory,
-    // call its revoke_memory first so probe blocks are spilled alongside
-    // the build-side spill triggered on the sink.
-    if (_root->revocable_mem_size(_state) >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
-        RETURN_IF_ERROR(_root->revoke_memory(_state, spill_context));
+    // Revoke memory from every operator that has enough revocable memory,
+    // then revoke from the sink.
+    for (auto& op : _operators) {
+        if (op->revocable_mem_size(_state) >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+            RETURN_IF_ERROR(op->revoke_memory(_state, spill_context));
+        }
     }
     return _sink->revoke_memory(_state, spill_context);
 }
@@ -661,11 +662,11 @@ bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBas
         return true;
     }
     COUNTER_UPDATE(_memory_reserve_times, 1);
-    auto sink_revocable_mem_size = _sink->revocable_mem_size(_state);
-    // Also count root-side (probe/source) revocable memory for force-spill
-    // decisions and debug logging.
-    const auto root_revocable_mem_size = _root->revocable_mem_size(_state);
-    const auto total_revocable_mem_size = sink_revocable_mem_size + root_revocable_mem_size;
+    // Compute total revocable memory across all operators and the sink.
+    size_t total_revocable_mem_size = _sink->revocable_mem_size(_state);
+    for (auto& op : _operators) {
+        total_revocable_mem_size += op->revocable_mem_size(_state);
+    }
     if (st.ok() && _state->enable_force_spill() && _sink->is_spillable() &&
         total_revocable_mem_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
         st = Status(ErrorCode::QUERY_MEMORY_EXCEEDED, "Force Spill");
@@ -674,49 +675,20 @@ bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBas
         COUNTER_UPDATE(_memory_reserve_failed_times, 1);
         auto debug_msg = fmt::format(
                 "Query: {} , try to reserve: {}, operator name: {}, operator "
-                "id: {}, task id: {}, root revocable mem size: {}, sink revocable mem"
-                "size: {}, failed: {}",
+                "id: {}, task id: {}, total revocable mem size: {}, failed: {}",
                 print_id(_query_id), PrettyPrinter::print_bytes(reserve_size), op->get_name(),
                 op->node_id(), _state->task_id(),
-                PrettyPrinter::print_bytes(op->revocable_mem_size(_state)),
-                PrettyPrinter::print_bytes(sink_revocable_mem_size), st.to_string());
+                PrettyPrinter::print_bytes(total_revocable_mem_size), st.to_string());
         // PROCESS_MEMORY_EXCEEDED error msg already contains process_mem_log_str
         if (!st.is<ErrorCode::PROCESS_MEMORY_EXCEEDED>()) {
             debug_msg +=
                     fmt::format(", debug info: {}", GlobalMemoryArbitrator::process_mem_log_str());
         }
-        // If sink has enough revocable memory, trigger revoke memory
-        LOG(INFO) << fmt::format(
-                "Query: {} sink: {}, node id: {}, task id: "
-                "{}, revocable mem size: {}",
-                print_id(_query_id), _sink->get_name(), _sink->node_id(), _state->task_id(),
-                PrettyPrinter::print_bytes(sink_revocable_mem_size));
+        LOG(INFO) << debug_msg;
         ExecEnv::GetInstance()->workload_group_mgr()->add_paused_query(
                 _state->get_query_ctx()->resource_ctx()->shared_from_this(), reserve_size, st);
         _spilling = true;
         return false;
-        // !!! Attention:
-        // In the past, if reserve failed, not add this query to paused list, because it is very small, will not
-        // consume a lot of memory. But need set low memory mode to indicate that the system should
-        // not use too much memory.
-        // But if we only set _state->get_query_ctx()->set_low_memory_mode() here, and return true, the query will
-        // continue to run and not blocked, and this reserve maybe the last block of join sink opertorator, and it will
-        // build hash table directly and will consume a lot of memory. So that should return false directly.
-        // TODO: we should using a global system buffer management logic to deal with low memory mode.
-        /**
-        if (sink_revocable_mem_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
-            LOG(INFO) << fmt::format(
-                    "Query: {} sink: {}, node id: {}, task id: "
-                    "{}, revocable mem size: {}",
-                    print_id(_query_id), _sink->get_name(), _sink->node_id(), _state->task_id(),
-                    PrettyPrinter::print_bytes(sink_revocable_mem_size));
-            ExecEnv::GetInstance()->workload_group_mgr()->add_paused_query(
-                    _state->get_query_ctx()->resource_ctx()->shared_from_this(), reserve_size, st);
-            _spilling = true;
-            return false;
-        } else {
-            _state->get_query_ctx()->set_low_memory_mode();
-        } */
     }
     return true;
 }
@@ -864,8 +836,13 @@ size_t PipelineTask::get_revocable_size() const {
         return 0;
     }
 
-    // Include both sink (build-side) and root (probe/source-side) revocable memory.
-    return _sink->revocable_mem_size(_state) + _root->revocable_mem_size(_state);
+    // Sum revocable memory from every operator in the pipeline + the sink.
+    // Each operator reports only its own revocable memory (no child recursion).
+    size_t total = _sink->revocable_mem_size(_state);
+    for (auto& op : _operators) {
+        total += op->revocable_mem_size(_state);
+    }
+    return total;
 }
 
 Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_context) {
@@ -877,9 +854,7 @@ Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_co
         return Status::OK();
     }
 
-    const auto sink_revocable = _sink->revocable_mem_size(_state);
-    const auto root_revocable = _root->revocable_mem_size(_state);
-    const auto revocable_size = sink_revocable + root_revocable;
+    const auto revocable_size = get_revocable_size();
     if (revocable_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
         auto revokable_task = std::make_shared<RevokableTask>(shared_from_this(), spill_context);
         RETURN_IF_ERROR(_state->get_query_ctx()->get_pipe_exec_scheduler()->submit(revokable_task));

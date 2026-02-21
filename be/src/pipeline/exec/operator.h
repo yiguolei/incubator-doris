@@ -953,10 +953,6 @@ public:
         }
     }
 
-    size_t revocable_mem_size(RuntimeState* state) const override {
-        return (_child and !is_source()) ? _child->revocable_mem_size(state) : 0;
-    }
-
     // If this method is not overwrite by child, its default value is 1MB
     [[nodiscard]] virtual size_t get_reserve_mem_size(RuntimeState* state) {
         return state->minimum_operator_memory_required_bytes();
