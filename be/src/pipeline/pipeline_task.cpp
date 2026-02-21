@@ -641,6 +641,12 @@ Status PipelineTask::do_revoke_memory(const std::shared_ptr<SpillContext>& spill
         }
     }};
 
+    // If the root operator (probe/source side) also has revocable memory,
+    // call its revoke_memory first so probe blocks are spilled alongside
+    // the build-side spill triggered on the sink.
+    if (_root->revocable_mem_size(_state) >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+        RETURN_IF_ERROR(_root->revoke_memory(_state, spill_context));
+    }
     return _sink->revoke_memory(_state, spill_context);
 }
 
@@ -656,8 +662,12 @@ bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBas
     }
     COUNTER_UPDATE(_memory_reserve_times, 1);
     auto sink_revocable_mem_size = _sink->revocable_mem_size(_state);
+    // Also count root-side (probe/source) revocable memory for force-spill
+    // decisions and debug logging.
+    const auto root_revocable_mem_size = _root->revocable_mem_size(_state);
+    const auto total_revocable_mem_size = sink_revocable_mem_size + root_revocable_mem_size;
     if (st.ok() && _state->enable_force_spill() && _sink->is_spillable() &&
-        sink_revocable_mem_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+        total_revocable_mem_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
         st = Status(ErrorCode::QUERY_MEMORY_EXCEEDED, "Force Spill");
     }
     if (!st.ok()) {
@@ -854,7 +864,8 @@ size_t PipelineTask::get_revocable_size() const {
         return 0;
     }
 
-    return _sink->revocable_mem_size(_state);
+    // Include both sink (build-side) and root (probe/source-side) revocable memory.
+    return _sink->revocable_mem_size(_state) + _root->revocable_mem_size(_state);
 }
 
 Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_context) {
@@ -866,7 +877,9 @@ Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_co
         return Status::OK();
     }
 
-    const auto revocable_size = _sink->revocable_mem_size(_state);
+    const auto sink_revocable = _sink->revocable_mem_size(_state);
+    const auto root_revocable = _root->revocable_mem_size(_state);
+    const auto revocable_size = sink_revocable + root_revocable;
     if (revocable_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
         auto revokable_task = std::make_shared<RevokableTask>(shared_from_this(), spill_context);
         RETURN_IF_ERROR(_state->get_query_ctx()->get_pipe_exec_scheduler()->submit(revokable_task));

@@ -158,6 +158,97 @@ bool PartitionedAggSourceOperatorX::is_shuffled_operator() const {
     return _agg_source_operator->is_shuffled_operator();
 }
 
+size_t PartitionedAggSourceOperatorX::revocable_mem_size(RuntimeState* state) const {
+    auto& local_state = get_local_state(state);
+    if (!local_state._shared_state->is_spilled) {
+        // Not spilled: no revocable memory on the source side (build side owns it).
+        return 0;
+    }
+    // Return the accumulated in-memory hash table size for the current partition.
+    // This is updated incrementally as blocks are merged in get_block.
+    return local_state._estimate_memory_usage;
+}
+
+Status PartitionedAggSourceOperatorX::revoke_memory(
+        RuntimeState* state, const std::shared_ptr<SpillContext>& /*spill_context*/) {
+    auto& local_state = get_local_state(state);
+    if (!local_state._shared_state->is_spilled ||
+        local_state._estimate_memory_usage < vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+        return Status::OK();
+    }
+    VLOG_DEBUG << fmt::format("Query:{}, agg source:{}, task:{}, revoke_memory, hash table size:{}",
+                              print_id(state->query_id()), node_id(), state->task_id(),
+                              PrettyPrinter::print_bytes(local_state._estimate_memory_usage));
+
+    // Flush the current in-memory hash table into sub-streams (FANOUT partitions)
+    // and repartition the remaining unread streams for the current partition.
+    // This mirrors the mid-merge OOM path in get_block but is driven externally
+    // by the pipeline task scheduler.
+    std::vector<vectorized::SpillStreamSPtr> output_streams;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
+            state, node_id(), "agg_repart_revoke", local_state.operator_profile(), output_streams));
+
+    RETURN_IF_ERROR(local_state.flush_hash_table_to_sub_streams(state, output_streams));
+
+    // Repartition remaining unread streams for the current original partition.
+    if (!local_state._shared_state->spill_partitions.empty()) {
+        auto& front_partition = local_state._shared_state->spill_partitions[0];
+        auto* in_mem_state = local_state._shared_state->in_mem_shared_state;
+        size_t num_keys = in_mem_state->probe_expr_ctxs.size();
+        std::vector<size_t> key_indices(num_keys);
+        std::vector<vectorized::DataTypePtr> key_types(num_keys);
+        for (size_t i = 0; i < num_keys; ++i) {
+            key_indices[i] = i;
+            key_types[i] = in_mem_state->probe_expr_ctxs[i]->root()->data_type();
+        }
+        local_state._repartitioner.init_with_key_columns(
+                std::move(key_indices), std::move(key_types), local_state.operator_profile());
+        for (auto& stream : front_partition->spill_streams_) {
+            if (!stream || stream->get_written_bytes() == 0) {
+                if (stream) {
+                    ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+                    stream.reset();
+                }
+                continue;
+            }
+            stream->set_read_counters(local_state.operator_profile());
+            bool done = false;
+            while (!done && !state->is_cancelled()) {
+                RETURN_IF_ERROR(local_state._repartitioner.repartition(state, stream,
+                                                                       output_streams, &done));
+            }
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
+            stream.reset();
+        }
+        front_partition->spill_streams_.clear();
+        local_state._shared_state->spill_partitions.pop_front();
+    }
+
+    RETURN_IF_ERROR(SpillRepartitioner::finalize(output_streams));
+
+    // Push non-empty sub-partitions into the work queue.
+    for (int i = 0; i < SpillRepartitioner::FANOUT; ++i) {
+        if (output_streams[i] && output_streams[i]->get_written_bytes() > 0) {
+            std::deque<vectorized::SpillStreamSPtr> sub_streams;
+            sub_streams.push_back(std::move(output_streams[i]));
+            local_state._spill_partition_queue.emplace_back(std::move(sub_streams), 1);
+        } else if (output_streams[i]) {
+            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(output_streams[i]);
+        }
+    }
+
+    local_state._estimate_memory_usage = 0;
+    local_state._need_to_merge_data_for_current_partition = true;
+    local_state._current_partition_eos = true;
+
+    if (local_state._shared_state->spill_partitions.empty() &&
+        !local_state._spill_partition_queue.empty()) {
+        local_state._processing_spill_queue = true;
+        local_state._need_to_setup_queue_partition = true;
+    }
+    return Status::OK();
+}
+
 Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized::Block* block,
                                                 bool* eos) {
     auto& local_state = get_local_state(state);
@@ -289,9 +380,8 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
 
                     // Collect profile before flushing (flush resets the hash table).
                     {
-                        auto* source_local_state =
-                                local_state._runtime_state->get_local_state(
-                                        _agg_source_operator->operator_id());
+                        auto* source_local_state = local_state._runtime_state->get_local_state(
+                                _agg_source_operator->operator_id());
                         local_state.update_profile<true>(source_local_state->custom_profile());
                     }
 
@@ -319,8 +409,7 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
                             continue;
                         }
                         if (stream->get_written_bytes() == 0) {
-                            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                                    stream);
+                            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
                             stream.reset();
                             continue;
                         }
@@ -822,9 +911,8 @@ Status PartitionedAggSourceOperatorX::_pull_from_spill_queue(PartitionedAggLocal
 
                     // Collect profile before flushing (flush resets the hash table).
                     {
-                        auto* source_local_state =
-                                local_state._runtime_state->get_local_state(
-                                        _agg_source_operator->operator_id());
+                        auto* source_local_state = local_state._runtime_state->get_local_state(
+                                _agg_source_operator->operator_id());
                         local_state.update_profile<true>(source_local_state->custom_profile());
                     }
 
@@ -851,8 +939,7 @@ Status PartitionedAggSourceOperatorX::_pull_from_spill_queue(PartitionedAggLocal
                             continue;
                         }
                         if (stream->get_written_bytes() == 0) {
-                            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(
-                                    stream);
+                            ExecEnv::GetInstance()->spill_stream_mgr()->delete_spill_stream(stream);
                             stream.reset();
                             continue;
                         }

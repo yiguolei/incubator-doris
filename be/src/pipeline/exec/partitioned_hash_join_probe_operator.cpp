@@ -300,15 +300,21 @@ Status PartitionedHashJoinProbeLocalState::finish_spilling(uint32_t partition_in
     return Status::OK();
 }
 
-Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_disk(RuntimeState* state,
-                                                                          uint32_t partition_index,
-                                                                          bool& has_data) {
+Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_disk(
+        RuntimeState* state, uint32_t partition_index, bool& recovered_data_available) {
     VLOG_DEBUG << fmt::format(
             "Query:{}, hash join probe:{}, task:{},"
             " partition:{}, recover_build_blocks_from_disk",
             print_id(state->query_id()), _parent->node_id(), state->task_id(), partition_index);
     auto& spilled_stream = _shared_state->spilled_streams[partition_index];
-    has_data = false;
+    // recovered_data_available indicates whether this recover call produced (or
+    // attempted to produce) at least one batch of recovered data that the caller
+    // should consume before continuing. This function performs synchronous
+    // reads (via SpillRecoverRunnable::run) and may return after producing a
+    // partial batch (to avoid long blocking); callers should yield when this
+    // flag is true and resume processing when the recovered data has been
+    // consumed.
+    recovered_data_available = false;
     if (!spilled_stream) {
         return Status::OK();
     }
@@ -400,7 +406,11 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_disk(Runtim
         return status;
     };
 
-    has_data = true;
+    // Signal to caller that recovered data is available (one or more blocks
+    // read into internal buffers). The function itself runs the read
+    // synchronously but may stop early after producing a batch, so the caller
+    // should return/yield and consume the data first.
+    recovered_data_available = true;
     DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_probe::recovery_build_blocks_submit_func",
                     {
                         return Status::Error<INTERNAL_ERROR>(
@@ -435,11 +445,10 @@ std::string PartitionedHashJoinProbeLocalState::debug_string(int indentation_lev
     return fmt::to_string(debug_string_buffer);
 }
 
-Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_disk(RuntimeState* state,
-                                                                          uint32_t partition_index,
-                                                                          bool& has_data) {
+Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_disk(
+        RuntimeState* state, uint32_t partition_index, bool& recovered_data_available) {
     auto& spilled_stream = _probe_spilling_streams[partition_index];
-    has_data = false;
+    recovered_data_available = false;
     if (!spilled_stream) {
         return Status::OK();
     }
@@ -504,7 +513,11 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_disk(Runtim
         return status;
     };
 
-    has_data = true;
+    // See comment in recover_build_blocks_from_disk: this function performs
+    // synchronous reads up to a batch threshold and sets
+    // recovered_data_available=true to tell the caller to yield and consume the
+    // recovered probe blocks before continuing.
+    recovered_data_available = true;
     DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_probe::recovery_probe_blocks_submit_func",
                     {
                         return Status::Error<INTERNAL_ERROR>(
@@ -519,8 +532,13 @@ bool PartitionedHashJoinProbeLocalState::is_blockable() const {
 }
 
 Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
-        RuntimeState* state, SpillPartitionInfo& partition_info, bool& has_data) {
-    has_data = false;
+        RuntimeState* state, SpillPartitionInfo& partition_info, bool& recovered_data_available) {
+    // recovered_data_available signals the caller that this synchronous
+    // recovery call produced (or attempted to produce) at least one batch of
+    // recovered build data stored in _recovered_build_block. Callers should
+    // yield and consume the recovered data before continuing further
+    // processing for this partition.
+    recovered_data_available = false;
     auto& build_stream = partition_info.build_stream;
     if (!build_stream || !build_stream->ready_for_reading()) {
         return Status::OK();
@@ -574,13 +592,17 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
         return status;
     };
 
-    has_data = true;
+    recovered_data_available = true;
     return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
 }
 
 Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
-        RuntimeState* state, SpillPartitionInfo& partition_info, bool& has_data) {
-    has_data = false;
+        RuntimeState* state, SpillPartitionInfo& partition_info, bool& recovered_data_available) {
+    // recovered_data_available: this call performs synchronous reads of probe
+    // blocks into _queue_probe_blocks up to a batch threshold and sets this
+    // flag to true when data is available. Caller should return/yield and
+    // then consume the recovered probe blocks before continuing.
+    recovered_data_available = false;
     auto& probe_stream = partition_info.probe_stream;
     if (!probe_stream || !probe_stream->ready_for_reading()) {
         return Status::OK();
@@ -627,7 +649,7 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
         return status;
     };
 
-    has_data = true;
+    recovered_data_available = true;
     return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
 }
 
@@ -1121,41 +1143,31 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
     }
 
     if (local_state._need_to_setup_internal_operators) {
-        bool has_data = false;
+        bool recovered_data_available = false;
         RETURN_IF_ERROR(local_state.recover_build_blocks_from_disk(
-                state, local_state._partition_cursor, has_data));
-        if (has_data) {
+                state, local_state._partition_cursor, recovered_data_available));
+        if (recovered_data_available) {
+            // Recovered some build data — yield so the caller can consume it
+            // (it has been stored in _recovered_build_block and will be merged
+            // into partitioned_build_blocks on the next invocation).
             return Status::OK();
         }
 
         *eos = false;
         RETURN_IF_ERROR(local_state.finish_spilling(partition_index));
 
-        // Pre-check: estimate whether the hash table will fit in memory.
-        // Hash table overhead is typically ~3x the raw data size (hash buckets, next arrays, etc.)
-        // If estimated usage exceeds available query memory, repartition instead of building.
-        static constexpr int64_t HASH_TABLE_OVERHEAD_FACTOR = 3;
+        // Yield-based memory check: if in low_memory_mode and we have significant build data, trigger repartition
         auto& build_block_ptr =
                 local_state._shared_state->partitioned_build_blocks[partition_index];
         int64_t build_data_bytes = build_block_ptr ? build_block_ptr->allocated_bytes() : 0;
-        int64_t estimated_hash_table_bytes = build_data_bytes * HASH_TABLE_OVERHEAD_FACTOR;
-
-        auto query_mem_tracker = state->get_query_ctx()->query_mem_tracker();
-        int64_t available_memory =
-                query_mem_tracker->limit() > 0
-                        ? (query_mem_tracker->limit() - query_mem_tracker->consumption())
-                        : std::numeric_limits<int64_t>::max();
-
-        if (estimated_hash_table_bytes > available_memory && build_data_bytes > 0) {
-            // Build data is too large for available memory — repartition directly.
-            // At this point build data is still in partitioned_build_blocks[partition_index].
+        if (local_state.low_memory_mode() &&
+            build_data_bytes > vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
             VLOG_DEBUG << fmt::format(
                     "Query:{}, hash join probe:{}, task:{},"
-                    " level-0 partition:{} build data too large for memory"
-                    " (estimated:{}, available:{}), repartitioning",
+                    " level-0 partition:{} build data triggers repartition due to low memory mode "
+                    "({} bytes)",
                     print_id(state->query_id()), node_id(), state->task_id(), partition_index,
-                    PrettyPrinter::print_bytes(estimated_hash_table_bytes),
-                    PrettyPrinter::print_bytes(available_memory));
+                    PrettyPrinter::print_bytes(build_data_bytes));
 
             RETURN_IF_ERROR(local_state.repartition_level0_partition(state, partition_index));
             local_state._shared_state->partitioned_build_blocks[partition_index].reset();
@@ -1186,10 +1198,10 @@ Status PartitionedHashJoinProbeOperatorX::pull(doris::RuntimeState* state,
     while (_inner_probe_operator->need_more_input_data(runtime_state)) {
         if (probe_blocks.empty()) {
             *eos = false;
-            bool has_data = false;
-            RETURN_IF_ERROR(
-                    local_state.recover_probe_blocks_from_disk(state, partition_index, has_data));
-            if (!has_data) {
+            bool recovered_data_available = false;
+            RETURN_IF_ERROR(local_state.recover_probe_blocks_from_disk(state, partition_index,
+                                                                       recovered_data_available));
+            if (!recovered_data_available) {
                 vectorized::Block block;
                 RETURN_IF_ERROR(_inner_probe_operator->push(runtime_state, &block, true));
                 VLOG_DEBUG << fmt::format(
@@ -1243,14 +1255,34 @@ Status PartitionedHashJoinProbeOperatorX::_pull_from_spill_queue(
     *eos = false;
 
     if (local_state._need_to_setup_queue_partition) {
-        // If the queue is empty, we're done
-        if (local_state._spill_partition_queue.empty()) {
+        // If the queue is empty AND we don't already have a current
+        // partition or recovered build data pending, we're done. It's
+        // possible the queue was popped on a previous scheduling and the
+        // recovered data is waiting to be processed; in that case we must
+        // not return EOS here.
+        if (local_state._spill_partition_queue.empty() &&
+            !local_state._current_partition.build_stream &&
+            !(local_state._recovered_build_block &&
+              local_state._recovered_build_block->rows() > 0)) {
             *eos = true;
             return Status::OK();
         }
 
         // Pop next partition to process
-        if (!local_state._current_partition.build_stream) {
+        // Invariant: we only pop a new queue partition when `_current_partition`
+        // is empty and we have not already recovered build data for the
+        // current partition. `SpillPartitionInfo::build_stream` is used as a
+        // sentinel for whether we've populated `_current_partition` from the
+        // queue. However, after we recover the partition's build stream into
+        // `_recovered_build_block`, `build_stream` may be cleared (read to
+        // eos). In that state we must NOT pop the next queued partition — we
+        // still need to setup internal operators from the recovered data.
+        if (!local_state._current_partition.build_stream && !local_state._recovered_build_block) {
+            // Defensive checks about the expected invariants before we pop.
+            DCHECK(!local_state._current_partition.build_stream);
+            DCHECK(local_state._spill_partition_queue.front().build_stream)
+                    << "Expected queued partition to contain build_stream";
+
             local_state._current_partition = std::move(local_state._spill_partition_queue.front());
             local_state._spill_partition_queue.pop_front();
             local_state._recovered_build_block.reset();
@@ -1263,53 +1295,52 @@ Status PartitionedHashJoinProbeOperatorX::_pull_from_spill_queue(
                     local_state._current_partition.level,
                     local_state._spill_partition_queue.size());
 
-            // Pre-check: if the build stream size is too large for available memory,
-            // repartition directly from the streams without loading into memory.
-            static constexpr int64_t HASH_TABLE_OVERHEAD_FACTOR = 3;
-            int64_t build_stream_bytes =
-                    local_state._current_partition.has_build_data()
-                            ? local_state._current_partition.build_stream->get_written_bytes()
-                            : 0;
-            int64_t estimated_hash_table_bytes = build_stream_bytes * HASH_TABLE_OVERHEAD_FACTOR;
+            // NOTE: removed opportunistic low-memory-mode-triggered repartition here.
+            // Repartition decisions for queue partitions should be driven by the
+            // pipeline task scheduler (reserve/yield/low-memory mechanism) so
+            // this operator no longer force-triggers repartition from inside the
+            // pull path. Continue and let the normal recovery/repartition logic
+            // (below) proceed under pipeline control.
+        }
 
-            auto query_mem_tracker = state->get_query_ctx()->query_mem_tracker();
-            int64_t available_memory =
-                    query_mem_tracker->limit() > 0
-                            ? (query_mem_tracker->limit() - query_mem_tracker->consumption())
-                            : std::numeric_limits<int64_t>::max();
-
-            if (estimated_hash_table_bytes > available_memory && build_stream_bytes > 0) {
-                VLOG_DEBUG << fmt::format(
-                        "Query:{}, hash join probe:{}, task:{},"
-                        " queue partition (level:{}) build data too large for memory"
-                        " (estimated:{}, available:{}), repartitioning from streams",
-                        print_id(state->query_id()), node_id(), state->task_id(),
-                        local_state._current_partition.level,
-                        PrettyPrinter::print_bytes(estimated_hash_table_bytes),
-                        PrettyPrinter::print_bytes(available_memory));
-
-                // Repartition directly from the partition's streams (still on disk)
-                RETURN_IF_ERROR(local_state.repartition_current_partition(
-                        state, local_state._current_partition));
-
-                local_state._current_partition = SpillPartitionInfo {};
-                local_state._need_to_setup_queue_partition = true;
+        // If we've already recovered build data into `_recovered_build_block`
+        // (from a previous scheduling), we must only perform the internal
+        // operator setup once we've recovered *all* build data for this
+        // partition. The recovery logic may return partial batches across
+        // multiple scheduling slices to avoid long blocking reads. Only when
+        // the partition's `build_stream` has been exhausted (it will be
+        // cleared/reset by the recovery code) may we safely build the hash
+        // table from the accumulated `_recovered_build_block`.
+        //
+        // Note: if `_recovered_build_block` contains rows but
+        // `_current_partition.build_stream` is still non-null then more build
+        // data may still arrive; continue recovery instead of starting the
+        // build now.
+        if (local_state._recovered_build_block && local_state._recovered_build_block->rows() > 0 &&
+            !local_state._current_partition.build_stream) {
+            // Defensive check: ensure there is no remaining build stream to read
+            // from before starting the build.
+            DCHECK(!local_state._current_partition.build_stream);
+            RETURN_IF_ERROR(_setup_internal_operators_from_partition(local_state, state));
+            local_state._need_to_setup_queue_partition = false;
+        } else {
+            // Recover build data from the partition's build stream
+            bool recovered_data_available = false;
+            RETURN_IF_ERROR(local_state.recover_build_blocks_from_partition(
+                    state, local_state._current_partition, recovered_data_available));
+            if (recovered_data_available) {
+                // We read some build data — yield so it can be consumed in the next
+                // scheduling of this operator.
                 return Status::OK();
             }
-        }
 
-        // Recover build data from the partition's build stream
-        bool has_data = false;
-        RETURN_IF_ERROR(local_state.recover_build_blocks_from_partition(
-                state, local_state._current_partition, has_data));
-        if (has_data) {
+            // All build data recovered. Yield once so the pipeline scheduler can
+            // re-evaluate reservations based on the recovered data before we
+            // actually build the hash table. On the next scheduling of this
+            // operator we will fall through and call
+            // `_setup_internal_operators_from_partition`.
             return Status::OK();
         }
-
-        // All build data recovered. Build hash table.
-        RETURN_IF_ERROR(_setup_internal_operators_from_partition(local_state, state));
-
-        local_state._need_to_setup_queue_partition = false;
     }
 
     // Probe phase: feed probe blocks from the current partition's probe stream
@@ -1319,10 +1350,10 @@ Status PartitionedHashJoinProbeOperatorX::_pull_from_spill_queue(
 
     while (_inner_probe_operator->need_more_input_data(runtime_state)) {
         if (probe_blocks.empty()) {
-            bool has_data = false;
+            bool recovered_data_available = false;
             RETURN_IF_ERROR(local_state.recover_probe_blocks_from_partition(
-                    state, local_state._current_partition, has_data));
-            if (!has_data) {
+                    state, local_state._current_partition, recovered_data_available));
+            if (!recovered_data_available) {
                 // No more probe data — send eos to inner probe
                 vectorized::Block block;
                 RETURN_IF_ERROR(_inner_probe_operator->push(runtime_state, &block, true));
@@ -1381,13 +1412,16 @@ bool PartitionedHashJoinProbeOperatorX::need_more_input_data(RuntimeState* state
 
 size_t PartitionedHashJoinProbeOperatorX::revocable_mem_size(RuntimeState* state) const {
     auto& local_state = get_local_state(state);
-    if (local_state._child_eos) {
-        return 0;
-    }
-
-    auto revocable_size = _revocable_mem_size(state, true);
-    if (_child) {
-        revocable_size += _child->revocable_mem_size(state);
+    // After _child_eos, we may still have recovered build data that is revocable (can be repartitioned)
+    size_t revocable_size = 0;
+    if (!local_state._child_eos) {
+        revocable_size = _revocable_mem_size(state, true);
+        if (_child) {
+            revocable_size += _child->revocable_mem_size(state);
+        }
+    } else {
+        // After child_eos, only consider build-side memory
+        revocable_size = _revocable_mem_size(state, true);
     }
     return revocable_size;
 }
@@ -1412,25 +1446,79 @@ size_t PartitionedHashJoinProbeOperatorX::_revocable_mem_size(RuntimeState* stat
             }
         }
     }
+
+    // Include build-side memory that has been recovered but not yet consumed by the hash table.
+    // This data is revocable because we can repartition instead of building the hash table.
+    if (local_state._recovered_build_block) {
+        mem_size += local_state._recovered_build_block->allocated_bytes();
+    }
+    // Also include build data in partitioned_build_blocks for the current partition being processed.
+    if (local_state._partition_cursor < _partition_count) {
+        auto& build_block =
+                local_state._shared_state->partitioned_build_blocks[local_state._partition_cursor];
+        if (build_block) {
+            mem_size += build_block->allocated_bytes();
+        }
+    }
+
     return mem_size;
 }
 
 size_t PartitionedHashJoinProbeOperatorX::get_reserve_mem_size(RuntimeState* state) {
     auto& local_state = get_local_state(state);
     const auto is_spilled = local_state._shared_state->is_spilled;
-    if (!is_spilled || local_state._child_eos) {
+
+    // Non-spill path: delegate to the inner probe operator / base class.
+    if (!is_spilled) {
         return Base::get_reserve_mem_size(state);
     }
 
+    // Spill path, probe data still flowing in (child not yet EOS):
+    // We only need room for incoming probe blocks being partitioned. Reserve
+    // one batch worth of spill-write memory; no hash table will be built yet.
+    if (!local_state._child_eos) {
+        return vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM;
+    }
+
+    // Spill path, child EOS — we are in the recovery / build / probe phase.
+    // Baseline reservation is one block of spill I/O.
     size_t size_to_reserve = vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM;
 
-    if (local_state._need_to_setup_internal_operators) {
-        const size_t rows =
-                (local_state._recovered_build_block ? local_state._recovered_build_block->rows()
-                                                    : 0) +
-                state->batch_size();
-        size_t bucket_size = hash_join_table_calc_bucket_size(rows);
+    // Determine whether we are *about to build* a hash table for the current
+    // partition (level-0 path) or a queue partition (multi-level path).
+    //
+    // Level-0: _need_to_setup_internal_operators is true when the next pull()
+    //          call will build the hash table from partitioned_build_blocks.
+    //
+    // Queue path: _need_to_setup_queue_partition is true AND recovered build
+    //             data is fully available (build_stream exhausted), meaning the
+    //             next pull() will call _setup_internal_operators_from_partition.
+    const bool about_to_build_level0 = local_state._need_to_setup_internal_operators;
+    const bool about_to_build_queue =
+            local_state._need_to_setup_queue_partition && local_state._recovered_build_block &&
+            local_state._recovered_build_block->rows() > 0 &&
+            !local_state._current_partition.build_stream; // stream exhausted → ready to build
 
+    if (about_to_build_level0 || about_to_build_queue) {
+        // Estimate rows that will land in the hash table so we can reserve
+        // enough for JoinHashTable::first[] + JoinHashTable::next[].
+        size_t rows = state->batch_size(); // minimum headroom
+        if (about_to_build_level0) {
+            const auto& build_block =
+                    local_state._shared_state
+                            ->partitioned_build_blocks[local_state._partition_cursor];
+            if (build_block) {
+                rows = std::max(rows, static_cast<size_t>(build_block->rows()));
+            }
+            if (local_state._recovered_build_block) {
+                rows = std::max(rows, rows + local_state._recovered_build_block->rows());
+            }
+        } else {
+            // Queue path: rows come from _recovered_build_block
+            rows = std::max(rows, static_cast<size_t>(local_state._recovered_build_block->rows()));
+        }
+
+        const size_t bucket_size = hash_join_table_calc_bucket_size(rows);
         size_to_reserve += bucket_size * sizeof(uint32_t); // JoinHashTable::first
         size_to_reserve += rows * sizeof(uint32_t);        // JoinHashTable::next
 
@@ -1439,32 +1527,23 @@ size_t PartitionedHashJoinProbeOperatorX::get_reserve_mem_size(RuntimeState* sta
             size_to_reserve += rows * sizeof(uint8_t); // JoinHashTable::visited
         }
     }
+    // Otherwise (not about to build): we only need the spill I/O baseline
+    // already included above — no hash table allocation is imminent.
 
     COUNTER_SET(local_state._memory_usage_reserved, int64_t(size_to_reserve));
     return size_to_reserve;
 }
 
-Status PartitionedHashJoinProbeOperatorX::_revoke_memory(RuntimeState* state) {
+// Public revoke_memory: called by the pipeline task scheduler when memory
+// pressure requires probe-side blocks to be spilled. The scheduler only calls
+// _sink->revoke_memory, so the probe operator overrides this interface so the
+// scheduler can reach probe-side memory as well (see pipeline_task.cpp).
+Status PartitionedHashJoinProbeOperatorX::revoke_memory(
+        RuntimeState* state, const std::shared_ptr<SpillContext>& /*spill_context*/) {
     auto& local_state = get_local_state(state);
     VLOG_DEBUG << fmt::format("Query:{}, hash join probe:{}, task:{}, revoke_memory",
                               print_id(state->query_id()), node_id(), state->task_id());
-
-    RETURN_IF_ERROR(local_state.spill_probe_blocks(state));
-    return Status::OK();
-}
-
-bool PartitionedHashJoinProbeOperatorX::_should_revoke_memory(RuntimeState* state) const {
-    auto& local_state = get_local_state(state);
-    if (local_state._shared_state->is_spilled) {
-        const auto revocable_size = _revocable_mem_size(state);
-
-        if (local_state.low_memory_mode()) {
-            return revocable_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM;
-        } else {
-            return revocable_size >= vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM;
-        }
-    }
-    return false;
+    return local_state.spill_probe_blocks(state);
 }
 
 Status PartitionedHashJoinProbeOperatorX::get_block(RuntimeState* state, vectorized::Block* block,
@@ -1504,9 +1583,9 @@ Status PartitionedHashJoinProbeOperatorX::get_block(RuntimeState* state, vectori
         Defer clear_defer([&] { local_state._child_block->clear_column_data(); });
         if (is_spilled) {
             RETURN_IF_ERROR(push(state, local_state._child_block.get(), local_state._child_eos));
-            if (_should_revoke_memory(state)) {
-                return _revoke_memory(state);
-            }
+            // Memory revocation for probe blocks is now driven by the pipeline
+            // task scheduler via revoke_memory() (see above). No inline check
+            // needed here.
         } else {
             DCHECK(local_state._shared_state->inner_runtime_state);
             RETURN_IF_ERROR(_inner_probe_operator->push(

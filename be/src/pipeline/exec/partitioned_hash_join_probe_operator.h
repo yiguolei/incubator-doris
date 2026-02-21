@@ -72,16 +72,18 @@ public:
     Status spill_probe_blocks(RuntimeState* state);
 
     Status recover_build_blocks_from_disk(RuntimeState* state, uint32_t partition_index,
-                                          bool& has_data);
+                                          bool& recovered_data_available);
     Status recover_probe_blocks_from_disk(RuntimeState* state, uint32_t partition_index,
-                                          bool& has_data);
+                                          bool& recovered_data_available);
 
     /// Recover build blocks from a SpillPartitionInfo's build stream (for multi-level recovery).
     Status recover_build_blocks_from_partition(RuntimeState* state,
-                                               SpillPartitionInfo& partition_info, bool& has_data);
+                                               SpillPartitionInfo& partition_info,
+                                               bool& recovered_data_available);
     /// Recover probe blocks from a SpillPartitionInfo's probe stream (for multi-level recovery).
     Status recover_probe_blocks_from_partition(RuntimeState* state,
-                                               SpillPartitionInfo& partition_info, bool& has_data);
+                                               SpillPartitionInfo& partition_info,
+                                               bool& recovered_data_available);
 
     /// Repartition the current partition's build and probe streams into FANOUT sub-partitions
     /// and push them into _spill_partition_queue for subsequent processing.
@@ -214,6 +216,12 @@ public:
 
     size_t revocable_mem_size(RuntimeState* state) const override;
 
+    // Called by the pipeline task scheduler when memory pressure requires spilling
+    // probe-side blocks. Probe-side memory is NOT managed by the sink, so the
+    // probe operator must expose this interface so the scheduler can reach it.
+    Status revoke_memory(RuntimeState* state,
+                         const std::shared_ptr<SpillContext>& spill_context) override;
+
     size_t get_reserve_mem_size(RuntimeState* state) override;
 
     void set_inner_operators(const std::shared_ptr<HashJoinBuildSinkOperatorX>& sink_operator,
@@ -238,8 +246,6 @@ public:
     }
 
 private:
-    Status _revoke_memory(RuntimeState* state);
-
     size_t _revocable_mem_size(RuntimeState* state, bool force = false) const;
 
     friend class PartitionedHashJoinProbeLocalState;
@@ -257,8 +263,6 @@ private:
     [[nodiscard]] Status _pull_from_spill_queue(PartitionedHashJoinProbeLocalState& local_state,
                                                 RuntimeState* state,
                                                 vectorized::Block* output_block, bool* eos) const;
-
-    bool _should_revoke_memory(RuntimeState* state) const;
 
     const TJoinDistributionType::type _join_distribution;
 

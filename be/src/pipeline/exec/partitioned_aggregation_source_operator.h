@@ -156,6 +156,16 @@ public:
     bool is_colocated_operator() const override;
     bool is_shuffled_operator() const override;
 
+    // Returns the current in-memory hash table size for the active partition.
+    // The scheduler uses this to decide whether to trigger revoke_memory.
+    size_t revocable_mem_size(RuntimeState* state) const override;
+
+    // Called by the pipeline task scheduler under memory pressure. Flushes the
+    // current in-memory aggregation hash table to sub-streams and repartitions,
+    // freeing the hash table memory so it can be recovered in smaller slices.
+    Status revoke_memory(RuntimeState* state,
+                         const std::shared_ptr<SpillContext>& spill_context) override;
+
 private:
     friend class PartitionedAggLocalState;
 
