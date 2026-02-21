@@ -92,6 +92,14 @@ public:
     Status flush_hash_table_to_sub_streams(
             RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams);
 
+    /// Unified method for mid-merge OOM / revoke_memory: flush the in-memory hash
+    /// table into FANOUT sub-streams, repartition remaining unread streams from
+    /// `remaining_streams`, and push resulting sub-partitions into `_spill_partition_queue`.
+    /// After this call the hash table is reset and `remaining_streams` is cleared.
+    Status flush_and_repartition(RuntimeState* state,
+                                 std::deque<vectorized::SpillStreamSPtr>& remaining_streams,
+                                 int level);
+
     Status setup_in_memory_agg_op(RuntimeState* state);
 
     template <bool spilled>
