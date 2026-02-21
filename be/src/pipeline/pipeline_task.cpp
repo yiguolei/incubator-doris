@@ -664,8 +664,8 @@ bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBas
     COUNTER_UPDATE(_memory_reserve_times, 1);
     // Compute total revocable memory across all operators and the sink.
     size_t total_revocable_mem_size = _sink->revocable_mem_size(_state);
-    for (auto& op : _operators) {
-        total_revocable_mem_size += op->revocable_mem_size(_state);
+    for (auto& cur_op : _operators) {
+        total_revocable_mem_size += cur_op->revocable_mem_size(_state);
     }
     if (st.ok() && _state->enable_force_spill() && _sink->is_spillable() &&
         total_revocable_mem_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
