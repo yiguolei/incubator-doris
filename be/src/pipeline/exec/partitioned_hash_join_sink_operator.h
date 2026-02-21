@@ -73,7 +73,7 @@ protected:
 
     Status _execute_spill_unpartitioned_block(RuntimeState* state, vectorized::Block&& build_block);
 
-    Status _finish_spilling();
+    Status _finish_spilling(RuntimeState* state);
 
     Status _finish_spilling_callback(RuntimeState* state, TUniqueId query_id,
                                      const std::shared_ptr<SpillContext>& spill_context);

@@ -71,10 +71,15 @@ public:
 
     Status spill_probe_blocks(RuntimeState* state);
 
-    Status recover_build_blocks_from_disk(RuntimeState* state, uint32_t partition_index,
-                                          bool& recovered_data_available);
-    Status recover_probe_blocks_from_disk(RuntimeState* state, uint32_t partition_index,
-                                          bool& recovered_data_available);
+    /// Revoke in-memory build data by repartitioning it and pushing the result back onto
+    /// _spill_partition_queue. Used by revoke_memory when child_eos is true (recovery/build
+    /// phase) and we have significant in-memory build data that cannot be kept in memory.
+    ///
+    /// After queue initialization, all partitions are represented as SpillPartitionInfo entries
+    /// in _spill_partition_queue. Repartition reads from _current_partition's streams (or the
+    /// already-recovered _recovered_build_block) and pushes FANOUT sub-partitions back onto the
+    /// queue.
+    Status revoke_build_data(RuntimeState* state);
 
     /// Recover build blocks from a SpillPartitionInfo's build stream (for multi-level recovery).
     Status recover_build_blocks_from_partition(RuntimeState* state,
@@ -88,16 +93,6 @@ public:
     /// Repartition the current partition's build and probe streams into FANOUT sub-partitions
     /// and push them into _spill_partition_queue for subsequent processing.
     Status repartition_current_partition(RuntimeState* state, SpillPartitionInfo& partition);
-
-    /// Repartition a level-0 partition when its build data is already loaded in memory
-    /// but the hash table build failed due to OOM.
-    /// @param partition_index The level-0 partition index
-    /// @param build_block     The in-memory build data (from partitioned_build_blocks)
-    /// @param probe_stream    The probe data on disk (from probe_spilling_streams)
-    /// @param probe_blocks    Any in-memory probe blocks
-    Status repartition_level0_partition(RuntimeState* state, uint32_t partition_index);
-
-    Status finish_spilling(uint32_t partition_index);
 
     template <bool spilled>
     void update_build_custom_profile(RuntimeProfile* child_profile);
@@ -129,7 +124,6 @@ private:
     Status _execute_spill_probe_blocks(RuntimeState* state, const UniqueId& query_id);
 
     std::shared_ptr<BasicSharedState> _in_mem_shared_state_sptr;
-    uint32_t _partition_cursor {0};
 
     std::unique_ptr<vectorized::Block> _child_block;
     bool _child_eos {false};
@@ -143,12 +137,14 @@ private:
     std::unique_ptr<vectorized::PartitionerBase> _partitioner;
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;
 
-    bool _need_to_setup_internal_operators {true};
-
-    // ---- Multi-level spill partition state ----
-    // Work queue of spilled partition pairs to process. Initially populated from
-    // level-0 partitions during the first recovery. When a partition is too large
-    // to build a hash table, it is repartitioned and FANOUT new entries are pushed.
+    // ---- Spill partition queue state ----
+    // Whether _spill_partition_queue has been initialized from spilled_streams +
+    // _probe_spilling_streams. Set to true the first time pull() enters the spill
+    // path after child EOS. Once true, all partitions are accessed via the queue.
+    bool _spill_queue_initialized {false};
+    // Work queue of spilled partition pairs to process. Populated during
+    // initialization from the level-0 spilled streams and also when a partition is
+    // too large to build a hash table (repartitioned into FANOUT new entries).
     std::deque<SpillPartitionInfo> _spill_partition_queue;
     // The partition currently being processed from _spill_partition_queue.
     SpillPartitionInfo _current_partition;
@@ -158,9 +154,6 @@ private:
     // The main _partitioner uses the original _partition_count (e.g., 32), which
     // is wrong for repartitioning that needs FANOUT (8) sub-partitions.
     std::unique_ptr<vectorized::PartitionerBase> _fanout_partitioner;
-    // Whether we're currently processing the multi-level spill partition queue
-    // (as opposed to the initial level-0 partitions via _partition_cursor).
-    bool _processing_spill_queue {false};
     // Whether internal operators need to be set up for the current queue partition.
     bool _need_to_setup_queue_partition {true};
     // Probe blocks recovered from the current queue partition's probe stream.
@@ -250,16 +243,14 @@ private:
 
     friend class PartitionedHashJoinProbeLocalState;
 
-    [[nodiscard]] Status _setup_internal_operators(PartitionedHashJoinProbeLocalState& local_state,
-                                                   RuntimeState* state) const;
-
     /// Setup internal operators using build data from a SpillPartitionInfo
     /// (for multi-level recovery, where build data comes from repartitioned streams).
     [[nodiscard]] Status _setup_internal_operators_from_partition(
             PartitionedHashJoinProbeLocalState& local_state, RuntimeState* state) const;
 
-    /// Process entries from the multi-level _spill_partition_queue.
-    /// Called from pull() when all level-0 partitions have been exhausted.
+    /// Process entries from the _spill_partition_queue.
+    /// All spilled partitions (both original level-0 and repartitioned sub-partitions)
+    /// are processed via this single path.
     [[nodiscard]] Status _pull_from_spill_queue(PartitionedHashJoinProbeLocalState& local_state,
                                                 RuntimeState* state,
                                                 vectorized::Block* output_block, bool* eos) const;

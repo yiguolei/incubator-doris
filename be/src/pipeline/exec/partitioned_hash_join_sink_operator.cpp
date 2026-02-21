@@ -242,7 +242,7 @@ Status PartitionedHashJoinSinkLocalState::_execute_spill_unpartitioned_block(
                 COUNTER_UPDATE(_in_mem_rows_counter, block->rows());
             }
         });
-        status = _finish_spilling();
+        status = _finish_spilling(state);
         VLOG_DEBUG << fmt::format(
                 "Query:{}, hash join sink:{}, task:{}, _revoke_unpartitioned_block, "
                 "set_ready_to_read",
@@ -345,7 +345,7 @@ Status PartitionedHashJoinSinkLocalState::_finish_spilling_callback(
                 COUNTER_UPDATE(_in_mem_rows_counter, block->rows());
             }
         });
-        status = _finish_spilling();
+        status = _finish_spilling(state);
         _dependency->set_ready_to_read();
     }
 
@@ -410,11 +410,21 @@ Status PartitionedHashJoinSinkLocalState::revoke_memory(
     return spill_runnable.run();
 }
 
-Status PartitionedHashJoinSinkLocalState::_finish_spilling() {
-    for (auto& stream : _shared_state->spilled_streams) {
-        if (stream) {
-            RETURN_IF_ERROR(stream->spill_eof());
+Status PartitionedHashJoinSinkLocalState::_finish_spilling(RuntimeState* state) {
+    for (size_t i = 0; i != _shared_state->spilled_streams.size(); ++i) {
+        auto& stream = _shared_state->spilled_streams[i];
+        if (!stream) {
+            continue;
         }
+        // Flush any small partitions that were below MIN_SPILL_WRITE_BATCH_MEM
+        // and therefore skipped by _execute_spill_partitioned_blocks.
+        auto& leftover = _shared_state->partitioned_build_blocks[i];
+        if (leftover && leftover->rows() > 0) {
+            auto block = leftover->to_block();
+            leftover.reset();
+            RETURN_IF_ERROR(stream->spill_block(state, block, false));
+        }
+        RETURN_IF_ERROR(stream->spill_eof());
     }
     return Status::OK();
 }
