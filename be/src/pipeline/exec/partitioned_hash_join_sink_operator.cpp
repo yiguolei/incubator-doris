@@ -518,24 +518,6 @@ void PartitionedHashJoinSinkLocalState::update_profile_from_inner() {
 
 #undef UPDATE_COUNTER_FROM_INNER
 
-// After building the hash table it will not be able to spill later even if
-// memory is low, which would cause query cancellation.  Check here whether
-// the revocable memory exceeds the configured high-watermark percentage of
-// the query memory limit so we can trigger a proactive spill.
-static bool is_revocable_mem_high_watermark(RuntimeState* state, size_t revocable_size) {
-    const auto pct = state->spill_revocable_memory_high_watermark_percent();
-    if (pct <= 0 || revocable_size == 0) {
-        return false;
-    }
-    const auto query_mem_limit =
-            state->get_query_ctx()->resource_ctx()->memory_context()->mem_limit();
-    if (query_mem_limit <= 0) {
-        return false;
-    }
-    return static_cast<double>(revocable_size) >=
-           static_cast<double>(query_mem_limit) / 100.0 * pct;
-}
-
 Status PartitionedHashJoinSinkOperatorX::sink(RuntimeState* state, vectorized::Block* in_block,
                                               bool eos) {
     auto& local_state = get_local_state(state);

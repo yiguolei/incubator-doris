@@ -157,11 +157,10 @@ Status PartitionedAggSinkOperatorX::sink(doris::RuntimeState* state, vectorized:
                 RETURN_IF_ERROR(revoke_memory(state));
             }
 
-            for (auto& partition : Base::_shared_state->spill_partitions) {
-                status = partition->finish_current_spilling(eos);
-                RETURN_IF_ERROR(status);
+            for (auto& partition : local_state._shared_state->spill_partitions) {
+                RETURN_IF_ERROR(partition->finish_current_spilling(eos));
             }
-            _clear_tmp_data();
+            local_state._clear_tmp_data();
         }
         local_state._dependency->set_ready_to_read();
     } else if (local_state._shared_state->is_spilled) {
