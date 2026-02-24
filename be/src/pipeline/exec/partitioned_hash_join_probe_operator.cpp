@@ -264,29 +264,21 @@ Status PartitionedHashJoinProbeLocalState::_execute_spill_probe_blocks(RuntimeSt
 Status PartitionedHashJoinProbeLocalState::spill_probe_blocks(RuntimeState* state) {
     auto query_id = state->query_id();
 
-    auto exception_catch_func = [this, query_id, state]() {
-        DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_probe::spill_probe_blocks_cancel", {
-            auto status = Status::InternalError(
-                    "fault_inject partitioned_hash_join_probe "
-                    "spill_probe_blocks canceled");
-            state->get_query_ctx()->cancel(status);
-            return status;
-        });
-
-        auto status = [&]() {
-            RETURN_IF_CATCH_EXCEPTION({ return _execute_spill_probe_blocks(state, query_id); });
-        }();
-        return status;
-    };
-
+    // directly run the spill function; replicate the fault-injection guards
     DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_probe::spill_probe_blocks_submit_func", {
         return Status::Error<INTERNAL_ERROR>(
                 "fault_inject partitioned_hash_join_probe spill_probe_blocks "
                 "submit_func failed");
     });
-
-    SpillNonSinkRunnable spill_runnable(state, operator_profile(), exception_catch_func);
-    return spill_runnable.run();
+    DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_probe::spill_probe_blocks_cancel", {
+        auto status = Status::InternalError(
+                "fault_inject partitioned_hash_join_probe "
+                "spill_probe_blocks canceled");
+        state->get_query_ctx()->cancel(status);
+        return status;
+    });
+    RETURN_IF_CATCH_EXCEPTION({ return _execute_spill_probe_blocks(state, query_id); });
+    return Status::OK();
 }
 
 std::string PartitionedHashJoinProbeLocalState::debug_string(int indentation_level) const {
@@ -369,16 +361,14 @@ Status PartitionedHashJoinProbeLocalState::recover_build_blocks_from_partition(
         return status;
     };
 
-    auto exception_catch_func = [read_func, query_id]() {
+    recovered_data_available = true;
+    {
         auto status = [&]() {
             RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
             return Status::OK();
         }();
         return status;
-    };
-
-    recovered_data_available = true;
-    return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
+    }
 }
 
 Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
@@ -426,16 +416,14 @@ Status PartitionedHashJoinProbeLocalState::recover_probe_blocks_from_partition(
         return st;
     };
 
-    auto exception_catch_func = [read_func, query_id]() {
+    recovered_data_available = true;
+    {
         auto status = [&]() {
             RETURN_IF_ERROR_OR_CATCH_EXCEPTION(read_func());
             return Status::OK();
         }();
         return status;
-    };
-
-    recovered_data_available = true;
-    return SpillRecoverRunnable(state, operator_profile(), exception_catch_func).run();
+    }
 }
 
 Status PartitionedHashJoinProbeLocalState::repartition_current_partition(

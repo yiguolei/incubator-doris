@@ -118,9 +118,9 @@ Status MultiCastDataStreamer::pull(RuntimeState* state, int sender_idx, vectoriz
             };
 
             l.unlock();
-            SpillRecoverRunnable spill_runnable(state, _source_operator_profiles[sender_idx],
-                                                catch_exception_func);
-            return spill_runnable.run();
+            // spill is synchronous; the profile passed to the runnable was only
+            // used for counters that are now tracked externally, so call helper
+            return run_spill_task(state, catch_exception_func);
         }
 
         auto& pos_to_pull = _sender_pos_to_read[sender_idx];
@@ -277,7 +277,7 @@ Status MultiCastDataStreamer::_start_spill_task(RuntimeState* state,
         return status;
     };
 
-    return SpillSinkRunnable(state, nullptr, _sink_operator_profile, exception_catch_func).run();
+    return run_spill_task(state, exception_catch_func);
 }
 
 Status MultiCastDataStreamer::push(RuntimeState* state, doris::vectorized::Block* block, bool eos) {

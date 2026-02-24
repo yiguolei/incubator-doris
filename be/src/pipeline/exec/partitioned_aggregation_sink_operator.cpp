@@ -426,9 +426,9 @@ Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
     auto& parent = Base::_parent->template cast<Parent>();
     auto query_id = state->query_id();
 
-    auto spill_func = [this, state, &parent, query_id, size_to_revoke]() -> Status {
+    // inline the body of spill_func since we no longer need the lambda
+    {
         Status status;
-
         DBUG_EXECUTE_IF("fault_inject::partitioned_agg_sink::revoke_memory_cancel", {
             status = Status::InternalError(
                     "fault_inject partitioned_agg_sink revoke_memory canceled");
@@ -472,11 +472,9 @@ Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
                 agg_data->method_variant);
         RETURN_IF_ERROR(status);
         status = parent._agg_sink_operator->reset_hash_table(runtime_state);
-        return status;
-    };
-
-    SpillSinkRunnable spill_runnable(state, nullptr, operator_profile(), std::move(spill_func));
-    return spill_runnable.run();
+        RETURN_IF_ERROR(status);
+    }
+    return Status::OK();
 }
 
 void PartitionedAggSinkLocalState::_reset_tmp_data() {
