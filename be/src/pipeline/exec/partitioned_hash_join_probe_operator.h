@@ -212,8 +212,7 @@ public:
     // Called by the pipeline task scheduler when memory pressure requires spilling
     // probe-side blocks. Probe-side memory is NOT managed by the sink, so the
     // probe operator must expose this interface so the scheduler can reach it.
-    Status revoke_memory(RuntimeState* state,
-                         const std::shared_ptr<SpillContext>& spill_context) override;
+    Status revoke_memory(RuntimeState* state) override;
 
     size_t get_reserve_mem_size(RuntimeState* state) override;
 

@@ -128,10 +128,9 @@ size_t SpillSortSinkOperatorX::get_reserve_mem_size(RuntimeState* state, bool eo
     auto& local_state = get_local_state(state);
     return local_state.get_reserve_mem_size(state, eos);
 }
-Status SpillSortSinkOperatorX::revoke_memory(RuntimeState* state,
-                                             const std::shared_ptr<SpillContext>& spill_context) {
+Status SpillSortSinkOperatorX::revoke_memory(RuntimeState* state) {
     auto& local_state = get_local_state(state);
-    return local_state.revoke_memory(state, spill_context);
+    return local_state.revoke_memory(state);
 }
 
 size_t SpillSortSinkOperatorX::revocable_mem_size(RuntimeState* state) const {
@@ -158,7 +157,7 @@ Status SpillSortSinkOperatorX::sink(doris::RuntimeState* state, vectorized::Bloc
     if (eos) {
         if (local_state._shared_state->is_spilled) {
             if (revocable_mem_size(state) > 0) {
-                RETURN_IF_ERROR(revoke_memory(state, nullptr));
+                RETURN_IF_ERROR(revoke_memory(state));
             } else {
                 local_state._dependency->set_ready_to_read();
             }
@@ -234,8 +233,7 @@ Status SpillSortSinkLocalState::_execute_spill_sort(RuntimeState* state, TUnique
     return Status::OK();
 }
 
-Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state,
-                                              const std::shared_ptr<SpillContext>& spill_context) {
+Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state) {
     auto& parent = Base::_parent->template cast<Parent>();
     if (!_shared_state->is_spilled) {
         _shared_state->is_spilled = true;
@@ -284,7 +282,7 @@ Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state,
     RETURN_IF_ERROR(status);
     state->get_query_ctx()->resource_ctx()->task_controller()->increase_revoking_tasks_count();
 
-    return SpillSinkRunnable(state, spill_context, operator_profile(), exception_catch_func).run();
+    return SpillSinkRunnable(state, nullptr, operator_profile(), exception_catch_func).run();
 }
 #include "common/compile_check_end.h"
 } // namespace doris::pipeline

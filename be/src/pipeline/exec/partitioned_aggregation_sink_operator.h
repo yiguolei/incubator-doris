@@ -47,9 +47,7 @@ public:
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state, Status exec_status) override;
 
-    Status revoke_memory(RuntimeState* state, const std::shared_ptr<SpillContext>& spill_context);
-
-    Status _execute_spill_process(RuntimeState* state, size_t size_to_revoke);
+    Status revoke_memory(RuntimeState* state);
 
     Status setup_in_memory_agg_op(RuntimeState* state);
 
@@ -140,8 +138,7 @@ public:
     }
     size_t revocable_mem_size(RuntimeState* state) const override;
 
-    Status revoke_memory(RuntimeState* state,
-                         const std::shared_ptr<SpillContext>& spill_context) override;
+    Status revoke_memory(RuntimeState* state) override;
 
     size_t get_reserve_mem_size(RuntimeState* state, bool eos) override;
 

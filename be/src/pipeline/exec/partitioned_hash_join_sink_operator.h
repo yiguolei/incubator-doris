@@ -47,7 +47,7 @@ public:
     Status init(RuntimeState* state, LocalSinkStateInfo& info) override;
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state, Status exec_status) override;
-    Status revoke_memory(RuntimeState* state, const std::shared_ptr<SpillContext>& spill_context);
+    Status revoke_memory(RuntimeState* state);
     size_t revocable_mem_size(RuntimeState* state) const;
     Status terminate(RuntimeState* state) override;
     [[nodiscard]] size_t get_reserve_mem_size(RuntimeState* state, bool eos);
@@ -68,15 +68,13 @@ protected:
     Status _partition_block(RuntimeState* state, vectorized::Block* in_block, size_t begin,
                             size_t end);
 
-    Status _revoke_unpartitioned_block(RuntimeState* state,
-                                       const std::shared_ptr<SpillContext>& spill_context);
+    Status _revoke_unpartitioned_block(RuntimeState* state);
 
     Status _execute_spill_unpartitioned_block(RuntimeState* state, vectorized::Block&& build_block);
 
     Status _finish_spilling(RuntimeState* state);
 
-    Status _finish_spilling_callback(RuntimeState* state, TUniqueId query_id,
-                                     const std::shared_ptr<SpillContext>& spill_context);
+    Status _finish_spilling_callback(RuntimeState* state, TUniqueId query_id);
 
     Status _execute_spill_partitioned_blocks(RuntimeState* state, TUniqueId query_id);
 
@@ -120,8 +118,7 @@ public:
 
     size_t revocable_mem_size(RuntimeState* state) const override;
 
-    Status revoke_memory(RuntimeState* state,
-                         const std::shared_ptr<SpillContext>& spill_context) override;
+    Status revoke_memory(RuntimeState* state) override;
 
     size_t get_reserve_mem_size(RuntimeState* state, bool eos) override;
 

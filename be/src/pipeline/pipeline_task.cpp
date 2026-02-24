@@ -639,16 +639,22 @@ Status PipelineTask::do_revoke_memory(const std::shared_ptr<SpillContext>& spill
             THROW_IF_ERROR(_sink->terminate(_state));
             _eos = true;
         }
+
+        // SpillContext tracks pipeline task count, not operator count.
+        // Notify completion once after all operators + sink have finished revoking.
+        if (spill_context) {
+            spill_context->on_task_finished();
+        }
     }};
 
     // Revoke memory from every operator that has enough revocable memory,
     // then revoke from the sink.
     for (auto& op : _operators) {
         if (op->revocable_mem_size(_state) >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
-            RETURN_IF_ERROR(op->revoke_memory(_state, spill_context));
+            RETURN_IF_ERROR(op->revoke_memory(_state));
         }
     }
-    return _sink->revoke_memory(_state, spill_context);
+    return _sink->revoke_memory(_state);
 }
 
 bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBase* op) {
@@ -857,11 +863,13 @@ Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_co
     const auto revocable_size = get_revocable_size();
     if (revocable_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
         auto revokable_task = std::make_shared<RevokableTask>(shared_from_this(), spill_context);
+        // Submit a revocable task to run, the run method will call revoke memory. Currently the
+        // underline pipeline task is still blocked.
         RETURN_IF_ERROR(_state->get_query_ctx()->get_pipe_exec_scheduler()->submit(revokable_task));
     } else {
         spill_context->on_task_finished();
-        LOG(INFO) << "Query: " << print_id(_state->query_id()) << ", task: " << ((void*)this)
-                  << " has not enough data to revoke: " << revocable_size;
+        VLOG_DEBUG << "Query: " << print_id(_state->query_id()) << ", task: " << ((void*)this)
+                   << " has not enough data to revoke: " << revocable_size;
     }
     return Status::OK();
 }

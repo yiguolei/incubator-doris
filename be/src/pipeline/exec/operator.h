@@ -133,10 +133,7 @@ public:
 
     virtual size_t revocable_mem_size(RuntimeState* state) const { return 0; }
 
-    virtual Status revoke_memory(RuntimeState* state,
-                                 const std::shared_ptr<SpillContext>& spill_context) {
-        return Status::OK();
-    }
+    virtual Status revoke_memory(RuntimeState* state) { return Status::OK(); }
 
     virtual bool is_hash_join_probe() const { return false; }
 

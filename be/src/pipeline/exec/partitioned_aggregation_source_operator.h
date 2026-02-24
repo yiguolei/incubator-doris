@@ -76,30 +76,6 @@ public:
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state) override;
 
-    Status recover_blocks_from_disk(RuntimeState* state, bool& has_data);
-
-    /// Recover blocks from a queue partition's streams (reads up to 32MB then returns).
-    Status recover_blocks_from_queue_partition(RuntimeState* state,
-                                               AggSpillPartitionInfo& partition, bool& has_data);
-
-    /// Repartition a queue partition's streams into FANOUT sub-partitions and push to queue.
-    /// If the hash table has partial data, it is drained via get_block() and routed
-    /// through the repartitioner as well (single data flow, not two streams).
-    Status repartition_agg_partition(RuntimeState* state, AggSpillPartitionInfo& partition);
-
-    /// Flush the current in-memory hash table by draining it as blocks and routing
-    /// each block through the repartitioner into the output sub-streams.
-    Status flush_hash_table_to_sub_streams(
-            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams);
-
-    /// Unified method for mid-merge OOM / revoke_memory: flush the in-memory hash
-    /// table into FANOUT sub-streams, repartition remaining unread streams from
-    /// `remaining_streams`, and push resulting sub-partitions into `_spill_partition_queue`.
-    /// After this call the hash table is reset and `remaining_streams` is cleared.
-    Status flush_and_repartition(RuntimeState* state,
-                                 std::deque<vectorized::SpillStreamSPtr>& remaining_streams,
-                                 int level);
-
     Status setup_in_memory_agg_op(RuntimeState* state);
 
     template <bool spilled>
@@ -107,35 +83,54 @@ public:
 
     bool is_blockable() const override;
 
+    /// Flush the current in-memory hash table by draining it as blocks and routing
+    /// each block through the repartitioner into the output sub-streams.
+    Status flush_hash_table_to_sub_streams(
+            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams);
+
+    /// Flush the in-memory hash table into FANOUT sub-streams, repartition remaining
+    /// unread streams from `remaining_streams`, and push resulting sub-partitions into
+    /// `_partition_queue`. After this call the hash table is reset and
+    /// `remaining_streams` is cleared.
+    Status flush_and_repartition(RuntimeState* state,
+                                 std::deque<vectorized::SpillStreamSPtr>& remaining_streams,
+                                 int level);
+
 private:
-    Status _recover_spill_data_from_disk(RuntimeState* state, const UniqueId& query_id);
-
-protected:
     friend class PartitionedAggSourceOperatorX;
+
+    /// Move all original spill_partitions from shared state into `_partition_queue`.
+    /// Called once when spilled get_block is first entered.
+    void _init_partition_queue();
+
+    /// Read up to MAX_SPILL_WRITE_BATCH_MEM bytes from `partition.streams` into
+    /// `_blocks`. Returns has_data=true if any blocks were read.
+    /// Consumes and deletes exhausted streams from the partition.
+    Status _recover_blocks_from_partition(RuntimeState* state, AggSpillPartitionInfo& partition,
+                                          bool& has_data);
+
+    /// Repartition a partition's streams (without hash table) into FANOUT sub-partitions
+    /// and push them to `_partition_queue`.
+    Status _repartition_partition(RuntimeState* state, AggSpillPartitionInfo& partition);
+
+    // ── State ──────────────────────────────────────────────────────────
     std::unique_ptr<RuntimeState> _runtime_state;
-
     bool _opened = false;
-    std::unique_ptr<std::promise<Status>> _spill_merge_promise;
-    std::future<Status> _spill_merge_future;
-    bool _current_partition_eos = true;
-    bool _need_to_merge_data_for_current_partition = true;
-
-    std::vector<vectorized::Block> _blocks;
-
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;
 
-    // Multi-level spill repartition support
-    std::deque<AggSpillPartitionInfo> _spill_partition_queue;
-    AggSpillPartitionInfo _current_queue_partition;
+    // ── Partition queue (unified for original + repartitioned) ────────
+    std::deque<AggSpillPartitionInfo> _partition_queue;
+    AggSpillPartitionInfo _current_partition;
+    // True when we need to pop the next partition from `_partition_queue`.
+    bool _need_to_setup_partition = true;
+
+    // Blocks recovered from disk, pending merge into hash table.
+    std::vector<vectorized::Block> _blocks;
+
+    // Estimated in-memory hash table size for the current partition.
+    size_t _estimate_memory_usage = 0;
+
     SpillRepartitioner _repartitioner;
-    // True when processing entries from _spill_partition_queue.
-    bool _processing_spill_queue {false};
-    // True when the current queue partition needs initial setup.
-    bool _need_to_setup_queue_partition {true};
-    // Whether the current queue partition has finished reading all streams.
-    bool _current_queue_partition_eos {true};
-    // Whether the current queue partition still needs to merge data.
-    bool _need_to_merge_for_queue_partition {false};
 };
 
 class AggSourceOperatorX;
@@ -171,15 +166,10 @@ public:
     // Called by the pipeline task scheduler under memory pressure. Flushes the
     // current in-memory aggregation hash table to sub-streams and repartitions,
     // freeing the hash table memory so it can be recovered in smaller slices.
-    Status revoke_memory(RuntimeState* state,
-                         const std::shared_ptr<SpillContext>& spill_context) override;
+    Status revoke_memory(RuntimeState* state) override;
 
 private:
     friend class PartitionedAggLocalState;
-
-    /// Process entries from the multi-level _spill_partition_queue.
-    Status _pull_from_spill_queue(PartitionedAggLocalState& local_state, RuntimeState* state,
-                                  vectorized::Block* block, bool* eos);
 
     std::unique_ptr<AggSourceOperatorX> _agg_source_operator;
 };

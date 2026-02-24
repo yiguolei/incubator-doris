@@ -1095,8 +1095,7 @@ Status PartitionedHashJoinProbeLocalState::revoke_build_data(RuntimeState* state
 //   current partition's in-memory recovered data (_recovered_build_block) is
 //   repartitioned and pushed back to the queue so the hash table build can
 //   proceed later with a smaller footprint.
-Status PartitionedHashJoinProbeOperatorX::revoke_memory(
-        RuntimeState* state, const std::shared_ptr<SpillContext>& /*spill_context*/) {
+Status PartitionedHashJoinProbeOperatorX::revoke_memory(RuntimeState* state) {
     auto& local_state = get_local_state(state);
     VLOG_DEBUG << fmt::format("Query:{}, hash join probe:{}, task:{}, revoke_memory, child_eos:{}",
                               print_id(state->query_id()), node_id(), state->task_id(),
