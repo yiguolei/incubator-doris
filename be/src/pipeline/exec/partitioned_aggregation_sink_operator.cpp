@@ -183,11 +183,11 @@ Status PartitionedAggSinkOperatorX::revoke_memory(RuntimeState* state) {
 }
 
 size_t PartitionedAggSinkOperatorX::revocable_mem_size(RuntimeState* state) const {
+    auto& local_state = get_local_state(state);
     // If the agg sink already has all data, then not able to spill.
-    if (_eos) {
+    if (local_state._eos) {
         return 0;
     }
-    auto& local_state = get_local_state(state);
     auto* runtime_state = local_state._runtime_state.get();
     auto size = _agg_sink_operator->get_revocable_mem_size(runtime_state);
     return size;
