@@ -70,10 +70,6 @@ protected:
 
     Status _revoke_unpartitioned_block(RuntimeState* state);
 
-    Status _execute_spill_unpartitioned_block(RuntimeState* state, vectorized::Block&& build_block);
-
-    Status _finish_spilling(RuntimeState* state);
-
     Status _finish_spilling_callback(RuntimeState* state, TUniqueId query_id);
 
     Status _execute_spill_partitioned_blocks(RuntimeState* state, TUniqueId query_id);

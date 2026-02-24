@@ -518,8 +518,13 @@ Status PipelineTask::execute(bool* done) {
             }
             DEFER_RELEASE_RESERVED();
             _get_block_counter->update(1);
-            const auto reserve_size = _root->get_reserve_mem_size(_state);
-            _root->reset_reserve_mem_size(_state);
+            // Sum reserve sizes across all operators in this pipeline.
+            // Each operator reports only its own requirement (non-recursive).
+            size_t reserve_size = 0;
+            for (auto& op : _operators) {
+                reserve_size += op->get_reserve_mem_size(_state);
+                op->reset_reserve_mem_size(_state);
+            }
 
             if (workload_group &&
                 _state->get_query_ctx()

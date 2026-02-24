@@ -671,6 +671,8 @@ public:
     [[nodiscard]] virtual Status setup_local_state(RuntimeState* state,
                                                    LocalSinkStateInfo& info) = 0;
 
+    // Returns the memory this sink operator expects to allocate in the next
+    // execution round (sink only — pipeline task sums all operators + sink).
     [[nodiscard]] virtual size_t get_reserve_mem_size(RuntimeState* state, bool eos) {
         return state->minimum_operator_memory_required_bytes();
     }
@@ -950,7 +952,13 @@ public:
         }
     }
 
-    // If this method is not overwrite by child, its default value is 1MB
+    // Returns the memory this single operator expects to allocate in the next
+    // execution round.  Each operator reports only its OWN requirement — the
+    // pipeline task is responsible for summing all operators + sink.
+    // After the value is consumed the caller should invoke
+    // reset_reserve_mem_size() so the next round starts from zero.
+    // If this method is not overridden by a subclass, its default value is the
+    // minimum operator memory (typically 1 MB).
     [[nodiscard]] virtual size_t get_reserve_mem_size(RuntimeState* state) {
         return state->minimum_operator_memory_required_bytes();
     }
@@ -1010,6 +1018,9 @@ public:
     // To keep compatibility with older FE
     void set_serial_operator() { _is_serial_operator = true; }
 
+    // Resets this operator's estimated memory usage to zero so that the next
+    // call to get_reserve_mem_size() starts fresh.  The pipeline task calls
+    // this after consuming the reserve size for all operators in a round.
     virtual void reset_reserve_mem_size(RuntimeState* state) {}
 
 protected:
@@ -1077,16 +1088,14 @@ public:
         return state->get_local_state(operator_id())->template cast<LocalState>();
     }
 
+    // Returns memory this single operator expects to allocate in the next round.
+    // Does NOT include child operators — the pipeline task iterates all
+    // operators itself.
     size_t get_reserve_mem_size(RuntimeState* state) override {
         auto& local_state = get_local_state(state);
         auto estimated_size = local_state.estimate_memory_usage();
         if (estimated_size < state->minimum_operator_memory_required_bytes()) {
             estimated_size = state->minimum_operator_memory_required_bytes();
-        }
-        if (!is_source() && _child) {
-            auto child_reserve_size = _child->get_reserve_mem_size(state);
-            estimated_size +=
-                    std::max(state->minimum_operator_memory_required_bytes(), child_reserve_size);
         }
         return estimated_size;
     }
@@ -1094,10 +1103,6 @@ public:
     void reset_reserve_mem_size(RuntimeState* state) override {
         auto& local_state = get_local_state(state);
         local_state.reset_estimate_memory_usage();
-
-        if (!is_source() && _child) {
-            _child->reset_reserve_mem_size(state);
-        }
     }
 };
 
