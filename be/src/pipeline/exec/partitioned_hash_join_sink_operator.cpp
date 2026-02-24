@@ -242,40 +242,7 @@ Status PartitionedHashJoinSinkLocalState::_revoke_unpartitioned_block(RuntimeSta
                         "fault_inject partitioned_hash_join_sink "
                         "revoke_unpartitioned_block submit_func failed");
             });
-        // perform the spill steps inline rather than building a lambda; this
-        // avoids another layer of wrapping and makes the control flow clearer.
-        {
-            Status status;
-            DBUG_EXECUTE_IF(
-                    "fault_inject::partitioned_hash_join_sink::revoke_unpartitioned_block_submit_func", {
-                        return Status::Error<INTERNAL_ERROR>(
-                                "fault_inject partitioned_hash_join_sink "
-                                "revoke_unpartitioned_block submit_func failed");
-                    });
-
-            // The inner sink's _build_side_mutable_block has a sentinel row at
-            // index 0 (used for column type evaluation), so real data starts at
-            // row 1.  Split the big block into sub-blocks and reuse the normal
-            // _partition_block + _execute_spill_partitioned_blocks path to avoid
-            // duplicating the partitioning logic.
-            const size_t batch_size = 4096;
-            const size_t total_rows = build_block.rows();
-            const auto query_id = state->query_id();
-            for (size_t offset = 1; offset < total_rows;) {
-                const size_t this_run = std::min(batch_size, total_rows - offset);
-                auto sub_block = build_block.clone_empty();
-                for (size_t c = 0; c != build_block.columns(); ++c) {
-                    sub_block.get_by_position(c).column =
-                            build_block.get_by_position(c).column->cut(offset, this_run);
-                }
-                offset += this_run;
-
-                RETURN_IF_ERROR(_partition_block(state, &sub_block, 0, sub_block.rows()));
-                RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state, query_id));
-            }
-            RETURN_IF_ERROR(_finish_spilling_callback(state, query_id));
-        }
-        return Status::OK();
+    return run_spill_task(state, exception_catch_func);
 }
 
 Status PartitionedHashJoinSinkLocalState::terminate(RuntimeState* state) {
@@ -371,10 +338,10 @@ Status PartitionedHashJoinSinkLocalState::revoke_memory(RuntimeState* state) {
     }
 
     const auto query_id = state->query_id();
-    // directly execute the two-step spill/finalize sequence
-    RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state, query_id));
-    RETURN_IF_ERROR(_finish_spilling_callback(state, query_id));
-    return Status::OK();
+    return run_spill_task(
+            state,
+            [this, state, query_id] { return _execute_spill_partitioned_blocks(state, query_id); },
+            [this, state, query_id]() { return _finish_spilling_callback(state, query_id); });
 }
 
 // _finish_spilling implementation merged into _finish_spilling_callback

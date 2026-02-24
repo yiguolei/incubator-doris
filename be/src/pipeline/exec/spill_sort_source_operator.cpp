@@ -166,17 +166,21 @@ Status SpillSortLocalState::initiate_merge_sort_spill_streams(RuntimeState* stat
                               print_id(state->query_id()), _parent->node_id(), state->task_id());
 
     auto query_id = state->query_id();
+    auto exception_catch_func = [this, state, query_id]() {
+        auto status = [&]() {
+            RETURN_IF_CATCH_EXCEPTION(
+                    { return _execute_merge_sort_spill_streams(state, query_id); });
+        }();
+        return status;
+    };
+
     DBUG_EXECUTE_IF("fault_inject::spill_sort_source::merge_sort_spill_data_submit_func", {
         return Status::Error<INTERNAL_ERROR>(
                 "fault_inject spill_sort_source "
                 "merge_sort_spill_data submit_func failed");
     });
-    {
-        auto status = [&]() {
-            RETURN_IF_CATCH_EXCEPTION({ return _execute_merge_sort_spill_streams(state, query_id); });
-        }();
-        return status;
-    }
+
+    return run_spill_task(state, exception_catch_func);
 }
 
 Status SpillSortLocalState::_create_intermediate_merger(

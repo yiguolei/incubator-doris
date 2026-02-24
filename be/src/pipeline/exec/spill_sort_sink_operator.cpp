@@ -258,16 +258,20 @@ Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state) {
     _shared_state->sorted_streams.emplace_back(_spilling_stream);
 
     auto query_id = state->query_id();
-    // inline the spill lambda body
-    {
+    auto exception_catch_func = [this, query_id, state]() {
         DBUG_EXECUTE_IF("fault_inject::spill_sort_sink::revoke_memory_cancel", {
             auto status =
                     Status::InternalError("fault_inject spill_sort_sink revoke_memory canceled");
             state->get_query_ctx()->cancel(status);
             return status;
         });
-        RETURN_IF_CATCH_EXCEPTION({ return _execute_spill_sort(state, query_id); });
-    }
+
+        auto status = [&]() {
+            RETURN_IF_CATCH_EXCEPTION({ return _execute_spill_sort(state, query_id); });
+        }();
+
+        return status;
+    };
 
     DBUG_EXECUTE_IF("fault_inject::spill_sort_sink::revoke_memory_submit_func", {
         status = Status::Error<INTERNAL_ERROR>(
@@ -278,8 +282,8 @@ Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state) {
     RETURN_IF_ERROR(status);
     state->get_query_ctx()->resource_ctx()->task_controller()->increase_revoking_tasks_count();
 
-    // spilled synchronously, nothing more to do
-    return Status::OK();
+    // spill tasks are synchronous; just invoke helper directly
+    return run_spill_task(state, exception_catch_func);
 }
 #include "common/compile_check_end.h"
 } // namespace doris::pipeline
