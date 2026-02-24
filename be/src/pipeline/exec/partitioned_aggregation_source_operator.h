@@ -128,7 +128,7 @@ private:
     std::vector<vectorized::Block> _blocks;
 
     // Estimated in-memory hash table size for the current partition.
-    size_t _estimate_memory_usage = 0;
+    //size_t _estimate_memory_usage = 0;
 
     SpillRepartitioner _repartitioner;
 };
