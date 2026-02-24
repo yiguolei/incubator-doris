@@ -179,6 +179,9 @@ Status PartitionedAggSinkOperatorX::sink(doris::RuntimeState* state, vectorized:
 
 Status PartitionedAggSinkOperatorX::revoke_memory(RuntimeState* state) {
     auto& local_state = get_local_state(state);
+    if (local_state._eos) {
+        return Status::OK();
+    }
     return local_state.revoke_memory(state);
 }
 
