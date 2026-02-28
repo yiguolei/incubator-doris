@@ -32,7 +32,7 @@
 #include "vec/exec/scan/file_scanner.h"
 #include "vec/exprs/vectorized_agg_fn.h"
 #include "vec/exprs/vslot_ref.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 #include "vec/utils/util.hpp"
 
 namespace doris::pipeline {
@@ -318,35 +318,11 @@ Status AggSharedState::reset_hash_table() {
             agg_data->method_variant);
 }
 
-void PartitionedAggSharedState::init_spill_params(size_t spill_partition_count) {
-    // create the expected number of spill partitions, but do not store the count
-    for (size_t i = 0; i < spill_partition_count; ++i) {
-        _spill_partitions.emplace_back(std::make_shared<AggSpillPartition>());
-    }
-}
-
-Status AggSpillPartition::get_spill_stream(RuntimeState* state, int node_id,
-                                           RuntimeProfile* profile,
-                                           vectorized::SpillStreamSPtr& spill_stream) {
-    if (spilling_stream_) {
-        spill_stream = spilling_stream_;
-        return Status::OK();
-    }
-    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-            state, spilling_stream_, print_id(state->query_id()), "agg", node_id,
-            std::numeric_limits<size_t>::max(), profile));
-    spill_streams_.emplace_back(spilling_stream_);
-    spill_stream = spilling_stream_;
-    return Status::OK();
-}
-void AggSpillPartition::close() {
-    spilling_stream_.reset();
-    spill_streams_.clear();
-}
-
 void PartitionedAggSharedState::close() {
-    for (auto partition : _spill_partitions) {
-        partition->close();
+    for (auto& partition : _spill_partitions) {
+        if (partition) {
+            ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(partition);
+        }
     }
     _spill_partitions.clear();
 }
@@ -359,7 +335,7 @@ void SpillSortSharedState::close() {
         return;
     }
     DCHECK(!false_close && is_closed);
-    sorted_streams.clear();
+    sorted_spill_groups.clear();
 }
 
 MultiCastSharedState::MultiCastSharedState(ObjectPool* pool, int cast_sender_count, int node_id)

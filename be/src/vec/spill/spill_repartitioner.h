@@ -25,7 +25,9 @@
 #include "common/status.h"
 #include "vec/core/types.h"
 #include "vec/data_types/data_type.h"
-#include "vec/spill/spill_stream.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_reader.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris {
 class RuntimeState;
@@ -38,8 +40,8 @@ class PartitionerBase;
 
 namespace pipeline {
 
-/// SpillRepartitioner reads data from an input SpillStream and redistributes it
-/// into FANOUT output SpillStreams by computing hash on key columns.
+/// SpillRepartitioner reads data from an input SpillFile and redistributes it
+/// into FANOUT output SpillFiles by computing hash on key columns.
 ///
 /// This is the core building block for multi-level spill partitioning used by both
 /// Hash Join and Aggregation operators.
@@ -60,6 +62,18 @@ namespace pipeline {
 /// Processing is incremental: each call to repartition() processes up to MAX_BATCH_BYTES
 /// (32 MB) of data and then returns, allowing the pipeline scheduler to yield and
 /// re-schedule. The caller should loop calling repartition() until `done` is true.
+///
+/// Usage pattern:
+///   // 1. Initialize
+///   repartitioner.init(...) or repartitioner.init_with_key_columns(...)
+///   // 2. Create output files and set up writers
+///   SpillRepartitioner::create_output_spill_files(state, ..., output_files, fanout);
+///   repartitioner.setup_output(state, output_files);
+///   // 3. Route blocks and/or repartition files
+///   repartitioner.route_block(state, block);         // from hash table
+///   repartitioner.repartition(state, input_file, &done);  // from spill file
+///   // 4. Finalize
+///   repartitioner.finalize();
 class SpillRepartitioner {
 public:
     static constexpr int MAX_DEPTH = 8;
@@ -69,82 +83,61 @@ public:
     ~SpillRepartitioner() = default;
 
     /// Initialize the repartitioner with a partitioner (for Hash Join).
-    /// @param partitioner  A cloned partitioner with partition_count == configured fanout.
-    ///                     Used to compute hash-based routing for each block.
-    /// @param profile      RuntimeProfile for counters.
-    // Initialize the repartitioner with a partitioner (for Hash Join).
-    // @param partitioner  A cloned partitioner with partition_count == fanout.
-    // @param profile      RuntimeProfile for counters.
-    // @param fanout       Number of output sub-partitions. Defaults to 8.
     void init(std::unique_ptr<vectorized::PartitionerBase> partitioner, RuntimeProfile* profile,
               int fanout, int repartition_level);
 
     /// Initialize the repartitioner with explicit key column indices (for Aggregation).
-    /// Computes CRC32 hash directly on the specified columns without using VExpr.
-    /// This is needed because Agg spill blocks have a different schema from the child's
-    /// row descriptor, so VSlotRef-based expressions cannot resolve column indices.
-    ///
-    /// @param key_column_indices  Column indices in the spill block to hash on (typically 0..N-1)
-    /// @param key_data_types      Data types of the key columns (for CRC hash type dispatch)
-    /// @param profile             RuntimeProfile for counters.
-    // Initialize the repartitioner with explicit key column indices (for Aggregation).
-    // @param key_column_indices  Column indices in the spill block to hash on (typically 0..N-1)
-    // @param key_data_types      Data types of the key columns (for CRC hash type dispatch)
-    // @param profile             RuntimeProfile for counters.
-    // @param fanout              Number of output sub-partitions. Defaults to 8.
     void init_with_key_columns(std::vector<size_t> key_column_indices,
                                std::vector<vectorized::DataTypePtr> key_data_types,
                                RuntimeProfile* profile, int fanout, int repartition_level);
 
-    /// Repartition data from input_stream into output_streams.
-    ///
-    /// Reads blocks from input_stream, computes hash values via the partitioner,
-    /// and routes each row to the corresponding output stream.
-    ///
-    /// Processing stops after MAX_BATCH_BYTES of input data has been read.
+    /// Set up output SpillFiles and create persistent writers for them.
+    /// Must be called before repartition() or route_block().
+    Status setup_output(RuntimeState* state,
+                        std::vector<vectorized::SpillFileSPtr>& output_spill_files);
+
+    /// Repartition data from input_spill_file into output files.
+    /// The input reader is created lazily and persists across yield calls.
     /// Call repeatedly until done == true.
-    ///
-    /// @param state           RuntimeState
-    /// @param input_stream    SpillStream to read from (previous level's partition data)
-    /// @param output_streams  Pre-allocated vector of FANOUT output SpillStreams
-    /// @param done            [out] true when input_stream is fully consumed
-    Status repartition(RuntimeState* state, vectorized::SpillStreamSPtr& input_stream,
-                       std::vector<vectorized::SpillStreamSPtr>& output_streams, bool* done);
+    Status repartition(RuntimeState* state, vectorized::SpillFileSPtr& input_spill_file,
+                       bool* done);
 
-    /// Route a single in-memory block into output streams.
-    /// Useful for flushing hash table data during Agg repartitioning.
-    /// The output_buffers are created/managed internally; data is flushed at the end.
-    Status route_block(RuntimeState* state, vectorized::Block& block,
-                       std::vector<vectorized::SpillStreamSPtr>& output_streams);
+    /// Repartition data using an existing reader (continues from its current
+    /// position). Useful when the caller has already partially read the file
+    /// and wants to repartition only the remaining data without re-reading
+    /// from the beginning. Ownership of the reader is transferred on completion.
+    /// Call repeatedly until done == true.
+    Status repartition(RuntimeState* state, vectorized::SpillFileReaderUPtr& reader, bool* done);
 
-    /// Finalize all output streams that have data (call close()).
-    /// Call after the last repartition() returns done == true.
-    static Status finalize(std::vector<vectorized::SpillStreamSPtr>& output_streams);
+    /// Route a single in-memory block into output files via persistent writers.
+    Status route_block(RuntimeState* state, vectorized::Block& block);
 
-    /// Create FANOUT output SpillStreams registered with the spill stream manager.
-    static Status create_output_streams(RuntimeState* state, int node_id,
-                                        const std::string& label_prefix,
-                                        RuntimeProfile* operator_profile,
-                                        std::vector<vectorized::SpillStreamSPtr>& output_streams,
-                                        int fanout);
+    /// Finalize: close all output writers and update SpillFile stats.
+    /// Also resets internal reader state.
+    Status finalize();
+
+    /// Create FANOUT output SpillFiles registered with the SpillFileManager.
+    static Status create_output_spill_files(
+            RuntimeState* state, int node_id, const std::string& label_prefix, int fanout,
+            std::vector<vectorized::SpillFileSPtr>& output_spill_files);
+
+    int fanout() const { return _fanout; }
 
 private:
     /// Route a block using the partitioner (Hash Join mode).
     Status _route_block(RuntimeState* state, vectorized::Block& block,
-                        std::vector<vectorized::SpillStreamSPtr>& output_streams,
                         std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers);
 
     /// Route a block using direct column-index hashing (Aggregation mode).
     Status _route_block_by_columns(
             RuntimeState* state, vectorized::Block& block,
-            std::vector<vectorized::SpillStreamSPtr>& output_streams,
             std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers);
 
-    Status _flush_buffer(RuntimeState* state, vectorized::SpillStreamSPtr& stream,
+    Status _flush_buffer(RuntimeState* state, int partition_idx,
                          std::unique_ptr<vectorized::MutableBlock>& buffer);
 
     Status _flush_all_buffers(
-            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
+            RuntimeState* state,
             std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers, bool force);
 
     uint32_t _map_hash_to_partition(uint32_t hash) const;
@@ -159,15 +152,18 @@ private:
 
     RuntimeProfile::Counter* _repartition_timer = nullptr;
     RuntimeProfile::Counter* _repartition_rows = nullptr;
-    // dynamic fanout to allow operator-configured partition counts
+    RuntimeProfile* _operator_profile = nullptr;
     int _fanout = 8;
-    // Target repartition level (parent level + 1). Used to derive level-aware
-    // channel mapping from raw hash values.
     int _repartition_level = 0;
 
-public:
-    // Accessor for configured fanout
-    int fanout() const { return _fanout; }
+    // ── Persistent state across repartition/route_block calls ──────
+    // Output writers (one per partition), created by setup_output()
+    std::vector<vectorized::SpillFileWriterUPtr> _output_writers;
+    // Pointer to caller's output SpillFiles vector (for finalize)
+    std::vector<vectorized::SpillFileSPtr>* _output_spill_files = nullptr;
+    // Input reader for repartition(), persists across yield calls
+    vectorized::SpillFileReaderUPtr _input_reader;
+    vectorized::SpillFileSPtr _current_input_file;
 };
 
 } // namespace pipeline

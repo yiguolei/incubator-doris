@@ -35,7 +35,7 @@
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
 #include "vec/data_types/data_type_number.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 class PartitionedHashJoinProbeOperatorTest : public testing::Test {
@@ -212,10 +212,12 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, spill_probe_blocks) {
     std::cout << "profile: " << local_state->custom_profile()->pretty_print() << std::endl;
 
     for (int32_t i = 0; i != PartitionedHashJoinTestHelper::TEST_PARTITION_COUNT; ++i) {
-        if (!local_state->_probe_spilling_streams[i]) {
+        if (!local_state->_probe_spilling_files[i]) {
             continue;
         }
-        local_state->_probe_spilling_streams[i].reset();
+        ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(
+                local_state->_probe_spilling_files[i]);
+        local_state->_probe_spilling_files[i].reset();
     }
 
     auto* write_rows_counter = local_state->custom_profile()->get_counter("SpillWriteRows");
@@ -232,22 +234,22 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDisk) {
 
     // Create and register a spill stream for testing
     const uint32_t test_partition = 0;
-    auto& spill_stream = local_state->_probe_spilling_streams[test_partition];
+    auto& spill_file = local_state->_probe_spilling_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spill_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_probe", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spill_file,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_probe", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     // Write some test data to spill stream
     {
         vectorized::Block block =
                 vectorized::ColumnHelper::create_block<vectorized::DataTypeInt32>({1, 2, 3});
-        ASSERT_TRUE(spill_stream->spill_block(_helper.runtime_state.get(), block, false).ok());
-        ASSERT_TRUE(spill_stream->spill_eof().ok());
+        ASSERT_TRUE(spill_file->spill_block(_helper.runtime_state.get(), block, false).ok());
+        ASSERT_TRUE(spill_file->spill_eof().ok());
     }
 
     // Test recovery
@@ -274,7 +276,7 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDisk) {
     ASSERT_EQ(recovery_blocks_counter->value(), 1);
 
     // Verify stream cleanup
-    ASSERT_EQ(local_state->_probe_spilling_streams[test_partition], nullptr);
+    ASSERT_EQ(local_state->_probe_spilling_files[test_partition], nullptr);
 }
 
 TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskLargeData) {
@@ -286,14 +288,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskLargeData
 
     // Create and register a spill stream for testing
     const uint32_t test_partition = 0;
-    auto& spill_stream = local_state->_probe_spilling_streams[test_partition];
+    auto& spill_file = local_state->_probe_spilling_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spill_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_probe", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spill_file,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_probe", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     // Write some test data to spill stream
@@ -304,13 +306,12 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskLargeData
         vectorized::Block large_block =
                 vectorized::ColumnHelper::create_block<vectorized::DataTypeInt32>(large_data);
 
-        ASSERT_TRUE(
-                spill_stream->spill_block(_helper.runtime_state.get(), large_block, false).ok());
+        ASSERT_TRUE(spill_file->spill_block(_helper.runtime_state.get(), large_block, false).ok());
 
         vectorized::Block block =
                 vectorized::ColumnHelper::create_block<vectorized::DataTypeInt32>({1, 2, 3});
-        ASSERT_TRUE(spill_stream->spill_block(_helper.runtime_state.get(), block, false).ok());
-        ASSERT_TRUE(spill_stream->spill_eof().ok());
+        ASSERT_TRUE(spill_file->spill_block(_helper.runtime_state.get(), block, false).ok());
+        ASSERT_TRUE(spill_file->spill_eof().ok());
     }
 
     // Test recovery
@@ -339,7 +340,7 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskLargeData
     ASSERT_EQ(recovery_blocks_counter->value(), 2);
 
     // Verify stream cleanup
-    ASSERT_EQ(local_state->_probe_spilling_streams[test_partition], nullptr);
+    ASSERT_EQ(local_state->_probe_spilling_files[test_partition], nullptr);
 }
 
 TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskEmpty) {
@@ -352,14 +353,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskEmpty) {
     // Test multiple cases
     const uint32_t test_partition = 0;
 
-    auto& spilled_stream = local_state->_probe_spilling_streams[test_partition];
+    auto& spilled_stream = local_state->_probe_spilling_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilled_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_probe", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilled_stream,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_probe", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
     ASSERT_TRUE(spilled_stream->spill_eof().ok());
 
@@ -386,33 +387,34 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverProbeBlocksFromDiskError) {
     // Test multiple cases
     const uint32_t test_partition = 0;
 
-    auto& spilling_stream = local_state->_probe_spilling_streams[test_partition];
+    auto& spilling_file = local_state->_probe_spilling_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilling_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_probe", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilling_file,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_probe", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     // Write some test data to spill stream
     {
         vectorized::Block block =
                 vectorized::ColumnHelper::create_block<vectorized::DataTypeInt32>({1, 2, 3});
-        ASSERT_TRUE(spilling_stream->spill_block(_helper.runtime_state.get(), block, false).ok());
-        ASSERT_TRUE(spilling_stream->spill_eof().ok());
+        ASSERT_TRUE(spilling_file->spill_block(_helper.runtime_state.get(), block, false).ok());
+        ASSERT_TRUE(spilling_file->spill_eof().ok());
     }
 
-    SpillableDebugPointHelper dp_helper("fault_inject::spill_stream::read_next_block");
+    SpillableDebugPointHelper dp_helper("fault_inject::spill_file::read_next_block");
     bool has_data = false;
     auto status = local_state->recover_probe_blocks_from_disk(_helper.runtime_state.get(),
                                                               test_partition, has_data);
 
-    spilling_stream.reset();
+    ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(spilling_file);
+    spilling_file.reset();
 
     ASSERT_FALSE(status.ok());
-    ASSERT_TRUE(status.to_string().find("fault_inject spill_stream read_next_block") !=
+    ASSERT_TRUE(status.to_string().find("fault_inject spill_file read_next_block") !=
                 std::string::npos)
             << "unexpected error: " << status.to_string();
 }
@@ -428,14 +430,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverBuildBlocksFromDisk) {
 
     // Create and register spill stream with test data
     const uint32_t test_partition = 0;
-    auto& spilled_stream = local_state->_shared_state->_spilled_streams[test_partition];
+    auto& spilled_stream = local_state->_shared_state->_spilled_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilled_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_build", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilled_stream,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_build", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     // Write test data
@@ -467,7 +469,7 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverBuildBlocksFromDisk) {
     ASSERT_EQ(recovery_blocks_counter->value(), 1);
 
     // Verify stream cleanup
-    ASSERT_EQ(local_state->_shared_state->_spilled_streams[test_partition], nullptr);
+    ASSERT_EQ(local_state->_shared_state->_spilled_files[test_partition], nullptr);
 }
 
 TEST_F(PartitionedHashJoinProbeOperatorTest, need_more_input_data) {
@@ -554,11 +556,11 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, get_reserve_mem_size) {
 
     local_state->_need_to_setup_internal_operators = false;
     ASSERT_EQ(probe_operator->get_reserve_mem_size(_helper.runtime_state.get()),
-              vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM);
+              vectorized::SpillFile::MAX_SPILL_WRITE_BATCH_MEM);
 
     local_state->_need_to_setup_internal_operators = true;
     ASSERT_GT(probe_operator->get_reserve_mem_size(_helper.runtime_state.get()),
-              vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM);
+              vectorized::SpillFile::MAX_SPILL_WRITE_BATCH_MEM);
 
     const auto default_reserve_size =
             _helper.runtime_state->minimum_operator_memory_required_bytes() +
@@ -583,14 +585,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverBuildBlocksFromDiskEmpty) {
 
     // Test empty stream
     const uint32_t test_partition = 0;
-    auto& spilled_stream = local_state->_shared_state->_spilled_streams[test_partition];
+    auto& spilled_stream = local_state->_shared_state->_spilled_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilled_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_build", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilled_stream,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_build", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     ASSERT_TRUE(spilled_stream->spill_eof().ok());
@@ -616,14 +618,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverBuildBlocksFromDiskLargeData
 
     // Test empty stream
     const uint32_t test_partition = 0;
-    auto& spilled_stream = local_state->_shared_state->_spilled_streams[test_partition];
+    auto& spilled_stream = local_state->_shared_state->_spilled_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilled_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_build", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilled_stream,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_build", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     // Write some test data to spill stream
@@ -678,14 +680,14 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, RecoverBuildBlocksFromDiskError) {
 
     // Test empty stream
     const uint32_t test_partition = 0;
-    auto& spilled_stream = local_state->_shared_state->_spilled_streams[test_partition];
+    auto& spilled_stream = local_state->_shared_state->_spilled_files[test_partition];
     ASSERT_TRUE(ExecEnv::GetInstance()
-                        ->spill_stream_mgr()
-                        ->register_spill_stream(_helper.runtime_state.get(), spilled_stream,
-                                                print_id(_helper.runtime_state->query_id()),
-                                                "hash_build", probe_operator->node_id(),
-                                                std::numeric_limits<size_t>::max(),
-                                                local_state->operator_profile())
+                        ->spill_file_mgr()
+                        ->create_spill_file(_helper.runtime_state.get(), spilled_stream,
+                                            print_id(_helper.runtime_state->query_id()),
+                                            "hash_build", probe_operator->node_id(),
+                                            std::numeric_limits<size_t>::max(),
+                                            local_state->operator_profile())
                         .ok());
 
     ASSERT_TRUE(spilled_stream->spill_eof().ok());
@@ -969,22 +971,21 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, PullWithDiskRecovery) {
 
     const uint32_t test_partition = 0;
     auto& spilled_stream = local_state->_shared_state->spilled_streams[test_partition];
-    auto& spilling_stream = local_state->_probe_spilling_streams[test_partition];
+    auto& spilling_file = local_state->_probe_spilling_files[test_partition];
 
     local_state->_need_to_setup_internal_operators = true;
 
-    auto st = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
+    auto st = ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
             _helper.runtime_state.get(), spilled_stream,
             print_id(_helper.runtime_state->query_id()), "hash_probe_spilled",
             probe_operator->node_id(), std::numeric_limits<int32_t>::max(),
             std::numeric_limits<size_t>::max(), local_state->operator_profile());
 
     ASSERT_TRUE(st) << "Register spill stream failed: " << st.to_string();
-    st = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-            _helper.runtime_state.get(), spilling_stream,
-            print_id(_helper.runtime_state->query_id()), "hash_probe", probe_operator->node_id(),
-            std::numeric_limits<int32_t>::max(), std::numeric_limits<size_t>::max(),
-            local_state->operator_profile());
+    st = ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+            _helper.runtime_state.get(), spilling_file, print_id(_helper.runtime_state->query_id()),
+            "hash_probe", probe_operator->node_id(), std::numeric_limits<int32_t>::max(),
+            std::numeric_limits<size_t>::max(), local_state->operator_profile());
 
     ASSERT_TRUE(st) << "Register spill stream failed: " << st.to_string();
 
@@ -992,7 +993,7 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, PullWithDiskRecovery) {
             vectorized::ColumnHelper::create_block<vectorized::DataTypeInt32>({1, 2, 3});
     st = spilled_stream->spill_block(_helper.runtime_state.get(), spill_block, true);
     ASSERT_TRUE(st) << "Spill block failed: " << st.to_string();
-    st = spilling_stream->spill_block(_helper.runtime_state.get(), spill_block, false);
+    st = spilling_file->spill_block(_helper.runtime_state.get(), spill_block, false);
     ASSERT_TRUE(st) << "Spill block failed: " << st.to_string();
 
     vectorized::Block output_block;

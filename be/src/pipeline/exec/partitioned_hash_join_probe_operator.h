@@ -28,6 +28,9 @@
 #include "pipeline/exec/hashjoin_probe_operator.h"
 #include "pipeline/exec/join_build_sink_operator.h"
 #include "pipeline/exec/spill_utils.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_reader.h"
+#include "vec/spill/spill_file_writer.h"
 #include "vec/spill/spill_repartitioner.h"
 
 namespace doris {
@@ -38,23 +41,22 @@ namespace pipeline {
 
 class PartitionedHashJoinProbeOperatorX;
 
-/// Represents a spilled partition pair (build + probe streams) that needs to be processed
-/// during recovery. For multi-level spill, when a partition is too large to fit in memory,
-/// it gets repartitioned into FANOUT sub-partitions, each represented by a new
-/// SpillPartitionInfo at level + 1.
-struct SpillPartitionInfo {
-    vectorized::SpillStreamSPtr build_stream;
-    vectorized::SpillStreamSPtr probe_stream;
+/// Represents a spilled partition pair (build + probe file) that needs to be processed
+/// during recovery. For multi-level spill, when a partition is too large to fit in
+/// memory, it gets repartitioned into FANOUT sub-partitions, each represented by a
+/// new JoinSpillPartitionInfo at level + 1.
+struct JoinSpillPartitionInfo {
+    vectorized::SpillFileSPtr build_file;
+    vectorized::SpillFileSPtr probe_file;
     int level = 0; // 0 = original level-0 partition, 1+ = repartitioned sub-partition
 
-    SpillPartitionInfo() = default;
-    SpillPartitionInfo(vectorized::SpillStreamSPtr build, vectorized::SpillStreamSPtr probe,
-                       int lvl)
-            : build_stream(std::move(build)), probe_stream(std::move(probe)), level(lvl) {}
+    JoinSpillPartitionInfo() = default;
+    JoinSpillPartitionInfo(vectorized::SpillFileSPtr build, vectorized::SpillFileSPtr probe,
+                           int lvl)
+            : build_file(std::move(build)), probe_file(std::move(probe)), level(lvl) {}
 
-    bool has_build_data() const { return build_stream && build_stream->get_written_bytes() > 0; }
-
-    bool has_probe_data() const { return probe_stream && probe_stream->get_written_bytes() > 0; }
+    bool build_exhausted() const { return !build_file; }
+    bool probe_exhausted() const { return !probe_file; }
 };
 
 class PartitionedHashJoinProbeLocalState MOCK_REMOVE(final)
@@ -75,24 +77,24 @@ public:
     /// _spill_partition_queue. Used by revoke_memory when child_eos is true (recovery/build
     /// phase) and we have significant in-memory build data that cannot be kept in memory.
     ///
-    /// After queue initialization, all partitions are represented as SpillPartitionInfo entries
+    /// After queue initialization, all partitions are represented as JoinSpillPartitionInfo entries
     /// in _spill_partition_queue. Repartition reads from _current_partition's streams (or the
     /// already-recovered _recovered_build_block) and pushes FANOUT sub-partitions back onto the
     /// queue.
     Status revoke_build_data(RuntimeState* state);
 
-    /// Recover build blocks from a SpillPartitionInfo's build stream (for multi-level recovery).
+    /// Recover build blocks from a JoinSpillPartitionInfo's build stream (for multi-level recovery).
     Status recover_build_blocks_from_partition(RuntimeState* state,
-                                               SpillPartitionInfo& partition_info,
+                                               JoinSpillPartitionInfo& partition_info,
                                                bool& recovered_data_available);
-    /// Recover probe blocks from a SpillPartitionInfo's probe stream (for multi-level recovery).
+    /// Recover probe blocks from a JoinSpillPartitionInfo's probe stream (for multi-level recovery).
     Status recover_probe_blocks_from_partition(RuntimeState* state,
-                                               SpillPartitionInfo& partition_info,
+                                               JoinSpillPartitionInfo& partition_info,
                                                bool& recovered_data_available);
 
     /// Repartition the current partition's build and probe streams into FANOUT sub-partitions
     /// and push them into _spill_partition_queue for subsequent processing.
-    Status repartition_current_partition(RuntimeState* state, SpillPartitionInfo& partition);
+    Status repartition_current_partition(RuntimeState* state, JoinSpillPartitionInfo& partition);
 
     template <bool spilled>
     void update_build_custom_profile(RuntimeProfile* child_profile);
@@ -120,9 +122,6 @@ private:
     template <typename LocalStateType>
     friend class StatefulOperatorX;
 
-    // Spill probe blocks to disk
-    Status _execute_spill_probe_blocks(RuntimeState* state, const UniqueId& query_id);
-
     std::shared_ptr<BasicSharedState> _in_mem_shared_state_sptr;
 
     std::unique_ptr<vectorized::Block> _child_block;
@@ -132,22 +131,27 @@ private:
     std::unique_ptr<vectorized::MutableBlock> _recovered_build_block;
     std::map<uint32_t, std::vector<vectorized::Block>> _probe_blocks;
 
-    std::vector<vectorized::SpillStreamSPtr> _probe_spilling_streams;
+    std::vector<vectorized::SpillFileSPtr> _probe_spilling_groups;
+    std::vector<vectorized::SpillFileWriterUPtr> _probe_writers;
 
     std::unique_ptr<vectorized::PartitionerBase> _partitioner;
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;
 
+    // Persistent readers for recovery across scheduling slices
+    vectorized::SpillFileReaderUPtr _current_build_reader;
+    vectorized::SpillFileReaderUPtr _current_probe_reader;
+
     // ---- Spill partition queue state ----
-    // Whether _spill_partition_queue has been initialized from spilled_streams +
-    // _probe_spilling_streams. Set to true the first time pull() enters the spill
+    // Whether _spill_partition_queue has been initialized from spilled build groups +
+    // _probe_spilling_groups. Set to true the first time pull() enters the spill
     // path after child EOS. Once true, all partitions are accessed via the queue.
     bool _spill_queue_initialized {false};
     // Work queue of spilled partition pairs to process. Populated during
     // initialization from the level-0 spilled streams and also when a partition is
     // too large to build a hash table (repartitioned into FANOUT new entries).
-    std::deque<SpillPartitionInfo> _spill_partition_queue;
+    std::deque<JoinSpillPartitionInfo> _spill_partition_queue;
     // The partition currently being processed from _spill_partition_queue.
-    SpillPartitionInfo _current_partition;
+    JoinSpillPartitionInfo _current_partition;
     // Repartitioner instance (reused across repartition calls)
     SpillRepartitioner _repartitioner;
     // A partitioner with partition_count = FANOUT for use during repartitioning.
@@ -164,11 +168,13 @@ private:
     RuntimeProfile::Counter* _spill_build_blocks = nullptr;
     RuntimeProfile::Counter* _spill_build_timer = nullptr;
     RuntimeProfile::Counter* _recovery_build_rows = nullptr;
+    RuntimeProfile::Counter* _recovery_level0_build_rows = nullptr;
     RuntimeProfile::Counter* _recovery_build_blocks = nullptr;
     RuntimeProfile::Counter* _recovery_build_timer = nullptr;
     RuntimeProfile::Counter* _spill_probe_rows = nullptr;
     RuntimeProfile::Counter* _spill_probe_blocks = nullptr;
     RuntimeProfile::Counter* _spill_probe_timer = nullptr;
+    RuntimeProfile::Counter* _build_rows = nullptr;
     RuntimeProfile::Counter* _recovery_probe_rows = nullptr;
     RuntimeProfile::Counter* _recovery_probe_blocks = nullptr;
     RuntimeProfile::Counter* _recovery_probe_timer = nullptr;
@@ -242,11 +248,9 @@ public:
     }
 
 private:
-    size_t _revocable_mem_size(RuntimeState* state) const;
-
     friend class PartitionedHashJoinProbeLocalState;
 
-    /// Setup internal operators using build data from a SpillPartitionInfo
+    /// Setup internal operators using build data from a JoinSpillPartitionInfo
     /// (for multi-level recovery, where build data comes from repartitioned streams).
     [[nodiscard]] Status _setup_internal_operators_from_partition(
             PartitionedHashJoinProbeLocalState& local_state, RuntimeState* state) const;

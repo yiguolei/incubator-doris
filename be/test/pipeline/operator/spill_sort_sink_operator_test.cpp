@@ -359,7 +359,7 @@ TEST_F(SpillSortSinkOperatorTest, SinkWithSpillError) {
     st = sink_operator->sink(_helper.runtime_state.get(), &input_block, false);
     ASSERT_TRUE(st.ok()) << "sink failed: " << st.to_string();
 
-    SpillableDebugPointHelper dp_helper("fault_inject::spill_stream::spill_block");
+    SpillableDebugPointHelper dp_helper("fault_inject::spill_file::spill_block");
 
     st = sink_operator->revoke_memory(_helper.runtime_state.get(), nullptr);
 

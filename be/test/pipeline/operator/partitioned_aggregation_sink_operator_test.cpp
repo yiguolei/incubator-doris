@@ -33,7 +33,7 @@
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
 #include "vec/data_types/data_type_number.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 class PartitionedAggregationSinkOperatorTest : public testing::Test {
@@ -429,7 +429,7 @@ TEST_F(PartitionedAggregationSinkOperatorTest, SinkWithSpilError) {
             local_state->_runtime_state->get_sink_local_state());
     ASSERT_GT(inner_sink_local_state->_get_hash_table_size(), 0);
 
-    SpillableDebugPointHelper dp_helper("fault_inject::spill_stream::spill_block");
+    SpillableDebugPointHelper dp_helper("fault_inject::spill_file::spill_block");
     st = sink_operator->revoke_memory(_helper.runtime_state.get(), nullptr);
     ASSERT_FALSE(st.ok()) << "spilll status should be failed";
 }

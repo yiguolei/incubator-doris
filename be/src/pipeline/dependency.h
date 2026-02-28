@@ -46,7 +46,7 @@
 #include "vec/common/sort/sorter.h"
 #include "vec/core/block.h"
 #include "vec/core/types.h"
-#include "vec/spill/spill_stream.h"
+#include "vec/spill/spill_file.h"
 
 namespace doris::vectorized {
 class AggFnEvaluator;
@@ -421,15 +421,12 @@ private:
     void _destroy_agg_status(vectorized::AggregateDataPtr data);
 };
 
-struct AggSpillPartition;
 struct PartitionedAggSharedState : public BasicSharedState,
                                    public std::enable_shared_from_this<PartitionedAggSharedState> {
     ENABLE_FACTORY_CREATOR(PartitionedAggSharedState)
 
     PartitionedAggSharedState() = default;
     ~PartitionedAggSharedState() override = default;
-
-    void init_spill_params(size_t spill_partition_count);
 
     void close();
 
@@ -438,42 +435,9 @@ struct PartitionedAggSharedState : public BasicSharedState,
 
     // partition count is no longer stored in shared state; operators maintain their own
     bool _is_spilled = false;
-    std::deque<std::shared_ptr<AggSpillPartition>> _spill_partitions;
+    std::deque<vectorized::SpillFileSPtr> _spill_partitions;
 };
 
-struct AggSpillPartition {
-    static constexpr int64_t AGG_SPILL_FILE_SIZE = 1024 * 1024 * 1024; // 1G
-
-    AggSpillPartition() = default;
-
-    void close();
-
-    Status get_spill_stream(RuntimeState* state, int node_id, RuntimeProfile* profile,
-                            vectorized::SpillStreamSPtr& spilling_stream);
-
-    Status flush_if_full() {
-        DCHECK(spilling_stream_);
-        Status status;
-        // avoid small spill files
-        if (spilling_stream_->get_written_bytes() >= AGG_SPILL_FILE_SIZE) {
-            status = spilling_stream_->close();
-            spilling_stream_.reset();
-        }
-        return status;
-    }
-
-    Status finish_current_spilling() {
-        if (spilling_stream_) {
-            RETURN_IF_ERROR(spilling_stream_->close());
-            spilling_stream_.reset();
-        }
-        return Status::OK();
-    }
-
-    std::deque<vectorized::SpillStreamSPtr> spill_streams_;
-    vectorized::SpillStreamSPtr spilling_stream_;
-};
-using AggSpillPartitionSPtr = std::shared_ptr<AggSpillPartition>;
 struct SortSharedState : public BasicSharedState {
     ENABLE_FACTORY_CREATOR(SortSharedState)
 public:
@@ -507,7 +471,7 @@ struct SpillSortSharedState : public BasicSharedState,
     std::atomic_bool is_closed = false;
     std::shared_ptr<BasicSharedState> in_mem_shared_state_sptr;
 
-    std::deque<vectorized::SpillStreamSPtr> sorted_streams;
+    std::deque<vectorized::SpillFileSPtr> sorted_spill_groups;
     size_t avg_row_bytes = 0;
     size_t spill_block_batch_row_count;
 };
@@ -603,7 +567,7 @@ struct PartitionedHashJoinSharedState
     std::unique_ptr<RuntimeState> _inner_runtime_state;
     std::shared_ptr<HashJoinSharedState> _inner_shared_state;
     std::vector<std::unique_ptr<vectorized::MutableBlock>> _partitioned_build_blocks;
-    std::vector<vectorized::SpillStreamSPtr> _spilled_streams;
+    std::vector<vectorized::SpillFileSPtr> _spilled_build_groups;
     bool _is_spilled = false;
 };
 

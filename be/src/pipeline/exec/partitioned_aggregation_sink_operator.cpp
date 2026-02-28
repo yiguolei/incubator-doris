@@ -31,8 +31,8 @@
 #include "runtime/fragment_mgr.h"
 #include "util/pretty_printer.h"
 #include "util/runtime_profile.h"
-#include "vec/spill/spill_stream.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -50,7 +50,7 @@ Status PartitionedAggSinkLocalState::init(doris::RuntimeState* state,
     _init_counters();
 
     auto& parent = Base::_parent->template cast<Parent>();
-    Base::_shared_state->init_spill_params(parent._partition_count);
+    _spill_writers.resize(parent._partition_count);
     RETURN_IF_ERROR(setup_in_memory_agg_op(state));
 
     for (const auto& probe_expr_ctx : Base::_shared_state->_in_mem_shared_state->probe_expr_ctxs) {
@@ -163,9 +163,11 @@ Status PartitionedAggSinkOperatorX::sink(doris::RuntimeState* state, vectorized:
                 DCHECK(local_state._shared_state->_in_mem_shared_state->aggregate_data_container
                                ->total_count() == 0);
             }
-            // Only contains spilled partition and will close the stream
-            for (auto& partition : local_state._shared_state->_spill_partitions) {
-                RETURN_IF_ERROR(partition->finish_current_spilling());
+            // Close all writers (finalizes SpillFile metadata)
+            for (auto& writer : local_state._spill_writers) {
+                if (writer) {
+                    RETURN_IF_ERROR(writer->close());
+                }
             }
             local_state._clear_tmp_data();
         }
@@ -190,7 +192,6 @@ size_t PartitionedAggSinkOperatorX::revocable_mem_size(RuntimeState* state) cons
     }
     auto* runtime_state = local_state._runtime_state.get();
     auto size = _agg_sink_operator->get_revocable_mem_size(runtime_state);
-    // If the size is less than MIN_SPILL_WRITE_BATCH_MEM, then not able to spill.
     return size > state->spill_min_revocable_mem() ? size : 0;
 }
 
@@ -290,15 +291,10 @@ Status PartitionedAggSinkLocalState::to_block(HashTableCtxType& context, std::ve
 
 template <typename HashTableCtxType, typename KeyType>
 Status PartitionedAggSinkLocalState::_spill_partition(
-        RuntimeState* state, HashTableCtxType& context, AggSpillPartitionSPtr& spill_partition,
+        RuntimeState* state, HashTableCtxType& context, size_t partition_idx,
         std::vector<KeyType>& keys, std::vector<vectorized::AggregateDataPtr>& values,
         const vectorized::AggregateDataPtr null_key_data, bool is_last) {
-    vectorized::SpillStreamSPtr spill_stream;
-    auto status = spill_partition->get_spill_stream(state, Base::_parent->node_id(),
-                                                    Base::operator_profile(), spill_stream);
-    RETURN_IF_ERROR(status);
-
-    status = to_block(context, keys, values, null_key_data);
+    auto status = to_block(context, keys, values, null_key_data);
     RETURN_IF_ERROR(status);
 
     if (is_last) {
@@ -306,17 +302,33 @@ Status PartitionedAggSinkLocalState::_spill_partition(
         std::vector<vectorized::AggregateDataPtr> tmp_values;
         keys.swap(tmp_keys);
         values.swap(tmp_values);
-
     } else {
         keys.clear();
         values.clear();
     }
-    status = spill_stream->spill_block(state, block_, false);
-    RETURN_IF_ERROR(status);
 
-    status = spill_partition->flush_if_full();
+    // Ensure _spill_partitions is initialized to correct size
+    auto& partitions = Base::_shared_state->_spill_partitions;
+    auto& parent = Base::_parent->template cast<Parent>();
+    if (partitions.size() == 0) {
+        partitions.resize(parent._partition_count);
+    }
+
+    // Lazy-create SpillFile + writer on first write for this partition
+    auto& spill_file = partitions[partition_idx];
+    auto& writer = _spill_writers[partition_idx];
+    if (!writer) {
+        auto relative_path = fmt::format("{}/agg_{}-{}-{}-{}", print_id(state->query_id()),
+                                         partition_idx, parent.node_id(), state->task_id(),
+                                         ExecEnv::GetInstance()->spill_file_mgr()->next_id());
+        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(relative_path,
+                                                                                    spill_file));
+        RETURN_IF_ERROR(spill_file->create_writer(state, Base::operator_profile(), writer));
+    }
+
+    RETURN_IF_ERROR(writer->write_block(state, block_));
     _reset_tmp_data();
-    return status;
+    return Status::OK();
 }
 
 template <typename HashTableCtxType, typename HashTableType>
@@ -340,7 +352,7 @@ Status PartitionedAggSinkLocalState::_spill_hash_table(RuntimeState* state,
     // and each block to spill will not be larger than 32MB(`MAX_SPILL_WRITE_BATCH_MEM`)
     // TODO: yiguolei, should review this logic
     const auto spill_batch_rows = std::min<size_t>(
-            1024 * 1024, std::max<size_t>(4096, vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM *
+            1024 * 1024, std::max<size_t>(4096, vectorized::SpillFile::MAX_SPILL_WRITE_BATCH_MEM *
                                                         total_rows / size_to_revoke_));
 
     VLOG_DEBUG << "Query: " << print_id(state->query_id()) << ", node: " << _parent->node_id()
@@ -362,9 +374,8 @@ Status PartitionedAggSinkLocalState::_spill_hash_table(RuntimeState* state,
             for (int i = 0; i < parent._partition_count && !state->is_cancelled(); ++i) {
                 if (spill_infos[i].keys_.size() >= spill_batch_rows) {
                     _rows_in_partitions[i] += spill_infos[i].keys_.size();
-                    status = _spill_partition(
-                            state, context, Base::_shared_state->_spill_partitions[i],
-                            spill_infos[i].keys_, spill_infos[i].values_, nullptr, false);
+                    status = _spill_partition(state, context, i, spill_infos[i].keys_,
+                                              spill_infos[i].values_, nullptr, false);
                     RETURN_IF_ERROR(status);
                     spill_infos[i].keys_.clear();
                     spill_infos[i].values_.clear();
@@ -380,8 +391,7 @@ Status PartitionedAggSinkLocalState::_spill_hash_table(RuntimeState* state,
         if (spill_infos[i].keys_.size() > 0 || spill_null_key_data) {
             _rows_in_partitions[i] += spill_infos[i].keys_.size();
             status = _spill_partition(
-                    state, context, Base::_shared_state->_spill_partitions[i], spill_infos[i].keys_,
-                    spill_infos[i].values_,
+                    state, context, i, spill_infos[i].keys_, spill_infos[i].values_,
                     spill_null_key_data
                             ? hash_table.template get_null_key_data<vectorized::AggregateDataPtr>()
                             : nullptr,

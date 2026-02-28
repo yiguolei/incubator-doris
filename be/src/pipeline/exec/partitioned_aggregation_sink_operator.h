@@ -25,8 +25,9 @@
 #include "util/pretty_printer.h"
 #include "vec/exprs/vectorized_agg_fn.h"
 #include "vec/exprs/vexpr.h"
-#include "vec/spill/spill_stream.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -67,8 +68,8 @@ public:
                              HashTableType& hash_table, const size_t size_to_revoke, bool eos);
 
     template <typename HashTableCtxType, typename KeyType>
-    Status _spill_partition(RuntimeState* state, HashTableCtxType& context,
-                            AggSpillPartitionSPtr& spill_partition, std::vector<KeyType>& keys,
+    Status _spill_partition(RuntimeState* state, HashTableCtxType& context, size_t partition_idx,
+                            std::vector<KeyType>& keys,
                             std::vector<vectorized::AggregateDataPtr>& values,
                             const vectorized::AggregateDataPtr null_key_data, bool is_last);
 
@@ -95,6 +96,8 @@ public:
     RuntimeProfile::Counter* _memory_usage_reserved = nullptr;
 
     RuntimeProfile::Counter* _spill_serialize_hash_table_timer = nullptr;
+
+    std::vector<vectorized::SpillFileWriterUPtr> _spill_writers;
 
     std::atomic<bool> _eos = false;
 };

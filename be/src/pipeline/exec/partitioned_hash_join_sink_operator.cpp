@@ -30,8 +30,9 @@
 #include "runtime/fragment_mgr.h"
 #include "util/pretty_printer.h"
 #include "util/runtime_profile.h"
-#include "vec/spill/spill_stream.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -43,7 +44,8 @@ Status PartitionedHashJoinSinkLocalState::init(doris::RuntimeState* state,
     SCOPED_TIMER(_init_timer);
     auto& p = _parent->cast<PartitionedHashJoinSinkOperatorX>();
     _shared_state->_partitioned_build_blocks.resize(p._partition_count);
-    _shared_state->_spilled_streams.resize(p._partition_count);
+    _shared_state->_spilled_build_groups.resize(p._partition_count);
+    _build_writers.resize(p._partition_count);
 
     _rows_in_partitions.assign(p._partition_count, 0);
 
@@ -104,7 +106,7 @@ size_t PartitionedHashJoinSinkLocalState::revocable_mem_size(RuntimeState* state
     for (auto& block : partitioned_blocks) {
         if (block) {
             auto block_bytes = block->allocated_bytes();
-            if (block_bytes >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+            if (block_bytes >= vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM) {
                 mem_size += block_bytes;
             }
         }
@@ -139,7 +141,7 @@ size_t PartitionedHashJoinSinkLocalState::get_reserve_mem_size(RuntimeState* sta
     size_t size_to_reserve = 0;
     auto& p = _parent->cast<PartitionedHashJoinSinkOperatorX>();
     if (_shared_state->_is_spilled) {
-        size_to_reserve = p._partition_count * vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM;
+        size_to_reserve = p._partition_count * vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM;
     } else {
         if (_shared_state->_inner_runtime_state) {
             size_to_reserve = p._inner_sink_operator->get_reserve_mem_size(
@@ -156,15 +158,8 @@ Dependency* PartitionedHashJoinSinkLocalState::finishdependency() {
 }
 
 Status PartitionedHashJoinSinkLocalState::_revoke_unpartitioned_block(RuntimeState* state) {
-    // Lazy init spilled streams here, because in register spill stream, it will try to create file.
+    // SpillFiles and writers will be created lazily in _spill_to_disk
     auto& p = _parent->cast<PartitionedHashJoinSinkOperatorX>();
-    for (uint32_t i = 0; i != p._partition_count; ++i) {
-        auto& spilling_stream = _shared_state->_spilled_streams[i];
-        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                state, spilling_stream, print_id(state->query_id()),
-                fmt::format("hash_build_sink_{}", i), _parent->node_id(),
-                state->spill_buffer_size_bytes(), operator_profile()));
-    }
     HashJoinBuildSinkLocalState* inner_sink_state {nullptr};
     if (auto* tmp_sink_state = _shared_state->_inner_runtime_state->get_sink_local_state()) {
         inner_sink_state = assert_cast<HashJoinBuildSinkLocalState*>(tmp_sink_state);
@@ -203,41 +198,28 @@ Status PartitionedHashJoinSinkLocalState::_revoke_unpartitioned_block(RuntimeSta
         COUNTER_UPDATE(_memory_used_counter, build_block.allocated_bytes() - block_old_mem);
     }
 
-    auto exception_catch_func = [this, state, build_block = std::move(build_block)]() mutable {
-        RETURN_IF_CATCH_EXCEPTION({
-            // The inner sink's _build_side_mutable_block has a sentinel row at
-            // index 0 (used for column type evaluation), so real data starts at
-            // row 1.  Split the big block into sub-blocks and reuse the normal
-            // _partition_block + _execute_spill_partitioned_blocks path to avoid
-            // duplicating the partitioning logic.
-            // make the batch size larger, because after partitioning, the
-            // number of rows per partition is much smaller. To avoid too much small blocks.
-            const size_t batch_size = 4096 * _shared_state->_partitioned_build_blocks.size();
-            const size_t total_rows = build_block.rows();
-            for (size_t offset = 1; offset < total_rows;) {
-                const size_t this_run = std::min(batch_size, total_rows - offset);
-                auto sub_block = build_block.clone_empty();
-                for (size_t c = 0; c != build_block.columns(); ++c) {
-                    sub_block.get_by_position(c).column =
-                            build_block.get_by_position(c).column->cut(offset, this_run);
-                }
-                offset += this_run;
-                RETURN_IF_ERROR(_partition_block(state, &sub_block, 0, sub_block.rows()));
-                RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state));
-            }
-            RETURN_IF_ERROR(_force_flush_partitions(state));
-            return Status::OK();
-        });
-    };
-
-    // invoke directly, no need for runnable wrapper
-    DBUG_EXECUTE_IF(
-            "fault_inject::partitioned_hash_join_sink::revoke_unpartitioned_block_submit_func", {
-                return Status::Error<INTERNAL_ERROR>(
-                        "fault_inject partitioned_hash_join_sink "
-                        "revoke_unpartitioned_block submit_func failed");
-            });
-    return run_spill_task(state, exception_catch_func);
+    // The inner sink's _build_side_mutable_block has a sentinel row at
+    // index 0 (used for column type evaluation), so real data starts at
+    // row 1.  Split the big block into sub-blocks and reuse the normal
+    // _partition_block + _execute_spill_partitioned_blocks path to avoid
+    // duplicating the partitioning logic.
+    // make the batch size larger, because after partitioning, the
+    // number of rows per partition is much smaller. To avoid too much small blocks.
+    const size_t batch_size = 4096 * _shared_state->_partitioned_build_blocks.size();
+    const size_t total_rows = build_block.rows();
+    for (size_t offset = 1; offset < total_rows;) {
+        const size_t this_run = std::min(batch_size, total_rows - offset);
+        auto sub_block = build_block.clone_empty();
+        for (size_t c = 0; c != build_block.columns(); ++c) {
+            sub_block.get_by_position(c).column =
+                    build_block.get_by_position(c).column->cut(offset, this_run);
+        }
+        offset += this_run;
+        RETURN_IF_ERROR(_partition_block(state, &sub_block, 0, sub_block.rows()));
+        RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state));
+    }
+    RETURN_IF_ERROR(_force_flush_partitions(state));
+    return Status::OK();
 }
 
 Status PartitionedHashJoinSinkLocalState::terminate(RuntimeState* state) {
@@ -263,8 +245,19 @@ Status PartitionedHashJoinSinkLocalState::_force_flush_partitions(RuntimeState* 
         if (block && block->rows() > 0) {
             auto spilled_block = block->to_block();
             block.reset();
-            RETURN_IF_ERROR(
-                    _shared_state->_spilled_streams[i]->spill_block(state, spilled_block, false));
+            // Lazy-create SpillFile + Writer if needed
+            auto& spill_file = _shared_state->_spilled_build_groups[i];
+            auto& writer = _build_writers[i];
+            if (!writer) {
+                auto label = fmt::format("hash_build_sink_{}", i);
+                auto relative_path = fmt::format(
+                        "{}/{}-{}-{}-{}", print_id(state->query_id()), label, _parent->node_id(),
+                        state->task_id(), ExecEnv::GetInstance()->spill_file_mgr()->next_id());
+                RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                        relative_path, spill_file));
+                RETURN_IF_ERROR(spill_file->create_writer(state, operator_profile(), writer));
+            }
+            RETURN_IF_ERROR(writer->write_block(state, spilled_block));
         }
     }
     return Status::OK();
@@ -274,13 +267,12 @@ Status PartitionedHashJoinSinkLocalState::_finish_spilling(RuntimeState* state) 
     if (!_shared_state->_is_spilled) {
         return Status::OK();
     }
-    // flush and close all spill streams
-    for (size_t i = 0; i != _shared_state->_spilled_streams.size(); ++i) {
-        auto& stream = _shared_state->_spilled_streams[i];
-        if (!stream) {
-            continue;
+    // Close all writers (Writer::close() finalizes SpillFile metadata)
+    for (size_t i = 0; i != _build_writers.size(); ++i) {
+        auto& writer = _build_writers[i];
+        if (writer) {
+            RETURN_IF_ERROR(writer->close());
         }
-        RETURN_IF_ERROR(stream->close());
     }
     return Status::OK();
 }
@@ -295,20 +287,13 @@ Status PartitionedHashJoinSinkLocalState::_execute_spill_partitioned_blocks(Runt
     SCOPED_TIMER(_spill_build_timer);
 
     for (size_t i = 0; i != _shared_state->_partitioned_build_blocks.size(); ++i) {
-        vectorized::SpillStreamSPtr& spilling_stream = _shared_state->_spilled_streams[i];
-        DCHECK(spilling_stream != nullptr);
         auto& mutable_block = _shared_state->_partitioned_build_blocks[i];
         // Avoid spilling empty blocks or very small blocks.
         if (!mutable_block || mutable_block->allocated_bytes() < state->spill_buffer_size_bytes()) {
             continue;
         }
 
-        auto status = [&]() {
-            RETURN_IF_CATCH_EXCEPTION(
-                    return _spill_to_disk(static_cast<uint32_t>(i), spilling_stream));
-        }();
-
-        RETURN_IF_ERROR(status);
+        RETURN_IF_ERROR(_spill_to_disk(static_cast<uint32_t>(i)));
     }
     return Status::OK();
 }
@@ -375,19 +360,27 @@ Status PartitionedHashJoinSinkLocalState::_partition_block(RuntimeState* state,
     return Status::OK();
 }
 
-Status PartitionedHashJoinSinkLocalState::_spill_to_disk(
-        uint32_t partition_index, const vectorized::SpillStreamSPtr& spilling_stream) {
+Status PartitionedHashJoinSinkLocalState::_spill_to_disk(uint32_t partition_index) {
     auto& partitioned_block = _shared_state->_partitioned_build_blocks[partition_index];
 
-    if (!_state->is_cancelled()) {
-        auto block = partitioned_block->to_block();
-        int64_t block_mem_usage = block.allocated_bytes();
-        Defer defer {[&]() { COUNTER_UPDATE(memory_used_counter(), -block_mem_usage); }};
-        partitioned_block = vectorized::MutableBlock::create_unique(block.clone_empty());
-        return spilling_stream->spill_block(state(), block, false);
-    } else {
-        return _state->cancel_reason();
+    auto block = partitioned_block->to_block();
+    int64_t block_mem_usage = block.allocated_bytes();
+    Defer defer {[&]() { COUNTER_UPDATE(memory_used_counter(), -block_mem_usage); }};
+    partitioned_block = vectorized::MutableBlock::create_unique(block.clone_empty());
+
+    // Lazy-create SpillFile + Writer if needed
+    auto& spill_file = _shared_state->_spilled_build_groups[partition_index];
+    auto& writer = _build_writers[partition_index];
+    if (!writer) {
+        auto label = fmt::format("hash_build_sink_{}", partition_index);
+        auto relative_path = fmt::format("{}/{}-{}-{}-{}", print_id(state()->query_id()), label,
+                                         _parent->node_id(), state()->task_id(),
+                                         ExecEnv::GetInstance()->spill_file_mgr()->next_id());
+        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(relative_path,
+                                                                                    spill_file));
+        RETURN_IF_ERROR(spill_file->create_writer(state(), operator_profile(), writer));
     }
+    return writer->write_block(state(), block);
 }
 
 PartitionedHashJoinSinkOperatorX::PartitionedHashJoinSinkOperatorX(ObjectPool* pool,

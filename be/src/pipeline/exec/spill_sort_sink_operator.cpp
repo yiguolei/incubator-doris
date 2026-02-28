@@ -22,7 +22,9 @@
 #include "pipeline/exec/spill_utils.h"
 #include "pipeline/pipeline_task.h"
 #include "runtime/fragment_mgr.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -186,7 +188,8 @@ Status SpillSortSinkLocalState::_execute_spill_sort(RuntimeState* state) {
     auto& parent = Base::_parent->template cast<Parent>();
     state->get_query_ctx()->resource_ctx()->task_controller()->increase_revoking_tasks_count();
     Defer defer {[&]() {
-        _spilling_stream.reset();
+        _spilling_writer.reset();
+        _spilling_file.reset();
         state->get_query_ctx()->resource_ctx()->task_controller()->decrease_revoking_tasks_count();
     }};
 
@@ -204,9 +207,10 @@ Status SpillSortSinkLocalState::_execute_spill_sort(RuntimeState* state) {
             RETURN_IF_ERROR(parent._sort_sink_operator->merge_sort_read_for_spill(
                     _runtime_state.get(), &block, 4096, &eos));
         }
-        RETURN_IF_ERROR(_spilling_stream->spill_block(state, block, eos));
+        RETURN_IF_ERROR(_spilling_writer->write_block(state, block));
         block.clear_column_data();
     }
+    RETURN_IF_ERROR(_spilling_writer->close());
     RETURN_IF_ERROR(parent._sort_sink_operator->reset(_runtime_state.get()));
     return Status::OK();
 }
@@ -223,20 +227,16 @@ Status SpillSortSinkLocalState::revoke_memory(RuntimeState* state) {
     VLOG_DEBUG << fmt::format("Query:{}, sort sink:{}, task:{}, revoke_memory, eos:{}",
                               print_id(state->query_id()), _parent->node_id(), state->task_id(),
                               _eos);
-    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-            state, _spilling_stream, print_id(state->query_id()), "sort", _parent->node_id(),
-            state->spill_buffer_size_bytes(), operator_profile()));
-    _shared_state->sorted_streams.emplace_back(_spilling_stream);
-    auto query_id = state->query_id();
-    auto exception_catch_func = [this, query_id, state]() {
-        auto status = [&]() {
-            RETURN_IF_CATCH_EXCEPTION({ return _execute_spill_sort(state); });
-        }();
-        return status;
-    };
-
-    // spill tasks are synchronous; just invoke helper directly
-    return run_spill_task(state, exception_catch_func);
+    _spilling_file.reset();
+    _spilling_writer.reset();
+    auto relative_path =
+            fmt::format("{}/{}-{}-{}-{}", print_id(state->query_id()), "sort", _parent->node_id(),
+                        state->task_id(), ExecEnv::GetInstance()->spill_file_mgr()->next_id());
+    RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(relative_path,
+                                                                                _spilling_file));
+    RETURN_IF_ERROR(_spilling_file->create_writer(state, operator_profile(), _spilling_writer));
+    _shared_state->sorted_spill_groups.emplace_back(_spilling_file);
+    return _execute_spill_sort(state);
 }
 #include "common/compile_check_end.h"
 } // namespace doris::pipeline

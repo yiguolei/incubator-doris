@@ -22,8 +22,9 @@
 
 #include "common/status.h"
 #include "operator.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_reader.h"
 #include "vec/spill/spill_repartitioner.h"
-#include "vec/spill/spill_stream.h"
 
 namespace doris {
 #include "common/compile_check_begin.h"
@@ -36,31 +37,20 @@ class PartitionedAggLocalState;
 
 /// Represents one partition in the multi-level spill queue for aggregation.
 /// Unlike Join (which has build + probe), Agg only has a single data flow:
-/// spilled aggregation intermediate results stored in one or more SpillStreams.
+/// spilled aggregation intermediate results stored in one SpillFile.
 struct AggSpillPartitionInfo {
-    // All spill streams for this partition (may come from multiple spill rounds).
-    std::deque<vectorized::SpillStreamSPtr> streams;
+    // The spill file for this partition.
+    vectorized::SpillFileSPtr spill_file;
     // The depth level in the repartition tree (level-0 = original).
     int level = 0;
 
     AggSpillPartitionInfo() = default;
-    AggSpillPartitionInfo(std::deque<vectorized::SpillStreamSPtr> s, int lvl)
-            : streams(std::move(s)), level(lvl) {}
+    AggSpillPartitionInfo(vectorized::SpillFileSPtr s, int lvl)
+            : spill_file(std::move(s)), level(lvl) {}
 
-    bool has_data() const {
-        for (auto& stream : streams) {
-            if (stream && stream->get_written_bytes() > 0) return true;
-        }
-        return false;
-    }
+    bool has_data() const { return spill_file && spill_file->get_written_bytes() > 0; }
 
-    int64_t total_bytes() const {
-        int64_t total = 0;
-        for (auto& stream : streams) {
-            if (stream) total += stream->get_written_bytes();
-        }
-        return total;
-    }
+    int64_t total_bytes() const { return spill_file ? spill_file->get_written_bytes() : 0; }
 };
 
 class PartitionedAggLocalState MOCK_REMOVE(final)
@@ -84,18 +74,15 @@ public:
     bool is_blockable() const override;
 
     /// Flush the current in-memory hash table by draining it as blocks and routing
-    /// each block through the repartitioner into the output sub-streams.
-    Status flush_hash_table_to_sub_streams(
-            RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
-            int repartition_level);
+    /// each block through the repartitioner into the output sub-spill-files.
+    Status flush_hash_table_to_sub_spill_files(RuntimeState* state);
 
-    /// Flush the in-memory hash table into FANOUT sub-streams, repartition remaining
-    /// unread streams from `remaining_streams`, and push resulting sub-partitions into
+    /// Flush the in-memory hash table into FANOUT sub-spill-files, repartition remaining
+    /// unread spill files from `remaining_spill_files`, and push resulting sub-partitions into
     /// `_partition_queue`. After this call the hash table is reset and
-    /// `remaining_streams` is cleared.
+    /// `remaining_spill_files` is cleared.
     Status flush_and_repartition(RuntimeState* state,
-                                 std::deque<vectorized::SpillStreamSPtr>& remaining_streams,
-                                 int level);
+                                 vectorized::SpillFileSPtr& remaining_spill_file, int level);
 
 private:
     friend class PartitionedAggSourceOperatorX;
@@ -104,15 +91,11 @@ private:
     /// Called once when spilled get_block is first entered.
     void _init_partition_queue();
 
-    /// Read up to vectorized::SpillStream::MAX_SPILL_WRITE_BATCH_MEM bytes from `partition.streams` into
+    /// Read up to vectorized::SpillFile::MAX_SPILL_WRITE_BATCH_MEM bytes from `partition.spill_files` into
     /// `_blocks`. Returns has_data=true if any blocks were read.
-    /// Consumes and deletes exhausted streams from the partition.
+    /// Consumes and deletes exhausted spill files from the partition.
     Status _recover_blocks_from_partition(RuntimeState* state, AggSpillPartitionInfo& partition,
                                           bool& has_data);
-
-    /// Repartition a partition's streams (without hash table) into FANOUT sub-partitions
-    /// and push them to `_partition_queue`.
-    Status _repartition_partition(RuntimeState* state, AggSpillPartitionInfo& partition);
 
     // ── State ──────────────────────────────────────────────────────────
     std::unique_ptr<RuntimeState> _runtime_state;
@@ -137,6 +120,9 @@ private:
     int _max_partition_level_seen = 0;
 
     SpillRepartitioner _repartitioner;
+
+    // Persistent reader for _recover_blocks_from_partition (survives across yield calls)
+    vectorized::SpillFileReaderUPtr _current_reader;
 };
 
 class AggSourceOperatorX;
@@ -170,7 +156,7 @@ public:
     size_t revocable_mem_size(RuntimeState* state) const override;
 
     // Called by the pipeline task scheduler under memory pressure. Flushes the
-    // current in-memory aggregation hash table to sub-streams and repartitions,
+    // current in-memory aggregation hash table to sub-spill-files and repartitions,
     // freeing the hash table memory so it can be recovered in smaller slices.
     Status revoke_memory(RuntimeState* state) override;
 

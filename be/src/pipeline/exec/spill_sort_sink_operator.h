@@ -21,6 +21,8 @@
 
 #include "operator.h"
 #include "sort_sink_operator.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -59,7 +61,8 @@ private:
 
     RuntimeProfile::Counter* _spill_merge_sort_timer = nullptr;
 
-    vectorized::SpillStreamSPtr _spilling_stream;
+    vectorized::SpillFileSPtr _spilling_file;
+    vectorized::SpillFileWriterUPtr _spilling_writer;
 
     std::atomic<bool> _eos = false;
 };

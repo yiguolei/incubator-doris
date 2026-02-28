@@ -37,7 +37,7 @@
 #include "spillable_operator_test_helper.h"
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 class MockAggSharedState : public AggSharedState {

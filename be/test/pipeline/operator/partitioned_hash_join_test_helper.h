@@ -37,7 +37,7 @@
 #include "testutil/mock/mock_runtime_state.h"
 #include "util/runtime_profile.h"
 #include "vec/core/block.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 class MockPartitionedHashJoinSharedState : public PartitionedHashJoinSharedState {
@@ -45,12 +45,12 @@ public:
     MockPartitionedHashJoinSharedState() {
         _is_spilled = false;
         _inner_runtime_state = nullptr;
-        _spilled_streams.clear();
+        _spilled_files.clear();
         _partitioned_build_blocks.clear();
     }
 
     void init(size_t partition_count) {
-        _spilled_streams.resize(partition_count);
+        _spilled_files.resize(partition_count);
         _partitioned_build_blocks.resize(partition_count);
     }
 };

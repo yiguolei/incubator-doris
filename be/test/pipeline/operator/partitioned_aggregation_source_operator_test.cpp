@@ -432,7 +432,7 @@ TEST_F(PartitionedAggregationSourceOperatorTest, GetBlockWithSpillError) {
     st = local_state->open(_helper.runtime_state.get());
     ASSERT_TRUE(st.ok()) << "open failed: " << st.to_string();
 
-    SpillableDebugPointHelper dp_helper("fault_inject::spill_stream::read_next_block");
+    SpillableDebugPointHelper dp_helper("fault_inject::spill_file::read_next_block");
 
     block.clear();
     bool eos = false;

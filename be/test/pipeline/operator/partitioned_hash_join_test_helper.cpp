@@ -180,9 +180,9 @@ PartitionedHashJoinProbeLocalState* PartitionedHashJoinTestHelper::create_probe_
     local_state->_internal_runtime_profile = std::make_unique<RuntimeProfile>("inner_test");
 
     local_state->_partitioned_blocks.resize(probe_operator->_partition_count);
-    local_state->_probe_spilling_streams.resize(probe_operator->_partition_count);
+    local_state->_probe_spilling_files.resize(probe_operator->_partition_count);
 
-    shared_state->_spilled_streams.resize(probe_operator->_partition_count);
+    shared_state->_spilled_files.resize(probe_operator->_partition_count);
     shared_state->_partitioned_build_blocks.resize(probe_operator->_partition_count);
 
     shared_state->_inner_runtime_state = std::make_unique<MockRuntimeState>();
@@ -211,7 +211,7 @@ PartitionedHashJoinSinkLocalState* PartitionedHashJoinTestHelper::create_sink_lo
             sink_operator->dests_id().front(), sink_operator->operator_id(),
             "PartitionedHashJoinTestDep");
 
-    shared_state->_spilled_streams.resize(sink_operator->_partition_count);
+    shared_state->_spilled_files.resize(sink_operator->_partition_count);
     shared_state->_partitioned_build_blocks.resize(sink_operator->_partition_count);
 
     shared_state->_inner_runtime_state = std::make_unique<MockRuntimeState>();

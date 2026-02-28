@@ -49,7 +49,7 @@
 #include "util/runtime_profile.h"
 #include "util/uid_util.h"
 #include "vec/core/block.h"
-#include "vec/spill/spill_stream.h"
+#include "vec/spill/spill_file.h"
 
 namespace doris {
 class RuntimeState;
@@ -746,7 +746,7 @@ Status PipelineTask::do_revoke_memory(const std::shared_ptr<SpillContext>& spill
     // Revoke memory from every operator that has enough revocable memory,
     // then revoke from the sink.
     for (auto& op : _operators) {
-        if (op->revocable_mem_size(_state) >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+        if (op->revocable_mem_size(_state) >= vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM) {
             RETURN_IF_ERROR(op->revoke_memory(_state));
         }
     }
@@ -782,12 +782,12 @@ bool PipelineTask::_try_to_reserve_memory(const size_t reserve_size, OperatorBas
     // During enable force spill, other operators like scan opeartor will also try to reserve memory and will failed
     // here, if not add this check, it will always paused and resumed again.
     if (st.ok() && _state->enable_force_spill()) {
-        if (operator_max_revocable_mem_size >= _state->minimum_operator_memory_required_bytes()) {
+        if (operator_max_revocable_mem_size >= _state->spill_min_revocable_mem()) {
             st = Status::Error<ErrorCode::QUERY_MEMORY_EXCEEDED>(
                     "force spill and there is an operator has memory "
                     "size {} exceeds min mem size {}",
                     PrettyPrinter::print_bytes(operator_max_revocable_mem_size),
-                    PrettyPrinter::print_bytes(_state->minimum_operator_memory_required_bytes()));
+                    PrettyPrinter::print_bytes(_state->spill_min_revocable_mem()));
         }
     }
 
@@ -991,7 +991,7 @@ Status PipelineTask::revoke_memory(const std::shared_ptr<SpillContext>& spill_co
     }
 
     const auto revocable_size = get_revocable_size();
-    if (revocable_size >= vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+    if (revocable_size >= vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM) {
         auto revokable_task = std::make_shared<RevokableTask>(shared_from_this(), spill_context);
         // Submit a revocable task to run, the run method will call revoke memory. Currently the
         // underline pipeline task is still blocked.

@@ -30,8 +30,10 @@
 #include "vec/columns/column.h"
 #include "vec/core/block.h"
 #include "vec/runtime/partitioner.h"
-#include "vec/spill/spill_stream.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
+#include "vec/spill/spill_file_reader.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -42,6 +44,7 @@ void SpillRepartitioner::init(std::unique_ptr<vectorized::PartitionerBase> parti
     _use_column_index_mode = false;
     _fanout = fanout;
     _repartition_level = repartition_level;
+    _operator_profile = profile;
     _repartition_timer = ADD_TIMER_WITH_LEVEL(profile, "SpillRepartitionTime", 1);
     _repartition_rows = ADD_COUNTER_WITH_LEVEL(profile, "SpillRepartitionRows", TUnit::UNIT, 1);
 }
@@ -56,15 +59,85 @@ void SpillRepartitioner::init_with_key_columns(std::vector<size_t> key_column_in
     _partitioner.reset();
     _fanout = fanout;
     _repartition_level = repartition_level;
+    _operator_profile = profile;
     _repartition_timer = ADD_TIMER_WITH_LEVEL(profile, "SpillRepartitionTime", 1);
     _repartition_rows = ADD_COUNTER_WITH_LEVEL(profile, "SpillRepartitionRows", TUnit::UNIT, 1);
 }
 
+Status SpillRepartitioner::setup_output(
+        RuntimeState* state, std::vector<vectorized::SpillFileSPtr>& output_spill_files) {
+    DCHECK_EQ(output_spill_files.size(), _fanout);
+    _output_spill_files = &output_spill_files;
+    _output_writers.resize(_fanout);
+    for (int i = 0; i < _fanout; ++i) {
+        RETURN_IF_ERROR(
+                output_spill_files[i]->create_writer(state, _operator_profile, _output_writers[i]));
+    }
+    // Reset reader state from any previous repartition session
+    _input_reader.reset();
+    _current_input_file.reset();
+    return Status::OK();
+}
+
 Status SpillRepartitioner::repartition(RuntimeState* state,
-                                       vectorized::SpillStreamSPtr& input_stream,
-                                       std::vector<vectorized::SpillStreamSPtr>& output_streams,
+                                       vectorized::SpillFileSPtr& input_spill_file, bool* done) {
+    DCHECK(_output_spill_files != nullptr) << "setup_output() must be called first";
+    SCOPED_TIMER(_repartition_timer);
+
+    *done = false;
+    size_t accumulated_bytes = 0;
+
+    // Create or reuse input reader. If the input file changed, create a new reader.
+    if (_current_input_file != input_spill_file) {
+        _current_input_file = input_spill_file;
+        _input_reader = input_spill_file->create_reader(state, _operator_profile);
+        RETURN_IF_ERROR(_input_reader->open());
+    }
+
+    // Per-partition write buffers to batch small writes
+    std::vector<std::unique_ptr<vectorized::MutableBlock>> output_buffers(_fanout);
+
+    bool eos = false;
+    while (!eos && !state->is_cancelled()) {
+        vectorized::Block block;
+        RETURN_IF_ERROR(_input_reader->read(&block, &eos));
+
+        if (block.empty()) {
+            continue;
+        }
+
+        accumulated_bytes += block.allocated_bytes();
+        COUNTER_UPDATE(_repartition_rows, block.rows());
+
+        if (_use_column_index_mode) {
+            RETURN_IF_ERROR(_route_block_by_columns(state, block, output_buffers));
+        } else {
+            RETURN_IF_ERROR(_route_block(state, block, output_buffers));
+        }
+
+        // Yield after processing MAX_BATCH_BYTES to let pipeline scheduler re-schedule
+        if (accumulated_bytes >= MAX_BATCH_BYTES && !eos) {
+            break;
+        }
+    }
+
+    // Flush all remaining buffers
+    RETURN_IF_ERROR(_flush_all_buffers(state, output_buffers, /*force=*/true));
+
+    if (eos) {
+        *done = true;
+        // Reset reader for this input file
+        _input_reader.reset();
+        _current_input_file.reset();
+    }
+
+    return Status::OK();
+}
+
+Status SpillRepartitioner::repartition(RuntimeState* state, vectorized::SpillFileReaderUPtr& reader,
                                        bool* done) {
-    DCHECK_EQ(output_streams.size(), _fanout);
+    DCHECK(_output_spill_files != nullptr) << "setup_output() must be called first";
+    DCHECK(reader != nullptr) << "reader must not be null";
     SCOPED_TIMER(_repartition_timer);
 
     *done = false;
@@ -76,7 +149,7 @@ Status SpillRepartitioner::repartition(RuntimeState* state,
     bool eos = false;
     while (!eos && !state->is_cancelled()) {
         vectorized::Block block;
-        RETURN_IF_ERROR(input_stream->read_next_block_sync(&block, &eos));
+        RETURN_IF_ERROR(reader->read(&block, &eos));
 
         if (block.empty()) {
             continue;
@@ -86,9 +159,9 @@ Status SpillRepartitioner::repartition(RuntimeState* state,
         COUNTER_UPDATE(_repartition_rows, block.rows());
 
         if (_use_column_index_mode) {
-            RETURN_IF_ERROR(_route_block_by_columns(state, block, output_streams, output_buffers));
+            RETURN_IF_ERROR(_route_block_by_columns(state, block, output_buffers));
         } else {
-            RETURN_IF_ERROR(_route_block(state, block, output_streams, output_buffers));
+            RETURN_IF_ERROR(_route_block(state, block, output_buffers));
         }
 
         // Yield after processing MAX_BATCH_BYTES to let pipeline scheduler re-schedule
@@ -97,20 +170,22 @@ Status SpillRepartitioner::repartition(RuntimeState* state,
         }
     }
 
-    // Flush all remaining buffers. When yielding (not eos), we must still flush
-    // because output_buffers is local and would be lost on return.
-    RETURN_IF_ERROR(_flush_all_buffers(state, output_streams, output_buffers, /*force=*/true));
+    // Flush all remaining buffers
+    RETURN_IF_ERROR(_flush_all_buffers(state, output_buffers, /*force=*/true));
 
     if (eos) {
         *done = true;
+        reader.reset();
     }
 
     return Status::OK();
 }
 
-Status SpillRepartitioner::route_block(RuntimeState* state, vectorized::Block& block,
-                                       std::vector<vectorized::SpillStreamSPtr>& output_streams) {
-    DCHECK_EQ(output_streams.size(), _fanout);
+Status SpillRepartitioner::route_block(RuntimeState* state, vectorized::Block& block) {
+    DCHECK(_output_spill_files != nullptr) << "setup_output() must be called first";
+    if (UNLIKELY(_output_spill_files == nullptr)) {
+        return Status::InternalError("SpillRepartitioner::setup_output() must be called first");
+    }
     SCOPED_TIMER(_repartition_timer);
 
     if (block.empty()) {
@@ -121,41 +196,48 @@ Status SpillRepartitioner::route_block(RuntimeState* state, vectorized::Block& b
 
     std::vector<std::unique_ptr<vectorized::MutableBlock>> output_buffers(_fanout);
     if (_use_column_index_mode) {
-        RETURN_IF_ERROR(_route_block_by_columns(state, block, output_streams, output_buffers));
+        RETURN_IF_ERROR(_route_block_by_columns(state, block, output_buffers));
     } else {
-        RETURN_IF_ERROR(_route_block(state, block, output_streams, output_buffers));
+        RETURN_IF_ERROR(_route_block(state, block, output_buffers));
     }
-    RETURN_IF_ERROR(_flush_all_buffers(state, output_streams, output_buffers, /*force=*/true));
+    RETURN_IF_ERROR(_flush_all_buffers(state, output_buffers, /*force=*/true));
     return Status::OK();
 }
 
-Status SpillRepartitioner::finalize(std::vector<vectorized::SpillStreamSPtr>& output_streams) {
-    for (auto& stream : output_streams) {
-        if (stream && stream->get_written_bytes() > 0) {
-            RETURN_IF_ERROR(stream->close());
+Status SpillRepartitioner::finalize() {
+    DCHECK(_output_spill_files != nullptr) << "setup_output() must be called first";
+    if (UNLIKELY(_output_spill_files == nullptr)) {
+        return Status::InternalError("SpillRepartitioner::setup_output() must be called first");
+    }
+    // Close all writers (Writer::close() automatically updates SpillFile stats)
+    for (int i = 0; i < _fanout; ++i) {
+        if (_output_writers[i]) {
+            RETURN_IF_ERROR(_output_writers[i]->close());
         }
     }
+    _output_writers.clear();
+    _output_spill_files = nullptr;
+    _input_reader.reset();
+    _current_input_file.reset();
     return Status::OK();
 }
 
-Status SpillRepartitioner::create_output_streams(
-        RuntimeState* state, int node_id, const std::string& label_prefix,
-        RuntimeProfile* operator_profile, std::vector<vectorized::SpillStreamSPtr>& output_streams,
-        int fanout) {
-    output_streams.resize(fanout);
-    auto query_id_str = print_id(state->query_id());
+Status SpillRepartitioner::create_output_spill_files(
+        RuntimeState* state, int node_id, const std::string& label_prefix, int fanout,
+        std::vector<vectorized::SpillFileSPtr>& output_spill_files) {
+    output_spill_files.resize(fanout);
     for (int i = 0; i < fanout; ++i) {
-        auto label = fmt::format("{}_sub{}", label_prefix, i);
-        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                state, output_streams[i], query_id_str, label, node_id,
-                std::numeric_limits<size_t>::max(), operator_profile));
+        auto relative_path = fmt::format("{}/{}_sub{}-{}-{}-{}", print_id(state->query_id()),
+                                         label_prefix, i, node_id, state->task_id(),
+                                         ExecEnv::GetInstance()->spill_file_mgr()->next_id());
+        RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                relative_path, output_spill_files[i]));
     }
     return Status::OK();
 }
 
 Status SpillRepartitioner::_route_block(
         RuntimeState* state, vectorized::Block& block,
-        std::vector<vectorized::SpillStreamSPtr>& output_streams,
         std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers) {
     // Compute raw hash values for every row in the block.
     RETURN_IF_ERROR(_partitioner->do_partitioning(state, &block));
@@ -186,7 +268,7 @@ Status SpillRepartitioner::_route_block(
 
         // Flush large buffers immediately to keep memory bounded
         if (output_buffers[p]->allocated_bytes() >= MAX_BATCH_BYTES) {
-            RETURN_IF_ERROR(_flush_buffer(state, output_streams[p], output_buffers[p]));
+            RETURN_IF_ERROR(_flush_buffer(state, p, output_buffers[p]));
         }
     }
 
@@ -195,7 +277,6 @@ Status SpillRepartitioner::_route_block(
 
 Status SpillRepartitioner::_route_block_by_columns(
         RuntimeState* state, vectorized::Block& block,
-        std::vector<vectorized::SpillStreamSPtr>& output_streams,
         std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers) {
     const auto rows = block.rows();
     if (rows == 0) {
@@ -239,32 +320,38 @@ Status SpillRepartitioner::_route_block_by_columns(
                 partition_row_indexes[p].data() + partition_row_indexes[p].size()));
 
         if (output_buffers[p]->allocated_bytes() >= MAX_BATCH_BYTES) {
-            RETURN_IF_ERROR(_flush_buffer(state, output_streams[p], output_buffers[p]));
+            RETURN_IF_ERROR(_flush_buffer(state, p, output_buffers[p]));
         }
     }
 
     return Status::OK();
 }
 
-Status SpillRepartitioner::_flush_buffer(RuntimeState* state, vectorized::SpillStreamSPtr& stream,
+Status SpillRepartitioner::_flush_buffer(RuntimeState* state, int partition_idx,
                                          std::unique_ptr<vectorized::MutableBlock>& buffer) {
     if (!buffer || buffer->rows() == 0) {
         return Status::OK();
     }
+    DCHECK(partition_idx < _fanout && _output_writers[partition_idx]);
+    if (UNLIKELY(partition_idx >= _fanout || !_output_writers[partition_idx])) {
+        return Status::InternalError(
+                "SpillRepartitioner output writer is not initialized for partition {}",
+                partition_idx);
+    }
     auto out_block = buffer->to_block();
     buffer.reset();
-    return stream->spill_block(state, out_block, false);
+    return _output_writers[partition_idx]->write_block(state, out_block);
 }
 
 Status SpillRepartitioner::_flush_all_buffers(
-        RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
-        std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers, bool force) {
+        RuntimeState* state, std::vector<std::unique_ptr<vectorized::MutableBlock>>& output_buffers,
+        bool force) {
     for (int i = 0; i < _fanout; ++i) {
         if (!output_buffers[i] || output_buffers[i]->rows() == 0) {
             continue;
         }
         if (force || output_buffers[i]->allocated_bytes() >= MAX_BATCH_BYTES) {
-            RETURN_IF_ERROR(_flush_buffer(state, output_streams[i], output_buffers[i]));
+            RETURN_IF_ERROR(_flush_buffer(state, i, output_buffers[i]));
         }
     }
     return Status::OK();

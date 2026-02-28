@@ -27,7 +27,7 @@
 #include "testutil/column_helper.h"
 #include "testutil/mock/mock_runtime_state.h"
 #include "util/runtime_profile.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 
@@ -131,9 +131,9 @@ public:
                              << " failed: " << st.to_string();
         std::unordered_map<std::string, std::unique_ptr<vectorized::SpillDataDir>> data_map;
         data_map.emplace("test", std::move(spill_data_dir));
-        auto* spill_stream_manager = new vectorized::SpillStreamManager(std::move(data_map));
-        ExecEnv::GetInstance()->_spill_stream_mgr = spill_stream_manager;
-        st = spill_stream_manager->init();
+        auto* spill_file_manager = new vectorized::SpillFileManager(std::move(data_map));
+        ExecEnv::GetInstance()->_spill_file_mgr = spill_file_manager;
+        st = spill_file_manager->init();
         EXPECT_TRUE(st.ok()) << "init spill stream manager failed: " << st.to_string();
 
         EXPECT_EQ(state.enable_spill(), false);
@@ -143,8 +143,8 @@ public:
         ExecEnv::GetInstance()->_fragment_mgr->stop();
         SAFE_DELETE(ExecEnv::GetInstance()->_fragment_mgr);
         ExecEnv::GetInstance()->_fragment_mgr = fragment_mgr;
-        doris::ExecEnv::GetInstance()->spill_stream_mgr()->stop();
-        SAFE_DELETE(ExecEnv::GetInstance()->_spill_stream_mgr);
+        doris::ExecEnv::GetInstance()->spill_file_mgr()->stop();
+        SAFE_DELETE(ExecEnv::GetInstance()->_spill_file_mgr);
     }
 
     ObjectPool pool;

@@ -34,9 +34,9 @@
 #include "util/pretty_printer.h"
 #include "util/runtime_profile.h"
 #include "util/uid_util.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_manager.h"
 #include "vec/spill/spill_repartitioner.h"
-#include "vec/spill/spill_stream.h"
-#include "vec/spill/spill_stream_manager.h"
 
 namespace doris::pipeline {
 #include "common/compile_check_begin.h"
@@ -101,8 +101,17 @@ Status PartitionedAggLocalState::close(RuntimeState* state) {
         return Status::OK();
     }
 
+    // Clean up partition queue resources.
+    for (auto& partition : _partition_queue) {
+        if (partition.spill_file) {
+            ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(partition.spill_file);
+        }
+    }
     _partition_queue.clear();
-    _current_partition.streams.clear();
+    if (_current_partition.spill_file) {
+        ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(_current_partition.spill_file);
+    }
+    _current_partition.spill_file.reset();
 
     return Base::close(state);
 }
@@ -192,21 +201,21 @@ size_t PartitionedAggSourceOperatorX::revocable_mem_size(RuntimeState* state) co
             bytes += aggregate_data_container->memory_usage();
         }
     }
-    return bytes;
+    return bytes > state->spill_min_revocable_mem() ? bytes : 0;
 }
 
 Status PartitionedAggSourceOperatorX::revoke_memory(RuntimeState* state) {
     auto& local_state = get_local_state(state);
-    if (!local_state._shared_state->_is_spilled ||
-        local_state._estimate_memory_usage < vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM) {
+    if (!local_state._shared_state->_is_spilled) {
         return Status::OK();
     }
     VLOG_DEBUG << fmt::format("Query:{}, agg source:{}, task:{}, revoke_memory, hash table size:{}",
                               print_id(state->query_id()), node_id(), state->task_id(),
                               PrettyPrinter::print_bytes(local_state._estimate_memory_usage));
 
-    // Flush hash table + repartition remaining streams of the current partition.
-    RETURN_IF_ERROR(local_state.flush_and_repartition(state, local_state._current_partition.streams,
+    // Flush hash table + repartition remaining spill files of the current partition.
+    RETURN_IF_ERROR(local_state.flush_and_repartition(state,
+                                                      local_state._current_partition.spill_file,
                                                       local_state._current_partition.level));
     local_state._current_partition = AggSpillPartitionInfo {};
     local_state._need_to_setup_partition = true;
@@ -264,7 +273,7 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
     }
 
     // Phase 2: Recover blocks from disk into _blocks (batch of ~8MB).
-    if (local_state._blocks.empty() && !local_state._current_partition.streams.empty()) {
+    if (local_state._blocks.empty() && local_state._current_partition.spill_file) {
         bool has_data = false;
         status = local_state._recover_blocks_from_partition(state, local_state._current_partition,
                                                             has_data);
@@ -296,7 +305,7 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
         return Status::OK();
     }
 
-    // Phase 4: All streams consumed and merged — output aggregated results from hash table.
+    // Phase 4: All spill files consumed and merged — output aggregated results from hash table.
     auto* runtime_state = local_state._runtime_state.get();
     local_state._shared_state->_in_mem_shared_state->aggregate_data_container->init_once();
     bool inner_eos = false;
@@ -330,9 +339,9 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
 // ════════════════════════════════════════════════════════════════════════
 
 void PartitionedAggLocalState::_init_partition_queue() {
-    for (auto& partition : _shared_state->_spill_partitions) {
-        if (partition && !partition->spill_streams_.empty()) {
-            _partition_queue.emplace_back(std::move(partition->spill_streams_), /*level=*/0);
+    for (auto& spill_file : _shared_state->_spill_partitions) {
+        if (spill_file && spill_file->has_data()) {
+            _partition_queue.emplace_back(std::move(spill_file), /*level=*/0);
             // Track metrics: each queued partition counts as one spill at level 0
             COUNTER_UPDATE(_total_partition_spills, 1);
             _max_partition_level_seen = 0;
@@ -349,33 +358,40 @@ Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* st
     size_t accumulated_bytes = 0;
 
     auto exception_catch_func = [&]() -> Status {
-        while (!partition.streams.empty() && !state->is_cancelled()) {
-            auto& stream = partition.streams.front();
-            stream->set_read_counters(operator_profile());
-            bool eos = false;
+        if (!partition.spill_file || state->is_cancelled()) {
+            return Status::OK();
+        }
 
-            while (!eos && !state->is_cancelled()) {
-                vectorized::Block block;
-                DBUG_EXECUTE_IF("fault_inject::partitioned_agg_source::recover_spill_data", {
-                    return Status::Error<INTERNAL_ERROR>(
-                            "fault_inject partitioned_agg_source recover_spill_data failed");
-                });
-                RETURN_IF_ERROR(stream->read_next_block_sync(&block, &eos));
+        // Create or reuse a persistent reader for this file
+        if (!_current_reader) {
+            _current_reader = partition.spill_file->create_reader(state, operator_profile());
+            RETURN_IF_ERROR(_current_reader->open());
+        }
 
-                if (!block.empty()) {
-                    has_data = true;
-                    accumulated_bytes += block.allocated_bytes();
-                    _blocks.emplace_back(std::move(block));
+        bool eos = false;
 
-                    if (accumulated_bytes >= state->spill_buffer_size_bytes()) {
-                        return Status::OK();
-                    }
+        while (!eos && !state->is_cancelled()) {
+            vectorized::Block block;
+            DBUG_EXECUTE_IF("fault_inject::partitioned_agg_source::recover_spill_data", {
+                return Status::Error<INTERNAL_ERROR>(
+                        "fault_inject partitioned_agg_source recover_spill_data failed");
+            });
+            RETURN_IF_ERROR(_current_reader->read(&block, &eos));
+
+            if (!block.empty()) {
+                has_data = true;
+                accumulated_bytes += block.allocated_bytes();
+                _blocks.emplace_back(std::move(block));
+
+                if (accumulated_bytes >= state->spill_buffer_size_bytes()) {
+                    return Status::OK();
                 }
             }
+        }
 
-            if (eos) {
-                partition.streams.pop_front();
-            }
+        if (eos) {
+            _current_reader.reset();
+            partition.spill_file.reset();
         }
         return Status::OK();
     };
@@ -391,82 +407,6 @@ Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* st
             _parent->node_id(), state->task_id(), status.to_string());
 
     return status;
-}
-
-Status PartitionedAggLocalState::_repartition_partition(RuntimeState* state,
-                                                        AggSpillPartitionInfo& partition) {
-    auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
-    const int new_level = partition.level + 1;
-
-    if (new_level >= p._repartition_max_depth) {
-        return Status::InternalError(
-                "Agg spill repartition exceeded max depth {}. "
-                "Likely due to extreme data skew.",
-                p._repartition_max_depth);
-    }
-
-    VLOG_DEBUG << fmt::format(
-            "Query:{}, agg source:{}, task:{}, repartitioning partition at level {} -> {}, "
-            "streams:{}, bytes:{}",
-            print_id(state->query_id()), p.node_id(), state->task_id(), partition.level, new_level,
-            partition.streams.size(), PrettyPrinter::print_bytes(partition.total_bytes()));
-
-    auto* in_mem_state = _shared_state->_in_mem_shared_state;
-    size_t num_keys = in_mem_state->probe_expr_ctxs.size();
-    std::vector<size_t> key_column_indices(num_keys);
-    std::vector<vectorized::DataTypePtr> key_data_types(num_keys);
-    for (size_t i = 0; i < num_keys; ++i) {
-        key_column_indices[i] = i;
-        key_data_types[i] = in_mem_state->probe_expr_ctxs[i]->root()->data_type();
-    }
-
-    // Initialize repartitioner with key columns and operator-configured fanout.
-    _repartitioner.init_with_key_columns(std::move(key_column_indices), std::move(key_data_types),
-                                         operator_profile(), static_cast<int>(p._partition_count),
-                                         new_level);
-
-    std::vector<vectorized::SpillStreamSPtr> output_streams;
-    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
-            state, p.node_id(), fmt::format("agg_repart_l{}", new_level), operator_profile(),
-            output_streams, static_cast<int>(p._partition_count)));
-
-    for (auto& stream : partition.streams) {
-        if (!stream) {
-            continue;
-        }
-        if (stream->get_written_bytes() == 0) {
-            stream.reset();
-            continue;
-        }
-        stream->set_read_counters(operator_profile());
-        bool done = false;
-        while (!done && !state->is_cancelled()) {
-            RETURN_IF_ERROR(_repartitioner.repartition(state, stream, output_streams, &done));
-        }
-        stream.reset();
-    }
-    partition.streams.clear();
-
-    RETURN_IF_ERROR(SpillRepartitioner::finalize(output_streams));
-
-    for (int i = 0; i < static_cast<int>(p._partition_count); ++i) {
-        if (output_streams[i] && output_streams[i]->get_written_bytes() > 0) {
-            std::deque<vectorized::SpillStreamSPtr> sub_streams;
-            sub_streams.push_back(std::move(output_streams[i]));
-            _partition_queue.emplace_back(std::move(sub_streams), new_level);
-            // Metrics
-            COUNTER_UPDATE(_total_partition_spills, 1);
-            if (new_level > _max_partition_level_seen) {
-                _max_partition_level_seen = new_level;
-                COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
-            }
-        }
-    }
-
-    VLOG_DEBUG << fmt::format("Query:{}, agg source:{}, task:{}, repartition done, queue size:{}",
-                              print_id(state->query_id()), p.node_id(), state->task_id(),
-                              _partition_queue.size());
-    return Status::OK();
 }
 
 Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
@@ -498,24 +438,13 @@ Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
     return source_local_state->open(state);
 }
 
-Status PartitionedAggLocalState::flush_hash_table_to_sub_streams(
-        RuntimeState* state, std::vector<vectorized::SpillStreamSPtr>& output_streams,
-        int repartition_level) {
-    auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
+Status PartitionedAggLocalState::flush_hash_table_to_sub_spill_files(RuntimeState* state) {
     auto* runtime_state = _runtime_state.get();
-
+    auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
     auto* in_mem_state = _shared_state->_in_mem_shared_state;
-    size_t num_keys = in_mem_state->probe_expr_ctxs.size();
-    std::vector<size_t> key_column_indices(num_keys);
-    std::vector<vectorized::DataTypePtr> key_data_types(num_keys);
-    for (size_t i = 0; i < num_keys; ++i) {
-        key_column_indices[i] = i;
-        key_data_types[i] = in_mem_state->probe_expr_ctxs[i]->root()->data_type();
-    }
 
-    _repartitioner.init_with_key_columns(std::move(key_column_indices), std::move(key_data_types),
-                                         operator_profile(), static_cast<int>(p._partition_count),
-                                         repartition_level);
+    // setup_output must have been called by the caller (flush_and_repartition)
+    // before calling this function. The repartitioner writes to the persistent output writers.
 
     in_mem_state->aggregate_data_container->init_once();
     bool inner_eos = false;
@@ -524,7 +453,7 @@ Status PartitionedAggLocalState::flush_hash_table_to_sub_streams(
         RETURN_IF_ERROR(
                 p._agg_source_operator->get_serialized_block(runtime_state, &block, &inner_eos));
         if (!block.empty()) {
-            RETURN_IF_ERROR(_repartitioner.route_block(state, block, output_streams));
+            RETURN_IF_ERROR(_repartitioner.route_block(state, block));
         }
     }
 
@@ -533,8 +462,7 @@ Status PartitionedAggLocalState::flush_hash_table_to_sub_streams(
 }
 
 Status PartitionedAggLocalState::flush_and_repartition(
-        RuntimeState* state, std::deque<vectorized::SpillStreamSPtr>& remaining_streams,
-        int level) {
+        RuntimeState* state, vectorized::SpillFileSPtr& remaining_spill_file, int level) {
     auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
     const int new_level = level + 1;
 
@@ -547,9 +475,8 @@ Status PartitionedAggLocalState::flush_and_repartition(
 
     VLOG_DEBUG << fmt::format(
             "Query:{}, agg source:{}, task:{}, flush_and_repartition: "
-            "flushing hash table and repartitioning {} remaining streams at level {} -> {}",
-            print_id(state->query_id()), p.node_id(), state->task_id(), remaining_streams.size(),
-            level, new_level);
+            "flushing hash table and repartitioning remaining spill file at level {} -> {}",
+            print_id(state->query_id()), p.node_id(), state->task_id(), level, new_level);
 
     {
         auto* source_local_state =
@@ -557,47 +484,77 @@ Status PartitionedAggLocalState::flush_and_repartition(
         update_profile<true>(source_local_state->custom_profile());
     }
 
-    // 1. Create FANOUT output sub-streams.
-    std::vector<vectorized::SpillStreamSPtr> output_streams;
-    RETURN_IF_ERROR(SpillRepartitioner::create_output_streams(
-            state, p.node_id(), fmt::format("agg_repart_l{}", new_level), operator_profile(),
-            output_streams, static_cast<int>(p._partition_count)));
+    // 1. Create FANOUT output sub-spill-files.
+    std::vector<vectorized::SpillFileSPtr> output_spill_files;
+    RETURN_IF_ERROR(SpillRepartitioner::create_output_spill_files(
+            state, p.node_id(), fmt::format("agg_repart_l{}", new_level),
+            static_cast<int>(p._partition_count), output_spill_files));
 
-    // 2. Flush the in-memory hash table into the sub-streams.
-    RETURN_IF_ERROR(flush_hash_table_to_sub_streams(state, output_streams, new_level));
+    auto* in_mem_state = _shared_state->_in_mem_shared_state;
+    size_t num_keys = in_mem_state->probe_expr_ctxs.size();
+    std::vector<size_t> key_column_indices(num_keys);
+    std::vector<vectorized::DataTypePtr> key_data_types(num_keys);
+    for (size_t i = 0; i < num_keys; ++i) {
+        key_column_indices[i] = i;
+        key_data_types[i] = in_mem_state->probe_expr_ctxs[i]->root()->data_type();
+    }
 
-    // 3. Repartition remaining unread streams into the same sub-streams.
-    for (auto& stream : remaining_streams) {
-        if (!stream) {
-            continue;
+    _repartitioner.init_with_key_columns(std::move(key_column_indices), std::move(key_data_types),
+                                         operator_profile(), static_cast<int>(p._partition_count),
+                                         new_level);
+
+    // Setup persistent output writers for the repartitioner.
+    RETURN_IF_ERROR(_repartitioner.setup_output(state, output_spill_files));
+
+    // 2. Flush the in-memory hash table into the sub-spill-files.
+    RETURN_IF_ERROR(flush_hash_table_to_sub_spill_files(state));
+
+    // 3. Route any in-memory blocks that were recovered but not yet merged
+    //    into the hash table. These blocks were already read from the file
+    //    by _current_reader and must not be re-read.
+    for (auto& blk : _blocks) {
+        if (!blk.empty()) {
+            RETURN_IF_ERROR(_repartitioner.route_block(state, blk));
         }
-        if (stream->get_written_bytes() == 0) {
-            stream.reset();
-            continue;
-        }
-        stream->set_read_counters(operator_profile());
+    }
+    _blocks.clear();
+
+    // 4. Repartition remaining unread data from the spill file.
+    //
+    // If _current_reader exists, the file has been partially read. Pass
+    // the existing reader to repartitioner so it continues from the current
+    // position. This avoids re-reading from block 0 and duplicating data
+    // already represented by the hash table flush + _blocks routed above.
+    if (_current_reader) {
         bool done = false;
         while (!done && !state->is_cancelled()) {
-            RETURN_IF_ERROR(_repartitioner.repartition(state, stream, output_streams, &done));
+            RETURN_IF_ERROR(_repartitioner.repartition(state, _current_reader, &done));
         }
-        stream.reset();
+        // reader is reset by repartitioner on completion
+    } else if (remaining_spill_file) {
+        // No partial read — repartition the entire file from scratch.
+        bool done = false;
+        while (!done && !state->is_cancelled()) {
+            RETURN_IF_ERROR(_repartitioner.repartition(state, remaining_spill_file, &done));
+        }
     }
-    remaining_streams.clear();
+    _current_reader.reset();
+    remaining_spill_file.reset();
 
-    RETURN_IF_ERROR(SpillRepartitioner::finalize(output_streams));
+    RETURN_IF_ERROR(_repartitioner.finalize());
 
     // 4. Push non-empty sub-partitions into the work queue.
     for (int i = 0; i < static_cast<int>(p._partition_count); ++i) {
-        if (output_streams[i] && output_streams[i]->get_written_bytes() > 0) {
-            std::deque<vectorized::SpillStreamSPtr> sub_streams;
-            sub_streams.push_back(std::move(output_streams[i]));
-            _partition_queue.emplace_back(std::move(sub_streams), new_level);
+        if (output_spill_files[i] && output_spill_files[i]->get_written_bytes() > 0) {
+            _partition_queue.emplace_back(std::move(output_spill_files[i]), new_level);
             // Metrics
             COUNTER_UPDATE(_total_partition_spills, 1);
             if (new_level > _max_partition_level_seen) {
                 _max_partition_level_seen = new_level;
                 COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
             }
+        } else if (output_spill_files[i]) {
+            ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(output_spill_files[i]);
         }
     }
 

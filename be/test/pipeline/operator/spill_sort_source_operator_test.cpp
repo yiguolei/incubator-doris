@@ -215,13 +215,13 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill) {
 
     // Prepare stored streams
     for (size_t i = 0; i != 4; ++i) {
-        vectorized::SpillStreamSPtr spill_stream;
-        st = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                _helper.runtime_state.get(), spill_stream,
+        vectorized::SpillFileSPtr spill_file;
+        st = ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                _helper.runtime_state.get(), spill_file,
                 print_id(_helper.runtime_state->query_id()), sink_operator->get_name(),
                 sink_operator->node_id(), std::numeric_limits<int32_t>::max(),
                 _helper.operator_profile.get());
-        ASSERT_TRUE(st.ok()) << "register_spill_stream failed: " << st.to_string();
+        ASSERT_TRUE(st.ok()) << "create_spill_file failed: " << st.to_string();
 
         std::vector<int32_t> data;
         std::vector<int64_t> data2;
@@ -236,10 +236,10 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill) {
                 vectorized::ColumnHelper::create_column_with_name<vectorized::DataTypeInt64>(
                         data2));
 
-        st = spill_stream->spill_block(_helper.runtime_state.get(), input_block, true);
+        st = spill_file->spill_block(_helper.runtime_state.get(), input_block, true);
         ASSERT_TRUE(st.ok()) << "spill_block failed: " << st.to_string();
 
-        shared_state->sorted_streams.emplace_back(std::move(spill_stream));
+        shared_state->sorted_spill_files.emplace_back(std::move(spill_file));
     }
 
     std::unique_ptr<vectorized::MutableBlock> mutable_block;
@@ -262,7 +262,7 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill) {
     }
 
     ASSERT_TRUE(eos);
-    ASSERT_TRUE(shared_state->sorted_streams.empty()) << "sorted_streams is not empty";
+    ASSERT_TRUE(shared_state->sorted_spill_files.empty()) << "sorted_spill_files is not empty";
     ASSERT_TRUE(mutable_block) << "mutable_block is null";
     ASSERT_EQ(mutable_block->rows(), 40);
     auto output_block = mutable_block->to_block();
@@ -406,13 +406,13 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill2) {
 
     // Prepare stored streams
     for (size_t i = 0; i != 4; ++i) {
-        vectorized::SpillStreamSPtr spill_stream;
-        st = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                _helper.runtime_state.get(), spill_stream,
+        vectorized::SpillFileSPtr spill_file;
+        st = ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                _helper.runtime_state.get(), spill_file,
                 print_id(_helper.runtime_state->query_id()), sink_operator->get_name(),
                 sink_operator->node_id(), std::numeric_limits<int32_t>::max(),
                 std::numeric_limits<int32_t>::max(), _helper.operator_profile.get());
-        ASSERT_TRUE(st.ok()) << "register_spill_stream failed: " << st.to_string();
+        ASSERT_TRUE(st.ok()) << "create_spill_file failed: " << st.to_string();
 
         std::vector<int32_t> data;
         std::vector<int64_t> data2;
@@ -427,10 +427,10 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill2) {
                 vectorized::ColumnHelper::create_column_with_name<vectorized::DataTypeInt64>(
                         data2));
 
-        st = spill_stream->spill_block(_helper.runtime_state.get(), input_block, true);
+        st = spill_file->spill_block(_helper.runtime_state.get(), input_block, true);
         ASSERT_TRUE(st.ok()) << "spill_block failed: " << st.to_string();
 
-        shared_state->sorted_streams.emplace_back(std::move(spill_stream));
+        shared_state->sorted_spill_files.emplace_back(std::move(spill_file));
     }
 
     auto query_options = _helper.runtime_state->query_options();
@@ -457,7 +457,7 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpill2) {
         }
     }
 
-    ASSERT_TRUE(shared_state->sorted_streams.empty()) << "sorted_streams is not empty";
+    ASSERT_TRUE(shared_state->sorted_spill_files.empty()) << "sorted_spill_files is not empty";
     ASSERT_TRUE(mutable_block) << "mutable_block is null";
     ASSERT_EQ(mutable_block->rows(), 40);
     auto output_block = mutable_block->to_block();
@@ -553,13 +553,13 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpillError) {
 
     // Prepare stored streams
     for (size_t i = 0; i != 4; ++i) {
-        vectorized::SpillStreamSPtr spill_stream;
-        st = ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                _helper.runtime_state.get(), spill_stream,
+        vectorized::SpillFileSPtr spill_file;
+        st = ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                _helper.runtime_state.get(), spill_file,
                 print_id(_helper.runtime_state->query_id()), sink_operator->get_name(),
                 sink_operator->node_id(), std::numeric_limits<int32_t>::max(),
                 std::numeric_limits<int32_t>::max(), _helper.operator_profile.get());
-        ASSERT_TRUE(st.ok()) << "register_spill_stream failed: " << st.to_string();
+        ASSERT_TRUE(st.ok()) << "create_spill_file failed: " << st.to_string();
 
         std::vector<int32_t> data;
         std::vector<int64_t> data2;
@@ -574,13 +574,13 @@ TEST_F(SpillSortSourceOperatorTest, GetBlockWithSpillError) {
                 vectorized::ColumnHelper::create_column_with_name<vectorized::DataTypeInt64>(
                         data2));
 
-        st = spill_stream->spill_block(_helper.runtime_state.get(), input_block, true);
+        st = spill_file->spill_block(_helper.runtime_state.get(), input_block, true);
         ASSERT_TRUE(st.ok()) << "spill_block failed: " << st.to_string();
 
-        shared_state->sorted_streams.emplace_back(std::move(spill_stream));
+        shared_state->sorted_spill_files.emplace_back(std::move(spill_file));
     }
 
-    SpillableDebugPointHelper dp_helper("fault_inject::spill_stream::read_next_block");
+    SpillableDebugPointHelper dp_helper("fault_inject::spill_file::read_next_block");
 
     std::unique_ptr<vectorized::MutableBlock> mutable_block;
     bool eos = false;

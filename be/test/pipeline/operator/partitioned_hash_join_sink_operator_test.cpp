@@ -45,7 +45,7 @@
 #include "vec/core/block.h"
 #include "vec/data_types/data_type_number.h"
 #include "vec/exprs/vexpr_context.h"
-#include "vec/spill/spill_stream_manager.h"
+#include "vec/spill/spill_file_manager.h"
 
 namespace doris::pipeline {
 
@@ -138,7 +138,7 @@ TEST_F(PartitionedHashJoinSinkOperatorTest, InitLocalState) {
     shared_state->_is_spilled = true;
     reserve_size = local_state->get_reserve_mem_size(_helper.runtime_state.get(), false);
     ASSERT_EQ(reserve_size,
-              sink_operator->_partition_count * vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM);
+              sink_operator->_partition_count * vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM);
 
     auto* finish_dep = local_state->finishdependency();
     ASSERT_TRUE(finish_dep != nullptr);
@@ -322,9 +322,9 @@ TEST_F(PartitionedHashJoinSinkOperatorTest, RevokeMemory) {
     DCHECK_GE(sink_operator->_child->row_desc().get_column_id(1), 0);
 
     for (uint32_t i = 0; i != sink_operator->_partition_count; ++i) {
-        auto& spilling_stream = sink_state->_shared_state->_spilled_streams[i];
-        auto st = (ExecEnv::GetInstance()->spill_stream_mgr()->register_spill_stream(
-                _helper.runtime_state.get(), spilling_stream,
+        auto& spilling_file = sink_state->_shared_state->_spilled_files[i];
+        auto st = (ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(
+                _helper.runtime_state.get(), spilling_file,
                 print_id(_helper.runtime_state->query_id()), fmt::format("hash_build_sink_{}", i),
                 sink_operator->node_id(), std::numeric_limits<size_t>::max(),
                 sink_state->operator_profile()));

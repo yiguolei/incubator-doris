@@ -29,6 +29,8 @@
 #include "pipeline/exec/spill_utils.h"
 #include "vec/core/block.h"
 #include "vec/runtime/partitioner.h"
+#include "vec/spill/spill_file.h"
+#include "vec/spill/spill_file_writer.h"
 
 namespace doris {
 #include "common/compile_check_begin.h"
@@ -62,8 +64,7 @@ protected:
     PartitionedHashJoinSinkLocalState(DataSinkOperatorXBase* parent, RuntimeState* state)
             : PipelineXSpillSinkLocalState<PartitionedHashJoinSharedState>(parent, state) {}
 
-    Status _spill_to_disk(uint32_t partition_index,
-                          const vectorized::SpillStreamSPtr& spilling_stream);
+    Status _spill_to_disk(uint32_t partition_index);
 
     Status _partition_block(RuntimeState* state, vectorized::Block* in_block, size_t begin,
                             size_t end);
@@ -92,6 +93,8 @@ protected:
     RuntimeProfile::Counter* _spill_build_timer = nullptr;
     RuntimeProfile::Counter* _in_mem_rows_counter = nullptr;
     RuntimeProfile::Counter* _memory_usage_reserved = nullptr;
+
+    std::vector<vectorized::SpillFileWriterUPtr> _build_writers;
 };
 
 class PartitionedHashJoinSinkOperatorX
