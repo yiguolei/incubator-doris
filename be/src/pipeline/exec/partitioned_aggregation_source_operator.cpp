@@ -52,6 +52,9 @@ Status PartitionedAggLocalState::init(RuntimeState* state, LocalStateInfo& info)
     // Counters for partition spill metrics
     _max_partition_level = ADD_COUNTER(custom_profile(), "SpillMaxPartitionLevel", TUnit::UNIT);
     _total_partition_spills = ADD_COUNTER(custom_profile(), "SpillTotalPartitions", TUnit::UNIT);
+
+    init_spill_write_counters();
+
     // Nothing else to init for repartitioner here; fanout is configured when
     // repartitioner is initialized with key columns during actual repartition.
     return Status::OK();
@@ -165,12 +168,31 @@ bool PartitionedAggSourceOperatorX::is_shuffled_operator() const {
 
 size_t PartitionedAggSourceOperatorX::revocable_mem_size(RuntimeState* state) const {
     auto& local_state = get_local_state(state);
-    if (!local_state._shared_state->_is_spilled) {
+    if (!local_state._shared_state->_is_spilled || !local_state._current_partition.has_data()) {
         return 0;
     }
-    return local_state._estimate_memory_usage < state->spill_min_revocable_mem()
-                   ? 0
-                   : local_state._estimate_memory_usage;
+
+    size_t bytes = 0;
+    for (const auto& block : local_state._blocks) {
+        bytes += block.allocated_bytes();
+    }
+    if (local_state._shared_state->_in_mem_shared_state != nullptr &&
+        local_state._shared_state->_in_mem_shared_state->agg_data != nullptr) {
+        auto* agg_data = local_state._shared_state->_in_mem_shared_state->agg_data.get();
+        bytes += std::visit(
+                vectorized::Overload {[&](std::monostate& arg) -> size_t { return 0; },
+                                      [&](auto& agg_method) -> size_t {
+                                          return agg_method.hash_table->get_buffer_size_in_bytes();
+                                      }},
+                agg_data->method_variant);
+
+        if (auto& aggregate_data_container =
+                    local_state._shared_state->_in_mem_shared_state->aggregate_data_container;
+            aggregate_data_container) {
+            bytes += aggregate_data_container->memory_usage();
+        }
+    }
+    return bytes;
 }
 
 Status PartitionedAggSourceOperatorX::revoke_memory(RuntimeState* state) {
