@@ -79,7 +79,7 @@ void PartitionedHashJoinProbeLocalState::init_counters() {
     _get_child_next_timer = ADD_TIMER_WITH_LEVEL(custom_profile(), "GetChildNextTime", 1);
 
     _probe_blocks_bytes =
-            ADD_COUNTER_WITH_LEVEL(custom_profile(), "ProbeBloksBytesInMem", TUnit::BYTES, 1);
+            ADD_COUNTER_WITH_LEVEL(custom_profile(), "ProbeBlocksBytesInMem", TUnit::BYTES, 1);
     _memory_usage_reserved =
             ADD_COUNTER_WITH_LEVEL(custom_profile(), "MemoryUsageReserved", TUnit::BYTES, 1);
 
@@ -609,8 +609,9 @@ Status PartitionedHashJoinProbeOperatorX::push(RuntimeState* state, vectorized::
         RETURN_IF_ERROR(partitioned_blocks[i]->add_rows(input_block, partition_indexes[i].data(),
                                                         partition_indexes[i].data() + count));
 
-        if (partitioned_blocks[i]->rows() > 2 * 1024 * 1024 ||
-            (eos && partitioned_blocks[i]->rows() > 0)) {
+        if (partitioned_blocks[i]->rows() > 0 &&
+            (eos || partitioned_blocks[i]->allocated_bytes() >=
+                            vectorized::SpillStream::MIN_SPILL_WRITE_BATCH_MEM)) {
             local_state._probe_blocks[i].emplace_back(partitioned_blocks[i]->to_block());
             partitioned_blocks[i].reset();
         } else {
@@ -1108,8 +1109,10 @@ Status PartitionedHashJoinProbeOperatorX::get_block(RuntimeState* state, vectori
             local_state.update_profile_from_inner();
         }
 
-        local_state.add_num_rows_returned(block->rows());
-        COUNTER_UPDATE(local_state._blocks_returned_counter, 1);
+        if (!block->empty()) {
+            local_state.add_num_rows_returned(block->rows());
+            COUNTER_UPDATE(local_state._blocks_returned_counter, 1);
+        }
     }
     return Status::OK();
 }
