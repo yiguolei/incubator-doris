@@ -58,7 +58,7 @@ using SpillFileReaderUPtr = std::unique_ptr<SpillFileReader>;
 class SpillFile {
 public:
     // to avoid too many small file writes
-    static constexpr size_t MIN_SPILL_WRITE_BATCH_MEM = 32 * 1024;
+    static constexpr size_t MIN_SPILL_WRITE_BATCH_MEM = 512 * 1024;
     static constexpr size_t MAX_SPILL_WRITE_BATCH_MEM = 32 * 1024 * 1024;
 
     /// @param data_dir       The spill storage directory (disk) selected by SpillFileManager.

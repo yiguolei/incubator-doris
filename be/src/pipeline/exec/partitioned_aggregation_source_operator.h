@@ -47,10 +47,6 @@ struct AggSpillPartitionInfo {
     AggSpillPartitionInfo() = default;
     AggSpillPartitionInfo(vectorized::SpillFileSPtr s, int lvl)
             : spill_file(std::move(s)), level(lvl) {}
-
-    bool has_data() const { return spill_file && spill_file->get_written_bytes() > 0; }
-
-    int64_t total_bytes() const { return spill_file ? spill_file->get_written_bytes() : 0; }
 };
 
 class PartitionedAggLocalState MOCK_REMOVE(final)
@@ -81,8 +77,7 @@ public:
     /// unread spill files from `remaining_spill_files`, and push resulting sub-partitions into
     /// `_partition_queue`. After this call the hash table is reset and
     /// `remaining_spill_files` is cleared.
-    Status flush_and_repartition(RuntimeState* state,
-                                 vectorized::SpillFileSPtr& remaining_spill_file, int level);
+    Status flush_and_repartition(RuntimeState* state);
 
 private:
     friend class PartitionedAggSourceOperatorX;

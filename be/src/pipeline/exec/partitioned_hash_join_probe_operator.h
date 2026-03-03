@@ -45,18 +45,46 @@ class PartitionedHashJoinProbeOperatorX;
 /// during recovery. For multi-level spill, when a partition is too large to fit in
 /// memory, it gets repartitioned into FANOUT sub-partitions, each represented by a
 /// new JoinSpillPartitionInfo at level + 1.
+///
+/// Lifecycle of partition progress:
+///   build_file == nullptr:
+///     - all build-side spill data has been read from disk for this partition
+///   probe_file == nullptr:
+///     - all probe-side spill data has been read from disk for this partition
+///   build_finished = true:
+///     - build side has completed hash table construction
+///   probe_finished = true:
+///     - probe side has completed probing all rows for this partition
+///
+/// A default-constructed instance has is_valid() == false, representing "no partition".
+/// New sub-partitions created by repartitioning start with both flags = false and
+/// initialized = true.
 struct JoinSpillPartitionInfo {
+    // build_file == nullptr means all build data has been read from disk.
     vectorized::SpillFileSPtr build_file;
+    // probe_file == nullptr means all probe data has been read from disk.
     vectorized::SpillFileSPtr probe_file;
     int level = 0; // 0 = original level-0 partition, 1+ = repartitioned sub-partition
+
+    // Read all build data from disk and finished building the hash table.
+    bool build_finished = false;
+    // Read all probe data from disk and probed all rows against the hash table.
+    bool probe_finished = false;
+    // Whether this struct currently represents an active queue partition.
+    bool initialized = false;
 
     JoinSpillPartitionInfo() = default;
     JoinSpillPartitionInfo(vectorized::SpillFileSPtr build, vectorized::SpillFileSPtr probe,
                            int lvl)
-            : build_file(std::move(build)), probe_file(std::move(probe)), level(lvl) {}
+            : build_file(std::move(build)),
+              probe_file(std::move(probe)),
+              level(lvl),
+              initialized(true) {}
 
-    bool build_exhausted() const { return !build_file; }
-    bool probe_exhausted() const { return !probe_file; }
+    /// Returns true if this struct currently represents an active partition entry
+    /// from the spill queue. A default-constructed partition is "invalid" and
+    /// serves as a sentinel meaning "no partition is being processed".
+    bool is_valid() const { return initialized; }
 };
 
 class PartitionedHashJoinProbeLocalState MOCK_REMOVE(final)
@@ -85,12 +113,10 @@ public:
 
     /// Recover build blocks from a JoinSpillPartitionInfo's build stream (for multi-level recovery).
     Status recover_build_blocks_from_partition(RuntimeState* state,
-                                               JoinSpillPartitionInfo& partition_info,
-                                               bool& recovered_data_available);
+                                               JoinSpillPartitionInfo& partition_info);
     /// Recover probe blocks from a JoinSpillPartitionInfo's probe stream (for multi-level recovery).
     Status recover_probe_blocks_from_partition(RuntimeState* state,
-                                               JoinSpillPartitionInfo& partition_info,
-                                               bool& recovered_data_available);
+                                               JoinSpillPartitionInfo& partition_info);
 
     /// Repartition the current partition's build and probe streams into FANOUT sub-partitions
     /// and push them into _spill_partition_queue for subsequent processing.
