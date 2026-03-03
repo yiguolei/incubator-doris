@@ -101,7 +101,7 @@ private:
 
     Status _start_spill_task(RuntimeState* state, vectorized::SpillFileSPtr spill_file);
 
-    Status _trigger_spill_if_need(RuntimeState* state);
+    Status _trigger_spill_if_need(RuntimeState* state, bool* triggered);
 
     RuntimeProfile* _profile = nullptr;
     std::list<MultiCastBlock> _multi_cast_blocks;
