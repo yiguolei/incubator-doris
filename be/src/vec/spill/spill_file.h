@@ -74,8 +74,6 @@ public:
 
     void gc();
 
-    int64_t get_written_bytes() const { return _total_written_bytes; }
-
     /// Returns true after the writer has been closed (all data flushed).
     bool ready_for_reading() const { return _ready_for_reading; }
 

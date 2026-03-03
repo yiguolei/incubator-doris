@@ -61,8 +61,6 @@ public:
     /// After close(), no more writes are allowed.
     Status close();
 
-    int64_t get_written_bytes() const { return _total_written_bytes; }
-
 private:
     /// Open the next part file (spill_dir/{_current_part_index}).
     Status _open_next_part();
