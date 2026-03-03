@@ -271,9 +271,8 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
 
     // Phase 2: Recover blocks from disk into _blocks (batch of ~8MB).
     if (local_state._blocks.empty() && local_state._current_partition.spill_file) {
-        bool has_data = false;
-        RETURN_IF_ERROR(local_state._recover_blocks_from_partition(
-                state, local_state._current_partition, has_data));
+        RETURN_IF_ERROR(
+                local_state._recover_blocks_from_partition(state, local_state._current_partition));
         // Return empty block to yield to pipeline scheduler.
         // Pipeline task will check memory and call revoke_memory if needed.
         *eos = false;
@@ -344,9 +343,7 @@ void PartitionedAggLocalState::_init_partition_queue() {
 }
 
 Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* state,
-                                                                AggSpillPartitionInfo& partition,
-                                                                bool& has_data) {
-    has_data = false;
+                                                                AggSpillPartitionInfo& partition) {
     size_t accumulated_bytes = 0;
     if (!partition.spill_file || state->is_cancelled()) {
         return Status::OK();
@@ -369,7 +366,6 @@ Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* st
         RETURN_IF_ERROR(_current_reader->read(&block, &eos));
 
         if (!block.empty()) {
-            has_data = true;
             accumulated_bytes += block.allocated_bytes();
             _blocks.emplace_back(std::move(block));
 
@@ -523,16 +519,12 @@ Status PartitionedAggLocalState::flush_and_repartition(RuntimeState* state) {
 
     // 4. Push non-empty sub-partitions into the work queue.
     for (int i = 0; i < static_cast<int>(p._partition_count); ++i) {
-        if (output_spill_files[i] && output_spill_files[i]->get_written_bytes() > 0) {
-            _partition_queue.emplace_back(std::move(output_spill_files[i]), new_level);
-            // Metrics
-            COUNTER_UPDATE(_total_partition_spills, 1);
-            if (new_level > _max_partition_level_seen) {
-                _max_partition_level_seen = new_level;
-                COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
-            }
-        } else if (output_spill_files[i]) {
-            ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(output_spill_files[i]);
+        _partition_queue.emplace_back(std::move(output_spill_files[i]), new_level);
+        // Metrics
+        COUNTER_UPDATE(_total_partition_spills, 1);
+        if (new_level > _max_partition_level_seen) {
+            _max_partition_level_seen = new_level;
+            COUNTER_SET(_max_partition_level, int64_t(_max_partition_level_seen));
         }
     }
 

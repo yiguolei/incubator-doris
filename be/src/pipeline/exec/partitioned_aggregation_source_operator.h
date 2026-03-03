@@ -89,8 +89,7 @@ private:
     /// Read up to vectorized::SpillFile::MAX_SPILL_WRITE_BATCH_MEM bytes from `partition.spill_files` into
     /// `_blocks`. Returns has_data=true if any blocks were read.
     /// Consumes and deletes exhausted spill files from the partition.
-    Status _recover_blocks_from_partition(RuntimeState* state, AggSpillPartitionInfo& partition,
-                                          bool& has_data);
+    Status _recover_blocks_from_partition(RuntimeState* state, AggSpillPartitionInfo& partition);
 
     // ── State ──────────────────────────────────────────────────────────
     std::unique_ptr<RuntimeState> _runtime_state;
