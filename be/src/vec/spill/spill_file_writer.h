@@ -66,13 +66,13 @@ private:
     Status _open_next_part();
 
     /// Close the current part: write footer, close FileWriter, update stats.
-    Status _close_current_part();
+    Status _close_current_part(const std::shared_ptr<SpillFile>& spill_file);
 
     /// If current part size >= _max_part_size, close it.
-    Status _rotate_if_needed();
+    Status _rotate_if_needed(const std::shared_ptr<SpillFile>& spill_file);
 
     /// Serialize and write a single block to the current part.
-    Status _write_internal(const Block& block);
+    Status _write_internal(const Block& block, const std::shared_ptr<SpillFile>& spill_file);
 
     // ── Back-reference ──
     std::weak_ptr<SpillFile> _spill_file_wptr; // weak ref; use lock() in close()

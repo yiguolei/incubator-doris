@@ -68,8 +68,7 @@ Status SpillFile::create_writer(RuntimeState* state, RuntimeProfile* profile,
                                 SpillFileWriterSPtr& writer) {
     writer = std::make_shared<SpillFileWriter>(shared_from_this(), state, profile, _data_dir,
                                                _spill_dir);
-    // record active writer
-    _active_writer = writer.get();
+    // _active_writer is set in SpillFileWriter constructor via the shared_ptr
     return Status::OK();
 }
 
@@ -79,12 +78,18 @@ SpillFileReaderSPtr SpillFile::create_reader(RuntimeState* state, RuntimeProfile
     return std::make_shared<SpillFileReader>(state, profile, _spill_dir, _part_count);
 }
 
-void SpillFile::finish_writing(int64_t total_written_bytes, size_t part_count) {
-    _total_written_bytes = total_written_bytes;
-    _part_count = part_count;
+void SpillFile::finish_writing() {
     _ready_for_reading = true;
     // writer finished; clear active writer pointer
     _active_writer = nullptr;
+}
+
+void SpillFile::update_written_bytes(int64_t delta_bytes) {
+    _total_written_bytes += delta_bytes;
+}
+
+void SpillFile::increment_part_count() {
+    ++_part_count;
 }
 
 } // namespace doris::vectorized

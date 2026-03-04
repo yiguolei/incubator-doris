@@ -46,10 +46,7 @@ SpillFileWriter::SpillFileWriter(const std::shared_ptr<SpillFile>& spill_file, R
     _memory_used_counter = common_profile->get_counter("MemoryUsage");
 
     // Register this writer as the active writer for the SpillFile.
-    auto spill_file_locked = _spill_file_wptr.lock();
-    if (spill_file_locked) {
-        spill_file_locked->_active_writer = this;
-    }
+    spill_file->_active_writer = this;
 
     // Custom (spill-specific) counters
     RuntimeProfile* custom_profile = profile->get_child("CustomCounters");
@@ -85,7 +82,7 @@ Status SpillFileWriter::_open_next_part() {
     return Status::OK();
 }
 
-Status SpillFileWriter::_close_current_part() {
+Status SpillFileWriter::_close_current_part(const std::shared_ptr<SpillFile>& spill_file) {
     if (!_file_writer) {
         return Status::OK();
     }
@@ -111,6 +108,11 @@ Status SpillFileWriter::_close_current_part() {
     }
     _data_dir->update_spill_data_usage(meta_size);
     ExecEnv::GetInstance()->spill_file_mgr()->update_spill_write_bytes(meta_size);
+    // Incrementally update SpillFile's accounting so gc() can always
+    // decrement the correct amount, even if close() is never called.
+    if (spill_file) {
+        spill_file->update_written_bytes(meta_size);
+    }
 
     RETURN_IF_ERROR(_file_writer->close());
     _file_writer.reset();
@@ -118,6 +120,9 @@ Status SpillFileWriter::_close_current_part() {
     // Advance to next part
     ++_current_part_index;
     ++_total_parts;
+    if (spill_file) {
+        spill_file->increment_part_count();
+    }
     _part_written_blocks = 0;
     _part_written_bytes = 0;
     _part_max_sub_block_size = 0;
@@ -126,15 +131,26 @@ Status SpillFileWriter::_close_current_part() {
     return Status::OK();
 }
 
-Status SpillFileWriter::_rotate_if_needed() {
+Status SpillFileWriter::_rotate_if_needed(const std::shared_ptr<SpillFile>& spill_file) {
     if (_file_writer && _part_written_bytes >= _max_part_size) {
-        RETURN_IF_ERROR(_close_current_part());
+        RETURN_IF_ERROR(_close_current_part(spill_file));
     }
     return Status::OK();
 }
 
 Status SpillFileWriter::write_block(RuntimeState* state, const Block& block) {
     DCHECK(!_closed);
+
+    // Lock the SpillFile to ensure it is still alive. If it has already been
+    // destroyed (gc'd), we must not write any more data because the disk
+    // accounting would be out of sync.
+    auto spill_file = _spill_file_wptr.lock();
+    if (!spill_file) {
+        return Status::Error<INTERNAL_ERROR>(
+                "SpillFile has been destroyed, cannot write more data, spill_dir={}",
+                _spill_dir);
+    }
+
     // Lazily open the first part
     if (!_file_writer) {
         RETURN_IF_ERROR(_open_next_part());
@@ -148,10 +164,10 @@ Status SpillFileWriter::write_block(RuntimeState* state, const Block& block) {
     COUNTER_UPDATE(_write_rows_counter, rows);
     COUNTER_UPDATE(_write_block_bytes_counter, block.bytes());
 
-    RETURN_IF_ERROR(_write_internal(block));
+    RETURN_IF_ERROR(_write_internal(block, spill_file));
 
     // Auto-rotate if current part is full
-    return _rotate_if_needed();
+    return _rotate_if_needed(spill_file);
 }
 
 Status SpillFileWriter::close() {
@@ -164,25 +180,23 @@ Status SpillFileWriter::close() {
         return Status::Error<INTERNAL_ERROR>("fault_inject spill_file spill_eof failed");
     });
 
-    RETURN_IF_ERROR(_close_current_part());
-
-    // Use weak_ptr lock to safely access SpillFile during close.
-    // If the SpillFile has already been destroyed, we skip the callback.
     auto spill_file = _spill_file_wptr.lock();
+    RETURN_IF_ERROR(_close_current_part(spill_file));
+
     if (spill_file) {
         if (spill_file->_active_writer != this) {
             return Status::Error<INTERNAL_ERROR>(
                     "SpillFileWriter close() called but not registered as active writer, possible "
                     "double close or logic error");
         }
-        spill_file->finish_writing(_total_written_bytes, _total_parts);
-        spill_file->_active_writer = nullptr;
+        spill_file->finish_writing();
     }
 
     return Status::OK();
 }
 
-Status SpillFileWriter::_write_internal(const Block& block) {
+Status SpillFileWriter::_write_internal(const Block& block,
+                                        const std::shared_ptr<SpillFile>& spill_file) {
     size_t uncompressed_bytes = 0, compressed_bytes = 0;
 
     Status status;
@@ -241,6 +255,9 @@ Status SpillFileWriter::_write_internal(const Block& block) {
                     _part_written_bytes += buff_size;
                     _total_written_bytes += buff_size;
                     ++_part_written_blocks;
+                    // Incrementally update SpillFile so gc() can always
+                    // decrement the correct amount from _data_dir.
+                    spill_file->update_written_bytes(buff_size);
                 }
             }};
             {

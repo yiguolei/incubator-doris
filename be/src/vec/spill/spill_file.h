@@ -90,8 +90,16 @@ private:
     friend class SpillFileWriter;
     friend class SpillFileManager;
 
-    /// Called by SpillFileWriter::close() to finalize metadata.
-    void finish_writing(int64_t total_written_bytes, size_t part_count);
+    /// Called by SpillFileWriter::close() to mark writing as complete.
+    void finish_writing();
+
+    /// Called by SpillFileWriter to incrementally track bytes written to disk.
+    /// This ensures SpillFile always knows the correct _total_written_bytes for
+    /// gc() accounting, even if the writer's close() is never properly called.
+    void update_written_bytes(int64_t delta_bytes);
+
+    /// Called by SpillFileWriter when a part file is completed.
+    void increment_part_count();
 
     SpillDataDir* _data_dir = nullptr;
     // Absolute path: data_dir->get_spill_data_path() + "/" + relative_path
