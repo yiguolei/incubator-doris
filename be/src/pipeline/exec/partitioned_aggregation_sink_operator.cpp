@@ -51,15 +51,15 @@ Status PartitionedAggSinkLocalState::init(doris::RuntimeState* state,
 
     auto& parent = Base::_parent->template cast<Parent>();
     _spill_writers.resize(parent._partition_count);
-    RETURN_IF_ERROR(setup_in_memory_agg_op(state));
+    RETURN_IF_ERROR(_setup_in_memory_agg_op(state));
 
     for (const auto& probe_expr_ctx : Base::_shared_state->_in_mem_shared_state->probe_expr_ctxs) {
-        key_columns_.emplace_back(probe_expr_ctx->root()->data_type()->create_column());
+        _key_columns.emplace_back(probe_expr_ctx->root()->data_type()->create_column());
     }
     for (const auto& aggregate_evaluator :
          Base::_shared_state->_in_mem_shared_state->aggregate_evaluators) {
-        value_data_types_.emplace_back(aggregate_evaluator->function()->get_serialized_type());
-        value_columns_.emplace_back(aggregate_evaluator->function()->create_serialize_column());
+        _value_data_types.emplace_back(aggregate_evaluator->function()->get_serialized_type());
+        _value_columns.emplace_back(aggregate_evaluator->function()->create_serialize_column());
     }
     _rows_in_partitions.assign(parent._partition_count, 0);
     return Status::OK();
@@ -102,7 +102,7 @@ void PartitionedAggSinkLocalState::_init_counters() {
     update_profile_from_inner_profile<spilled>(name, custom_profile(), child_profile)
 
 template <bool spilled>
-void PartitionedAggSinkLocalState::update_profile(RuntimeProfile* child_profile) {
+void PartitionedAggSinkLocalState::_update_profile(RuntimeProfile* child_profile) {
     UPDATE_PROFILE("MemoryUsageHashTable");
     UPDATE_PROFILE("MemoryUsageSerializeKeyArena");
     UPDATE_PROFILE("BuildTime");
@@ -159,7 +159,7 @@ Status PartitionedAggSinkOperatorX::sink(doris::RuntimeState* state, vectorized:
         }
     } else {
         auto* sink_local_state = local_state._runtime_state->get_sink_local_state();
-        local_state.update_profile<false>(sink_local_state->custom_profile());
+        local_state._update_profile<false>(sink_local_state->custom_profile());
     }
 
     // finally perform EOS bookkeeping
@@ -190,7 +190,7 @@ Status PartitionedAggSinkOperatorX::sink(doris::RuntimeState* state, vectorized:
 
 Status PartitionedAggSinkOperatorX::revoke_memory(RuntimeState* state) {
     auto& local_state = get_local_state(state);
-    return local_state.revoke_memory(state);
+    return local_state._revoke_memory(state);
 }
 
 size_t PartitionedAggSinkOperatorX::revocable_mem_size(RuntimeState* state) const {
@@ -204,7 +204,7 @@ size_t PartitionedAggSinkOperatorX::revocable_mem_size(RuntimeState* state) cons
     return size > state->spill_min_revocable_mem() ? size : 0;
 }
 
-Status PartitionedAggSinkLocalState::setup_in_memory_agg_op(RuntimeState* state) {
+Status PartitionedAggSinkLocalState::_setup_in_memory_agg_op(RuntimeState* state) {
     _runtime_state = RuntimeState::create_unique(
             state->fragment_instance_id(), state->query_id(), state->fragment_id(),
             state->query_options(), TQueryGlobals {}, state->exec_env(), state->get_query_ctx());
@@ -244,18 +244,19 @@ size_t PartitionedAggSinkOperatorX::get_reserve_mem_size(RuntimeState* state, bo
 }
 
 template <typename HashTableCtxType, typename KeyType>
-Status PartitionedAggSinkLocalState::to_block(HashTableCtxType& context, std::vector<KeyType>& keys,
-                                              std::vector<vectorized::AggregateDataPtr>& values,
-                                              const vectorized::AggregateDataPtr null_key_data) {
+Status PartitionedAggSinkLocalState::_to_block(HashTableCtxType& context,
+                                               std::vector<KeyType>& keys,
+                                               std::vector<vectorized::AggregateDataPtr>& values,
+                                               const vectorized::AggregateDataPtr null_key_data) {
     SCOPED_TIMER(_spill_serialize_hash_table_timer);
-    context.insert_keys_into_columns(keys, key_columns_, (uint32_t)keys.size());
+    context.insert_keys_into_columns(keys, _key_columns, (uint32_t)keys.size());
 
     if (null_key_data) {
         // only one key of group by support wrap null key
         // here need additional processing logic on the null key / value
-        CHECK(key_columns_.size() == 1);
-        CHECK(key_columns_[0]->is_nullable());
-        key_columns_[0]->insert_data(nullptr, 0);
+        CHECK(_key_columns.size() == 1);
+        CHECK(_key_columns[0]->is_nullable());
+        _key_columns[0]->insert_data(nullptr, 0);
 
         values.emplace_back(null_key_data);
     }
@@ -267,33 +268,33 @@ Status PartitionedAggSinkLocalState::to_block(HashTableCtxType& context, std::ve
                 ->serialize_to_column(
                         values,
                         Base::_shared_state->_in_mem_shared_state->offsets_of_aggregate_states[i],
-                        value_columns_[i], values.size());
+                        _value_columns[i], values.size());
     }
 
     vectorized::ColumnsWithTypeAndName key_columns_with_schema;
-    for (int i = 0; i < key_columns_.size(); ++i) {
+    for (int i = 0; i < _key_columns.size(); ++i) {
         key_columns_with_schema.emplace_back(
-                std::move(key_columns_[i]),
+                std::move(_key_columns[i]),
                 Base::_shared_state->_in_mem_shared_state->probe_expr_ctxs[i]->root()->data_type(),
                 Base::_shared_state->_in_mem_shared_state->probe_expr_ctxs[i]->root()->expr_name());
     }
-    key_block_ = key_columns_with_schema;
+    _key_block = key_columns_with_schema;
 
     vectorized::ColumnsWithTypeAndName value_columns_with_schema;
-    for (int i = 0; i < value_columns_.size(); ++i) {
+    for (int i = 0; i < _value_columns.size(); ++i) {
         value_columns_with_schema.emplace_back(
-                std::move(value_columns_[i]), value_data_types_[i],
+                std::move(_value_columns[i]), _value_data_types[i],
                 Base::_shared_state->_in_mem_shared_state->aggregate_evaluators[i]
                         ->function()
                         ->get_name());
     }
-    value_block_ = value_columns_with_schema;
+    _value_block = value_columns_with_schema;
 
-    for (const auto& column : key_block_.get_columns_with_type_and_name()) {
-        block_.insert(column);
+    for (const auto& column : _key_block.get_columns_with_type_and_name()) {
+        _block.insert(column);
     }
-    for (const auto& column : value_block_.get_columns_with_type_and_name()) {
-        block_.insert(column);
+    for (const auto& column : _value_block.get_columns_with_type_and_name()) {
+        _block.insert(column);
     }
     return Status::OK();
 }
@@ -303,7 +304,7 @@ Status PartitionedAggSinkLocalState::_spill_partition(
         RuntimeState* state, HashTableCtxType& context, size_t partition_idx,
         std::vector<KeyType>& keys, std::vector<vectorized::AggregateDataPtr>& values,
         const vectorized::AggregateDataPtr null_key_data, bool is_last) {
-    auto status = to_block(context, keys, values, null_key_data);
+    auto status = _to_block(context, keys, values, null_key_data);
     RETURN_IF_ERROR(status);
 
     if (is_last) {
@@ -335,7 +336,7 @@ Status PartitionedAggSinkLocalState::_spill_partition(
         RETURN_IF_ERROR(spill_file->create_writer(state, Base::operator_profile(), writer));
     }
 
-    RETURN_IF_ERROR(writer->write_block(state, block_));
+    RETURN_IF_ERROR(writer->write_block(state, _block));
     _reset_tmp_data();
     return Status::OK();
 }
@@ -411,7 +412,7 @@ Status PartitionedAggSinkLocalState::_spill_hash_table(RuntimeState* state,
     return Status::OK();
 }
 
-Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
+Status PartitionedAggSinkLocalState::_revoke_memory(RuntimeState* state) {
     if (_eos) {
         return Status::OK();
     }
@@ -425,9 +426,9 @@ Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
     if (!_shared_state->_is_spilled) {
         _shared_state->_is_spilled = true;
         custom_profile()->add_info_string("Spilled", "true");
-        update_profile<false>(sink_local_state->custom_profile());
+        _update_profile<false>(sink_local_state->custom_profile());
     } else {
-        update_profile<false>(sink_local_state->custom_profile());
+        _update_profile<false>(sink_local_state->custom_profile());
     }
 
     DBUG_EXECUTE_IF("fault_inject::partitioned_agg_sink::revoke_memory_submit_func", {
@@ -493,39 +494,39 @@ Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
 }
 
 void PartitionedAggSinkLocalState::_reset_tmp_data() {
-    block_.clear();
-    key_columns_.clear();
-    value_columns_.clear();
-    key_block_.clear_column_data();
-    value_block_.clear_column_data();
-    key_columns_ = key_block_.mutate_columns();
-    value_columns_ = value_block_.mutate_columns();
+    _block.clear();
+    _key_columns.clear();
+    _value_columns.clear();
+    _key_block.clear_column_data();
+    _value_block.clear_column_data();
+    _key_columns = _key_block.mutate_columns();
+    _value_columns = _value_block.mutate_columns();
 }
 
 void PartitionedAggSinkLocalState::_clear_tmp_data() {
     {
         vectorized::Block empty_block;
-        block_.swap(empty_block);
+        _block.swap(empty_block);
     }
     {
         vectorized::Block empty_block;
-        key_block_.swap(empty_block);
+        _key_block.swap(empty_block);
     }
     {
         vectorized::Block empty_block;
-        value_block_.swap(empty_block);
+        _value_block.swap(empty_block);
     }
     {
         vectorized::MutableColumns cols;
-        key_columns_.swap(cols);
+        _key_columns.swap(cols);
     }
     {
         vectorized::MutableColumns cols;
-        value_columns_.swap(cols);
+        _value_columns.swap(cols);
     }
 
     vectorized::DataTypes tmp_value_data_types;
-    value_data_types_.swap(tmp_value_data_types);
+    _value_data_types.swap(tmp_value_data_types);
 }
 
 bool PartitionedAggSinkLocalState::is_blockable() const {

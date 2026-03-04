@@ -42,20 +42,21 @@ public:
     PartitionedAggSinkLocalState(DataSinkOperatorXBase* parent, RuntimeState* state);
     ~PartitionedAggSinkLocalState() override = default;
 
-    friend class PartitionedAggSinkOperatorX;
-
     Status init(RuntimeState* state, LocalSinkStateInfo& info) override;
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state, Status exec_status) override;
 
-    Status revoke_memory(RuntimeState* state);
+    bool is_blockable() const override;
 
-    Status setup_in_memory_agg_op(RuntimeState* state);
+private:
+    friend class PartitionedAggSinkOperatorX;
+
+    Status _revoke_memory(RuntimeState* state);
+
+    Status _setup_in_memory_agg_op(RuntimeState* state);
 
     template <bool spilled>
-    void update_profile(RuntimeProfile* child_profile);
-
-    bool is_blockable() const override;
+    void _update_profile(RuntimeProfile* child_profile);
 
     template <typename KeyType>
     struct TmpSpillInfo {
@@ -74,9 +75,9 @@ public:
                             const vectorized::AggregateDataPtr null_key_data, bool is_last);
 
     template <typename HashTableCtxType, typename KeyType>
-    Status to_block(HashTableCtxType& context, std::vector<KeyType>& keys,
-                    std::vector<vectorized::AggregateDataPtr>& values,
-                    const vectorized::AggregateDataPtr null_key_data);
+    Status _to_block(HashTableCtxType& context, std::vector<KeyType>& keys,
+                     std::vector<vectorized::AggregateDataPtr>& values,
+                     const vectorized::AggregateDataPtr null_key_data);
 
     void _reset_tmp_data();
     void _clear_tmp_data();
@@ -85,12 +86,12 @@ public:
     std::unique_ptr<RuntimeState> _runtime_state;
 
     // temp structures during spilling
-    vectorized::MutableColumns key_columns_;
-    vectorized::MutableColumns value_columns_;
-    vectorized::DataTypes value_data_types_;
-    vectorized::Block block_;
-    vectorized::Block key_block_;
-    vectorized::Block value_block_;
+    vectorized::MutableColumns _key_columns;
+    vectorized::MutableColumns _value_columns;
+    vectorized::DataTypes _value_data_types;
+    vectorized::Block _block;
+    vectorized::Block _key_block;
+    vectorized::Block _value_block;
 
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;
     RuntimeProfile::Counter* _memory_usage_reserved = nullptr;

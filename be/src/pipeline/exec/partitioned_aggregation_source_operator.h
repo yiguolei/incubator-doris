@@ -62,25 +62,25 @@ public:
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state) override;
 
-    Status setup_in_memory_agg_op(RuntimeState* state);
+    bool is_blockable() const override;
+
+private:
+    friend class PartitionedAggSourceOperatorX;
+
+    Status _setup_in_memory_agg_op(RuntimeState* state);
 
     template <bool spilled>
-    void update_profile(RuntimeProfile* child_profile);
-
-    bool is_blockable() const override;
+    void _update_profile(RuntimeProfile* child_profile);
 
     /// Flush the current in-memory hash table by draining it as blocks and routing
     /// each block through the repartitioner into the output sub-spill-files.
-    Status flush_hash_table_to_sub_spill_files(RuntimeState* state);
+    Status _flush_hash_table_to_sub_spill_files(RuntimeState* state);
 
     /// Flush the in-memory hash table into FANOUT sub-spill-files, repartition remaining
     /// unread spill files from `remaining_spill_files`, and push resulting sub-partitions into
     /// `_partition_queue`. After this call the hash table is reset and
     /// `remaining_spill_files` is cleared.
-    Status flush_and_repartition(RuntimeState* state);
-
-private:
-    friend class PartitionedAggSourceOperatorX;
+    Status _flush_and_repartition(RuntimeState* state);
 
     /// Move all original spill_partitions from shared state into `_partition_queue`.
     /// Called once when spilled get_block is first entered.
@@ -106,7 +106,7 @@ private:
     std::vector<vectorized::Block> _blocks;
 
     // Estimated in-memory hash table size for the current partition.
-    //size_t _estimate_memory_usage = 0;
+    size_t _estimate_memory_usage = 0;
 
     // Counters to track spill partition metrics
     RuntimeProfile::Counter* _max_partition_level = nullptr;

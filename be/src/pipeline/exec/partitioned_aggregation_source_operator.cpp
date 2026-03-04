@@ -67,7 +67,7 @@ Status PartitionedAggLocalState::open(RuntimeState* state) {
         return Status::OK();
     }
     _opened = true;
-    RETURN_IF_ERROR(setup_in_memory_agg_op(state));
+    RETURN_IF_ERROR(_setup_in_memory_agg_op(state));
 
     return Status::OK();
 }
@@ -76,7 +76,7 @@ Status PartitionedAggLocalState::open(RuntimeState* state) {
     update_profile_from_inner_profile<spilled>(name, custom_profile(), child_profile)
 
 template <bool spilled>
-void PartitionedAggLocalState::update_profile(RuntimeProfile* child_profile) {
+void PartitionedAggLocalState::_update_profile(RuntimeProfile* child_profile) {
     UPDATE_COUNTER_FROM_INNER("GetResultsTime");
     UPDATE_COUNTER_FROM_INNER("HashTableIterateTime");
     UPDATE_COUNTER_FROM_INNER("InsertKeysToColumnTime");
@@ -219,7 +219,7 @@ Status PartitionedAggSourceOperatorX::revoke_memory(RuntimeState* state) {
                               PrettyPrinter::print_bytes(local_state._estimate_memory_usage));
 
     // Flush hash table + repartition remaining spill files of the current partition.
-    RETURN_IF_ERROR(local_state.flush_and_repartition(state));
+    RETURN_IF_ERROR(local_state._flush_and_repartition(state));
     local_state._current_partition = AggSpillPartitionInfo {};
     local_state._need_to_setup_partition = true;
     return Status::OK();
@@ -241,7 +241,7 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
         if (*eos) {
             auto* source_local_state =
                     runtime_state->get_local_state(_agg_source_operator->operator_id());
-            local_state.update_profile<false>(source_local_state->custom_profile());
+            local_state._update_profile<false>(source_local_state->custom_profile());
         }
         local_state.reached_limit(block, eos);
         return Status::OK();
@@ -314,7 +314,7 @@ Status PartitionedAggSourceOperatorX::get_block(RuntimeState* state, vectorized:
     if (inner_eos) {
         auto* source_local_state =
                 runtime_state->get_local_state(_agg_source_operator->operator_id());
-        local_state.update_profile<true>(source_local_state->custom_profile());
+        local_state._update_profile<true>(source_local_state->custom_profile());
 
         // Current partition fully output. Reset hash table, pop next partition.
         RETURN_IF_ERROR(_agg_source_operator->reset_hash_table(runtime_state));
@@ -387,7 +387,7 @@ Status PartitionedAggLocalState::_recover_blocks_from_partition(RuntimeState* st
     return Status::OK();
 }
 
-Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
+Status PartitionedAggLocalState::_setup_in_memory_agg_op(RuntimeState* state) {
     _runtime_state = RuntimeState::create_unique(
             state->fragment_instance_id(), state->query_id(), state->fragment_id(),
             state->query_options(), TQueryGlobals {}, state->exec_env(), state->get_query_ctx());
@@ -416,7 +416,7 @@ Status PartitionedAggLocalState::setup_in_memory_agg_op(RuntimeState* state) {
     return source_local_state->open(state);
 }
 
-Status PartitionedAggLocalState::flush_hash_table_to_sub_spill_files(RuntimeState* state) {
+Status PartitionedAggLocalState::_flush_hash_table_to_sub_spill_files(RuntimeState* state) {
     auto* runtime_state = _runtime_state.get();
     auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
     auto* in_mem_state = _shared_state->_in_mem_shared_state;
@@ -439,7 +439,7 @@ Status PartitionedAggLocalState::flush_hash_table_to_sub_spill_files(RuntimeStat
     return Status::OK();
 }
 
-Status PartitionedAggLocalState::flush_and_repartition(RuntimeState* state) {
+Status PartitionedAggLocalState::_flush_and_repartition(RuntimeState* state) {
     auto& p = _parent->cast<PartitionedAggSourceOperatorX>();
     const int new_level = _current_partition.level + 1;
 
@@ -459,7 +459,7 @@ Status PartitionedAggLocalState::flush_and_repartition(RuntimeState* state) {
     {
         auto* source_local_state =
                 _runtime_state->get_local_state(p._agg_source_operator->operator_id());
-        update_profile<true>(source_local_state->custom_profile());
+        _update_profile<true>(source_local_state->custom_profile());
     }
 
     // 1. Create FANOUT output sub-spill-files.
@@ -485,7 +485,7 @@ Status PartitionedAggLocalState::flush_and_repartition(RuntimeState* state) {
     RETURN_IF_ERROR(_repartitioner.setup_output(state, output_spill_files));
 
     // 2. Flush the in-memory hash table into the sub-spill-files.
-    RETURN_IF_ERROR(flush_hash_table_to_sub_spill_files(state));
+    RETURN_IF_ERROR(_flush_hash_table_to_sub_spill_files(state));
 
     // 3. Route any in-memory blocks that were recovered but not yet merged
     //    into the hash table. These blocks were already read from the file
