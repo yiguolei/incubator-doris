@@ -64,6 +64,17 @@ Status SpillSortLocalState::close(RuntimeState* state) {
     if (_closed) {
         return Status::OK();
     }
+
+    for (auto& reader : _current_merging_readers) {
+        if (reader) {
+            RETURN_IF_ERROR(reader->close());
+            reader.reset();
+        }
+    }
+    _current_merging_readers.clear();
+    _current_merging_files.clear();
+    _merger.reset();
+
     return Base::close(state);
 }
 
@@ -100,7 +111,7 @@ Status SpillSortLocalState::execute_merge_sort_spill_files(RuntimeState* state) 
                                          ExecEnv::GetInstance()->spill_file_mgr()->next_id());
         RETURN_IF_ERROR(ExecEnv::GetInstance()->spill_file_mgr()->create_spill_file(relative_path,
                                                                                     tmp_file));
-        vectorized::SpillFileWriterUPtr tmp_writer;
+        vectorized::SpillFileWriterSPtr tmp_writer;
         RETURN_IF_ERROR(tmp_file->create_writer(state, operator_profile(), tmp_writer));
         _shared_state->sorted_spill_groups.emplace_back(tmp_file);
 

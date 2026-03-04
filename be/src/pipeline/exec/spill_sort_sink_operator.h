@@ -62,7 +62,7 @@ private:
     RuntimeProfile::Counter* _spill_merge_sort_timer = nullptr;
 
     vectorized::SpillFileSPtr _spilling_file;
-    vectorized::SpillFileWriterUPtr _spilling_writer;
+    vectorized::SpillFileWriterSPtr _spilling_writer;
 
     std::atomic<bool> _eos = false;
 };

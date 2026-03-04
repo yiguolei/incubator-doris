@@ -158,14 +158,14 @@ private:
     std::map<uint32_t, std::vector<vectorized::Block>> _probe_blocks;
 
     std::vector<vectorized::SpillFileSPtr> _probe_spilling_groups;
-    std::vector<vectorized::SpillFileWriterUPtr> _probe_writers;
+    std::vector<vectorized::SpillFileWriterSPtr> _probe_writers;
 
     std::unique_ptr<vectorized::PartitionerBase> _partitioner;
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;
 
     // Persistent readers for recovery across scheduling slices
-    vectorized::SpillFileReaderUPtr _current_build_reader;
-    vectorized::SpillFileReaderUPtr _current_probe_reader;
+    vectorized::SpillFileReaderSPtr _current_build_reader;
+    vectorized::SpillFileReaderSPtr _current_probe_reader;
 
     // ---- Spill partition queue state ----
     // Whether _spill_partition_queue has been initialized from spilled build groups +

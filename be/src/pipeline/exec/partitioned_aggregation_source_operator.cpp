@@ -101,6 +101,11 @@ Status PartitionedAggLocalState::close(RuntimeState* state) {
         return Status::OK();
     }
 
+    if (_current_reader) {
+        RETURN_IF_ERROR(_current_reader->close());
+        _current_reader.reset();
+    }
+
     // Clean up partition queue resources.
     for (auto& partition : _partition_queue) {
         if (partition.spill_file) {

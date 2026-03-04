@@ -66,6 +66,11 @@ void SpillSortSinkLocalState::update_profile(RuntimeProfile* child_profile) {
 #undef UPDATE_PROFILE
 
 Status SpillSortSinkLocalState::close(RuntimeState* state, Status execsink_status) {
+    if (_spilling_writer) {
+        RETURN_IF_ERROR(_spilling_writer->close());
+        _spilling_writer.reset();
+    }
+    _spilling_file.reset();
     return Base::close(state, execsink_status);
 }
 

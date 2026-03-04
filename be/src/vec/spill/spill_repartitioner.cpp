@@ -134,7 +134,7 @@ Status SpillRepartitioner::repartition(RuntimeState* state,
     return Status::OK();
 }
 
-Status SpillRepartitioner::repartition(RuntimeState* state, vectorized::SpillFileReaderUPtr& reader,
+Status SpillRepartitioner::repartition(RuntimeState* state, vectorized::SpillFileReaderSPtr& reader,
                                        bool* done) {
     DCHECK(_output_spill_files != nullptr) << "setup_output() must be called first";
     DCHECK(reader != nullptr) << "reader must not be null";

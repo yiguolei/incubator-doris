@@ -107,7 +107,7 @@ private:
     std::shared_ptr<ResourceContext> _resource_ctx = nullptr;
 };
 
-using SpillFileReaderUPtr = std::unique_ptr<SpillFileReader>;
+using SpillFileReaderSPtr = std::shared_ptr<SpillFileReader>;
 
 } // namespace doris::vectorized
 #include "common/compile_check_end.h"

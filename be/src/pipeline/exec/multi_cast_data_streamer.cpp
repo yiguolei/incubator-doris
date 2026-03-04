@@ -252,7 +252,7 @@ Status MultiCastDataStreamer::_start_spill_task(RuntimeState* state,
     auto spill_func = [state, blocks = std::move(blocks), spill_file = std::move(spill_file),
                        sink_profile]() mutable {
         const auto blocks_count = blocks.size();
-        vectorized::SpillFileWriterUPtr writer;
+        vectorized::SpillFileWriterSPtr writer;
         RETURN_IF_ERROR(spill_file->create_writer(state, sink_profile, writer));
         for (auto& block : blocks) {
             if (state->is_cancelled()) break;

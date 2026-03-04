@@ -84,6 +84,15 @@ Status PartitionedHashJoinSinkLocalState::close(RuntimeState* state, Status exec
         RETURN_IF_ERROR(p._inner_sink_operator->close(_shared_state->_inner_runtime_state.get(),
                                                       exec_status));
     }
+
+    for (auto& writer : _build_writers) {
+        if (writer) {
+            RETURN_IF_ERROR(writer->close());
+            writer.reset();
+        }
+    }
+    _build_writers.clear();
+
     return PipelineXSpillSinkLocalState::close(state, exec_status);
 }
 

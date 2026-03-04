@@ -107,7 +107,7 @@ public:
     /// and wants to repartition only the remaining data without re-reading
     /// from the beginning. Ownership of the reader is transferred on completion.
     /// Call repeatedly until done == true.
-    Status repartition(RuntimeState* state, vectorized::SpillFileReaderUPtr& reader, bool* done);
+    Status repartition(RuntimeState* state, vectorized::SpillFileReaderSPtr& reader, bool* done);
 
     /// Route a single in-memory block into output files via persistent writers.
     Status route_block(RuntimeState* state, vectorized::Block& block);
@@ -158,11 +158,11 @@ private:
 
     // ── Persistent state across repartition/route_block calls ──────
     // Output writers (one per partition), created by setup_output()
-    std::vector<vectorized::SpillFileWriterUPtr> _output_writers;
+    std::vector<vectorized::SpillFileWriterSPtr> _output_writers;
     // Pointer to caller's output SpillFiles vector (for finalize)
     std::vector<vectorized::SpillFileSPtr>* _output_spill_files = nullptr;
     // Input reader for repartition(), persists across yield calls
-    vectorized::SpillFileReaderUPtr _input_reader;
+    vectorized::SpillFileReaderSPtr _input_reader;
     vectorized::SpillFileSPtr _current_input_file;
 };
 

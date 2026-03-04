@@ -38,7 +38,7 @@ class SpillFile;
 /// (config::spill_file_part_size_bytes).
 ///
 /// Usage:
-///   SpillFileWriterUPtr writer;
+///   SpillFileWriterSPtr writer;
 ///   RETURN_IF_ERROR(spill_file->create_writer(state, profile, writer));
 ///   RETURN_IF_ERROR(writer->write_block(state, block));
 ///   RETURN_IF_ERROR(writer->close());
@@ -48,8 +48,8 @@ class SpillFile;
 /// directory.
 class SpillFileWriter {
 public:
-    SpillFileWriter(SpillFile* spill_file, RuntimeState* state, RuntimeProfile* profile,
-                    SpillDataDir* data_dir, const std::string& spill_dir);
+    SpillFileWriter(const std::shared_ptr<SpillFile>& spill_file, RuntimeState* state,
+                    RuntimeProfile* profile, SpillDataDir* data_dir, const std::string& spill_dir);
 
     ~SpillFileWriter();
 
@@ -75,7 +75,7 @@ private:
     Status _write_internal(const Block& block);
 
     // ── Back-reference ──
-    SpillFile* _spill_file; // non-owning; for close() callback
+    std::weak_ptr<SpillFile> _spill_file_wptr; // weak ref; use lock() in close()
 
     // ── Configuration ──
     SpillDataDir* _data_dir = nullptr;
@@ -109,7 +109,7 @@ private:
 
     std::shared_ptr<ResourceContext> _resource_ctx = nullptr;
 };
-using SpillFileWriterUPtr = std::unique_ptr<SpillFileWriter>;
+using SpillFileWriterSPtr = std::shared_ptr<SpillFileWriter>;
 } // namespace vectorized
 } // namespace doris
 

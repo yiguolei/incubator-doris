@@ -65,17 +65,18 @@ void SpillFile::gc() {
 }
 
 Status SpillFile::create_writer(RuntimeState* state, RuntimeProfile* profile,
-                                SpillFileWriterUPtr& writer) {
-    writer = std::make_unique<SpillFileWriter>(this, state, profile, _data_dir, _spill_dir);
+                                SpillFileWriterSPtr& writer) {
+    writer = std::make_shared<SpillFileWriter>(shared_from_this(), state, profile, _data_dir,
+                                               _spill_dir);
     // record active writer
     _active_writer = writer.get();
     return Status::OK();
 }
 
-SpillFileReaderUPtr SpillFile::create_reader(RuntimeState* state, RuntimeProfile* profile) const {
+SpillFileReaderSPtr SpillFile::create_reader(RuntimeState* state, RuntimeProfile* profile) const {
     // It's a programming error to create a reader while a writer is still active.
     DCHECK(_active_writer == nullptr) << "create_reader() called while writer still active";
-    return std::make_unique<SpillFileReader>(state, profile, _spill_dir, _part_count);
+    return std::make_shared<SpillFileReader>(state, profile, _spill_dir, _part_count);
 }
 
 void SpillFile::finish_writing(int64_t total_written_bytes, size_t part_count) {

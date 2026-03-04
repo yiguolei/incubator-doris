@@ -94,7 +94,7 @@ protected:
     RuntimeProfile::Counter* _in_mem_rows_counter = nullptr;
     RuntimeProfile::Counter* _memory_usage_reserved = nullptr;
 
-    std::vector<vectorized::SpillFileWriterUPtr> _build_writers;
+    std::vector<vectorized::SpillFileWriterSPtr> _build_writers;
 };
 
 class PartitionedHashJoinSinkOperatorX

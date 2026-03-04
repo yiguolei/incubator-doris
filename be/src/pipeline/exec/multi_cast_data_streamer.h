@@ -45,7 +45,7 @@ struct MultiCastBlock {
 };
 
 struct SpillingReader {
-    vectorized::SpillFileReaderUPtr reader;
+    vectorized::SpillFileReaderSPtr reader;
     vectorized::SpillFileSPtr spill_file;
     int64_t block_offset {0};
     bool all_data_read {false};

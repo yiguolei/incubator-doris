@@ -97,7 +97,7 @@ public:
 
     RuntimeProfile::Counter* _spill_serialize_hash_table_timer = nullptr;
 
-    std::vector<vectorized::SpillFileWriterUPtr> _spill_writers;
+    std::vector<vectorized::SpillFileWriterSPtr> _spill_writers;
 
     std::atomic<bool> _eos = false;
 };

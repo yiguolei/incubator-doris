@@ -116,7 +116,7 @@ private:
     SpillRepartitioner _repartitioner;
 
     // Persistent reader for _recover_blocks_from_partition (survives across yield calls)
-    vectorized::SpillFileReaderUPtr _current_reader;
+    vectorized::SpillFileReaderSPtr _current_reader;
 };
 
 class AggSourceOperatorX;

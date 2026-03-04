@@ -32,8 +32,8 @@ class Block;
 class SpillDataDir;
 class SpillFileWriter;
 class SpillFileReader;
-using SpillFileWriterUPtr = std::unique_ptr<SpillFileWriter>;
-using SpillFileReaderUPtr = std::unique_ptr<SpillFileReader>;
+using SpillFileWriterSPtr = std::shared_ptr<SpillFileWriter>;
+using SpillFileReaderSPtr = std::shared_ptr<SpillFileReader>;
 
 /// SpillFile represents a logical spill file that may consist of multiple
 /// physical "part" files on disk. Parts are managed automatically by
@@ -46,7 +46,7 @@ using SpillFileReaderUPtr = std::unique_ptr<SpillFileReader>;
 ///   +-- ...
 ///
 /// Writing workflow:
-///   SpillFileWriterUPtr writer;
+///   SpillFileWriterSPtr writer;
 ///   RETURN_IF_ERROR(spill_file->create_writer(state, profile, writer));
 ///   RETURN_IF_ERROR(writer->write_block(state, block)); // auto-rotates parts
 ///   RETURN_IF_ERROR(writer->close());                   // finalizes all parts
@@ -55,7 +55,7 @@ using SpillFileReaderUPtr = std::unique_ptr<SpillFileReader>;
 ///   auto reader = spill_file->create_reader(state, profile);
 ///   RETURN_IF_ERROR(reader->open());
 ///   while (!eos) { RETURN_IF_ERROR(reader->read(&block, &eos)); }
-class SpillFile {
+class SpillFile : public std::enable_shared_from_this<SpillFile> {
 public:
     // to avoid too many small file writes
     static constexpr size_t MIN_SPILL_WRITE_BATCH_MEM = 512 * 1024;
@@ -80,11 +80,11 @@ public:
     /// Create a SpillFileWriter that automatically manages multi-part rotation.
     /// Only one writer should exist per SpillFile at a time.
     /// Part size threshold is read from config::spill_file_part_size_bytes.
-    Status create_writer(RuntimeState* state, RuntimeProfile* profile, SpillFileWriterUPtr& writer);
+    Status create_writer(RuntimeState* state, RuntimeProfile* profile, SpillFileWriterSPtr& writer);
 
     /// Create a SpillFileReader that reads sequentially across all parts.
     /// The caller should call reader->open() before reading.
-    SpillFileReaderUPtr create_reader(RuntimeState* state, RuntimeProfile* profile) const;
+    SpillFileReaderSPtr create_reader(RuntimeState* state, RuntimeProfile* profile) const;
 
 private:
     friend class SpillFileWriter;

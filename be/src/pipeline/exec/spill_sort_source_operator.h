@@ -63,7 +63,7 @@ protected:
 
     std::vector<vectorized::SpillFileSPtr> _current_merging_files;
     /// Readers held alive during merge; one per SpillFile, reads parts sequentially.
-    std::vector<vectorized::SpillFileReaderUPtr> _current_merging_readers;
+    std::vector<vectorized::SpillFileReaderSPtr> _current_merging_readers;
     std::unique_ptr<vectorized::VSortedRunMerger> _merger;
 
     std::unique_ptr<RuntimeProfile> _internal_runtime_profile;

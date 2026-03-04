@@ -186,6 +186,24 @@ Status PartitionedHashJoinProbeLocalState::close(RuntimeState* state) {
     if (_closed) {
         return Status::OK();
     }
+
+    for (auto& writer : _probe_writers) {
+        if (writer) {
+            RETURN_IF_ERROR(writer->close());
+            writer.reset();
+        }
+    }
+    _probe_writers.clear();
+
+    if (_current_build_reader) {
+        RETURN_IF_ERROR(_current_build_reader->close());
+        _current_build_reader.reset();
+    }
+    if (_current_probe_reader) {
+        RETURN_IF_ERROR(_current_probe_reader->close());
+        _current_probe_reader.reset();
+    }
+
     // Clean up any remaining spill partition queue entries
     for (auto& entry : _spill_partition_queue) {
         if (entry.build_file) {
@@ -203,8 +221,6 @@ Status PartitionedHashJoinProbeLocalState::close(RuntimeState* state) {
         ExecEnv::GetInstance()->spill_file_mgr()->delete_spill_file(_current_partition.probe_file);
     }
     _current_partition = JoinSpillPartitionInfo {};
-    _current_build_reader.reset();
-    _current_probe_reader.reset();
     _queue_probe_blocks.clear();
 
     RETURN_IF_ERROR(PipelineXSpillLocalState::close(state));

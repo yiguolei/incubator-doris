@@ -32,10 +32,10 @@
 namespace doris::vectorized {
 #include "common/compile_check_begin.h"
 
-SpillFileWriter::SpillFileWriter(SpillFile* spill_file, RuntimeState* state,
+SpillFileWriter::SpillFileWriter(const std::shared_ptr<SpillFile>& spill_file, RuntimeState* state,
                                  RuntimeProfile* profile, SpillDataDir* data_dir,
                                  const std::string& spill_dir)
-        : _spill_file(spill_file),
+        : _spill_file_wptr(spill_file),
           _data_dir(data_dir),
           _spill_dir(spill_dir),
           _max_part_size(config::spill_file_part_size_bytes),
@@ -46,8 +46,9 @@ SpillFileWriter::SpillFileWriter(SpillFile* spill_file, RuntimeState* state,
     _memory_used_counter = common_profile->get_counter("MemoryUsage");
 
     // Register this writer as the active writer for the SpillFile.
-    if (_spill_file) {
-        _spill_file->_active_writer = this;
+    auto spill_file_locked = _spill_file_wptr.lock();
+    if (spill_file_locked) {
+        spill_file_locked->_active_writer = this;
     }
 
     // Custom (spill-specific) counters
@@ -63,7 +64,14 @@ SpillFileWriter::SpillFileWriter(SpillFile* spill_file, RuntimeState* state,
 }
 
 SpillFileWriter::~SpillFileWriter() {
-    DCHECK(_closed) << "SpillFileWriter destroyed without close(), possible memory leak";
+    if (_closed) {
+        return;
+    }
+    Status st = close();
+    if (!st.ok()) {
+        LOG(WARNING) << "SpillFileWriter::~SpillFileWriter() failed: " << st.to_string()
+                     << ", spill_dir=" << _spill_dir;
+    }
 }
 
 Status SpillFileWriter::_open_next_part() {
@@ -158,13 +166,18 @@ Status SpillFileWriter::close() {
 
     RETURN_IF_ERROR(_close_current_part());
 
-    if (!_spill_file || _spill_file->_active_writer != this) {
-        return Status::Error<INTERNAL_ERROR>(
-                "SpillFileWriter close() called but not registered as active writer, possible "
-                "double close or logic error");
+    // Use weak_ptr lock to safely access SpillFile during close.
+    // If the SpillFile has already been destroyed, we skip the callback.
+    auto spill_file = _spill_file_wptr.lock();
+    if (spill_file) {
+        if (spill_file->_active_writer != this) {
+            return Status::Error<INTERNAL_ERROR>(
+                    "SpillFileWriter close() called but not registered as active writer, possible "
+                    "double close or logic error");
+        }
+        spill_file->finish_writing(_total_written_bytes, _total_parts);
+        spill_file->_active_writer = nullptr;
     }
-    _spill_file->finish_writing(_total_written_bytes, _total_parts);
-    _spill_file->_active_writer = nullptr;
 
     return Status::OK();
 }

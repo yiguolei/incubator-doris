@@ -77,6 +77,15 @@ Status PartitionedAggSinkLocalState::close(RuntimeState* state, Status exec_stat
     if (Base::_closed) {
         return Status::OK();
     }
+
+    for (auto& writer : _spill_writers) {
+        if (writer) {
+            RETURN_IF_ERROR(writer->close());
+            writer.reset();
+        }
+    }
+    _spill_writers.clear();
+
     return Base::close(state, exec_status);
 }
 
