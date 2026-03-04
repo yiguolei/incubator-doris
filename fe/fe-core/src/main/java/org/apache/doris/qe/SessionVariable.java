@@ -3132,8 +3132,8 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = SPILL_AGGREGATION_SINK_MEM_LIMIT_BYTES, fuzzy = true, needForward = true,
             description = {"一旦触发 spill 后，aggregation sink 的 revocable memory 超过该阈值就主动落盘（字节）。默认 64MB。",
                 "After spill is triggered, aggregation sink will proactively spill when revocable memory "
-                    + "exceeds this threshold (in bytes). Default is 64MB."})
-    public long spillAggregationSinkMemLimitBytes = 64L * 1024L * 1024L;
+                    + "exceeds this threshold (in bytes). Default is 64GB."})
+    public long spillAggregationSinkMemLimitBytes = 64L * 1024L * 1024L * 1024L;
 
     @VariableMgr.VarAttr(name = SPILL_SORT_SINK_MEM_LIMIT_BYTES, fuzzy = true, needForward = true,
             description = {"一旦触发 spill 后，sort sink 的 revocable memory 超过该阈值就主动落盘（字节）。默认 64MB。",

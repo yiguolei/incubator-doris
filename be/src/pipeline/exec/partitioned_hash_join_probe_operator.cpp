@@ -822,26 +822,30 @@ size_t PartitionedHashJoinProbeOperatorX::revocable_mem_size(RuntimeState* state
     if (!local_state._shared_state->_is_spilled) {
         return 0;
     }
+
+    size_t mem_size = 0;
+    if (!local_state._child_eos) {
+        auto& probe_blocks = local_state._probe_blocks;
+        for (uint32_t i = 0; i < _partition_count; ++i) {
+            for (auto& block : probe_blocks[i]) {
+                mem_size += block.allocated_bytes();
+            }
+
+            auto& partitioned_block = local_state._partitioned_blocks[i];
+            if (partitioned_block) {
+                auto block_bytes = partitioned_block->allocated_bytes();
+                if (block_bytes >= state->spill_buffer_size_bytes()) {
+                    mem_size += block_bytes;
+                }
+            }
+        }
+        return mem_size > state->spill_min_revocable_mem() ? mem_size : 0;
+    }
     if (!local_state._current_partition.is_valid() ||
         local_state._current_partition.build_finished) {
         // No active partition — no revocable memory.
         // Or if current partition has finished build hash table.
         return 0;
-    }
-    size_t mem_size = 0;
-    auto& probe_blocks = local_state._probe_blocks;
-    for (uint32_t i = 0; i < _partition_count; ++i) {
-        for (auto& block : probe_blocks[i]) {
-            mem_size += block.allocated_bytes();
-        }
-
-        auto& partitioned_block = local_state._partitioned_blocks[i];
-        if (partitioned_block) {
-            auto block_bytes = partitioned_block->allocated_bytes();
-            if (block_bytes >= vectorized::SpillFile::MIN_SPILL_WRITE_BATCH_MEM) {
-                mem_size += block_bytes;
-            }
-        }
     }
 
     // Include build-side memory that has been recovered but not yet consumed by the hash table.
