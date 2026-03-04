@@ -427,7 +427,7 @@ Status PartitionedAggSinkLocalState::revoke_memory(RuntimeState* state) {
         custom_profile()->add_info_string("Spilled", "true");
         update_profile<false>(sink_local_state->custom_profile());
     } else {
-        update_profile<true>(sink_local_state->custom_profile());
+        update_profile<false>(sink_local_state->custom_profile());
     }
 
     DBUG_EXECUTE_IF("fault_inject::partitioned_agg_sink::revoke_memory_submit_func", {
