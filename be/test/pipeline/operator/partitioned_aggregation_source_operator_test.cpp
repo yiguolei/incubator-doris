@@ -615,3 +615,4 @@ TEST_F(PartitionedAggregationSourceOperatorTest, GetBlockWithMultipleSpills) {
     st = source_operator->close(_helper.runtime_state.get());
     ASSERT_TRUE(st.ok());
 }
+} // namespace doris::pipeline

@@ -1366,3 +1366,4 @@ TEST_F(PartitionedHashJoinProbeOperatorTest, JoinSpillPartitionInfoValidation) {
     JoinSpillPartitionInfo null_files_info(nullptr, nullptr, 0);
     ASSERT_TRUE(null_files_info.is_valid());
 }
+} // namespace doris::pipeline
