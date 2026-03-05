@@ -82,7 +82,7 @@ protected:
      * @param state Runtime state for the operator.
      * @param force_spill If true, spill all non-empty partition blocks regardless of size;
      *                    if false, only spill blocks whose size exceeds the spill buffer threshold.
-     *                    Use /*force_spill*/ at call sites for clarity.
+     *                    Use force_spill at call sites for clarity.
      */
     Status _execute_spill_partitioned_blocks(RuntimeState* state, bool force_spill);
 
