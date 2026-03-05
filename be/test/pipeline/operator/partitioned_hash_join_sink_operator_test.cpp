@@ -462,3 +462,4 @@ TEST_F(PartitionedHashJoinSinkOperatorTest, RevocableMemSizeAfterRevoke) {
     // After revoke with no data, revocable_mem_size should be 0
     ASSERT_EQ(sink_operator->revocable_mem_size(_helper.runtime_state.get()), 0);
 }
+}

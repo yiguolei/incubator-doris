@@ -105,9 +105,6 @@ private:
     // Blocks recovered from disk, pending merge into hash table.
     std::vector<vectorized::Block> _blocks;
 
-    // Estimated in-memory hash table size for the current partition.
-    size_t _estimate_memory_usage = 0;
-
     // Counters to track spill partition metrics
     RuntimeProfile::Counter* _max_partition_level = nullptr;
     RuntimeProfile::Counter* _total_partition_spills = nullptr;
