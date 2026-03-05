@@ -225,7 +225,7 @@ Status PartitionedHashJoinSinkLocalState::_revoke_unpartitioned_block(RuntimeSta
         }
         offset += this_run;
         RETURN_IF_ERROR(_partition_block(state, &sub_block, 0, sub_block.rows()));
-        RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state));
+        RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state, true /*force_spill*/));
     }
     RETURN_IF_ERROR(_force_flush_partitions(state));
     return Status::OK();
@@ -286,7 +286,11 @@ Status PartitionedHashJoinSinkLocalState::_finish_spilling(RuntimeState* state) 
     return Status::OK();
 }
 
-Status PartitionedHashJoinSinkLocalState::_execute_spill_partitioned_blocks(RuntimeState* state) {
+/// If revoke memory API call this method, we has to flush all memory to avoid dead loop. For example, maybe
+/// revocable memory size calcuateld by memory usage is not enough using limit 100K, but we can't spill all memory to disk
+/// because we use limit 1MB here. So we need to force spill all memory to disk to make sure we can make progress.
+Status PartitionedHashJoinSinkLocalState::_execute_spill_partitioned_blocks(RuntimeState* state,
+                                                                            bool force_spill) {
     DBUG_EXECUTE_IF("fault_inject::partitioned_hash_join_sink::revoke_memory_cancel", {
         auto status = Status::InternalError(
                 "fault_inject partitioned_hash_join_sink revoke_memory canceled");
@@ -297,12 +301,12 @@ Status PartitionedHashJoinSinkLocalState::_execute_spill_partitioned_blocks(Runt
 
     for (size_t i = 0; i != _shared_state->_partitioned_build_blocks.size(); ++i) {
         auto& mutable_block = _shared_state->_partitioned_build_blocks[i];
-        // Avoid spilling empty blocks or very small blocks.
-        if (!mutable_block || mutable_block->allocated_bytes() < state->spill_buffer_size_bytes()) {
+        if (!mutable_block) {
             continue;
         }
-
-        RETURN_IF_ERROR(_spill_to_disk(static_cast<uint32_t>(i)));
+        if (force_spill || mutable_block->allocated_bytes() >= state->spill_buffer_size_bytes()) {
+            RETURN_IF_ERROR(_spill_to_disk(static_cast<uint32_t>(i)));
+        }
     }
     return Status::OK();
 }
@@ -319,13 +323,11 @@ Status PartitionedHashJoinSinkLocalState::revoke_memory(RuntimeState* state) {
         DCHECK(revocable_mem_size(state) == 0);
         return st;
     }
-    return run_spill_task(state, [this, state] {
-        RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state));
-        // force flush all partitions to make sure data is written to disk
-        RETURN_IF_ERROR(_force_flush_partitions(state));
-        DCHECK(revocable_mem_size(state) == 0);
-        return Status::OK();
-    });
+    RETURN_IF_ERROR(_execute_spill_partitioned_blocks(state, true /*force_spill*/));
+    // force flush all partitions to make sure data is written to disk
+    RETURN_IF_ERROR(_force_flush_partitions(state));
+    DCHECK(revocable_mem_size(state) == 0);
+    return Status::OK();
 }
 
 Status PartitionedHashJoinSinkLocalState::_partition_block(RuntimeState* state,
@@ -514,7 +516,11 @@ Status PartitionedHashJoinSinkOperatorX::sink(RuntimeState* state, vectorized::B
         // ---- Spilled path: data is partitioned and spilled to disk ----
         if (rows > 0) {
             RETURN_IF_ERROR(local_state._partition_block(state, in_block, 0, rows));
+            // If any partition block exceeds the spill buffer size, immediately spill that partition to disk to avoid large block accumulation.
+            RETURN_IF_ERROR(
+                    local_state._execute_spill_partitioned_blocks(state, false /*force_spill*/));
         }
+
         // Flush partitioned blocks when eos or when accumulated data is large enough.
         if (revocable_mem_size(state) > state->spill_join_build_sink_mem_limit_bytes()) {
             RETURN_IF_ERROR(revoke_memory(state));

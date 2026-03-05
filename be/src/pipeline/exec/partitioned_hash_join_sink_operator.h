@@ -76,7 +76,15 @@ protected:
     // Called after revoke operations to guarantee memory is cleared.
     Status _force_flush_partitions(RuntimeState* state);
 
-    Status _execute_spill_partitioned_blocks(RuntimeState* state);
+    /**
+     * @brief Spill partitioned build blocks to disk if needed.
+     *
+     * @param state Runtime state for the operator.
+     * @param force_spill If true, spill all non-empty partition blocks regardless of size;
+     *                    if false, only spill blocks whose size exceeds the spill buffer threshold.
+     *                    Use /*force_spill*/ at call sites for clarity.
+     */
+    Status _execute_spill_partitioned_blocks(RuntimeState* state, bool force_spill);
 
     Status _setup_internal_operator(RuntimeState* state);
 
