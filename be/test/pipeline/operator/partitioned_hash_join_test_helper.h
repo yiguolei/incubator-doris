@@ -45,12 +45,12 @@ public:
     MockPartitionedHashJoinSharedState() {
         _is_spilled = false;
         _inner_runtime_state = nullptr;
-        _spilled_files.clear();
+        _spilled_build_groups.clear();
         _partitioned_build_blocks.clear();
     }
 
     void init(size_t partition_count) {
-        _spilled_files.resize(partition_count);
+        _spilled_build_groups.resize(partition_count);
         _partitioned_build_blocks.resize(partition_count);
     }
 };

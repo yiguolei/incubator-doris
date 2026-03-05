@@ -201,7 +201,6 @@ PartitionedAggLocalState* PartitionedAggregationTestHelper::create_source_local_
     local_state->common_profile()->AddHighWaterMarkCounter("MemoryUsage", TUnit::BYTES, "", 0);
     local_state->init_spill_read_counters();
     local_state->init_spill_write_counters();
-    local_state->_copy_shared_spill_profile = false;
     local_state->_internal_runtime_profile = std::make_unique<RuntimeProfile>("inner_test");
 
     state->emplace_local_state(probe_operator->operator_id(), std::move(local_state_uptr));
@@ -223,8 +222,6 @@ PartitionedAggSinkLocalState* PartitionedAggregationTestHelper::create_sink_loca
     local_state->_dependency = shared_state->create_sink_dependency(
             sink_operator->dests_id().front(), sink_operator->operator_id(),
             "PartitionedHashJoinTestDep");
-
-    shared_state->setup_shared_profile(local_state->custom_profile());
 
     state->emplace_sink_local_state(sink_operator->operator_id(), std::move(local_state_uptr));
     return local_state;

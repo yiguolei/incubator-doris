@@ -130,7 +130,7 @@ SpillSortLocalState* SpillSortTestHelper::create_source_local_state(
     // Build a minimal local state manually.  Many tests prefer to use the
     // operators' own setup routines, but helper functions like this allow
     // individual units to be exercised without the full pipeline task.
-    auto local_state_uptr = std::make_unique<SpillSortLocalState>(source_operator, state);
+    auto local_state_uptr = std::make_unique<SpillSortLocalState>(state, source_operator);
     auto* local_state = local_state_uptr.get();
 
     shared_state = std::make_shared<MockSpillSortSharedState>();
@@ -144,7 +144,6 @@ SpillSortLocalState* SpillSortTestHelper::create_source_local_state(
     local_state->common_profile()->AddHighWaterMarkCounter("MemoryUsage", TUnit::BYTES, "", 0);
     local_state->init_spill_read_counters();
     local_state->init_spill_write_counters();
-    local_state->_copy_shared_spill_profile = false;
     local_state->_internal_runtime_profile = std::make_unique<RuntimeProfile>("inner_test");
 
     state->emplace_local_state(source_operator->operator_id(), std::move(local_state_uptr));
@@ -169,8 +168,6 @@ SpillSortSinkLocalState* SpillSortTestHelper::create_sink_local_state(
     local_state->_dependency = shared_state->create_sink_dependency(
             sink_operator->dests_id().front(), sink_operator->operator_id(),
             "SpillSortSinkTestDep");
-
-    shared_state->setup_shared_profile(local_state->custom_profile());
 
     state->emplace_sink_local_state(sink_operator->operator_id(), std::move(local_state_uptr));
     return local_state;

@@ -112,10 +112,12 @@ PartitionedHashJoinTestHelper::create_operators() {
 
     EXPECT_EQ(desc_tbl.get_tuple_descs().size(), 2);
 
-    auto probe_operator = std::make_shared<PartitionedHashJoinProbeOperatorX>(
-            obj_pool.get(), tnode, 0, desc_tbl, TEST_PARTITION_COUNT);
-    auto sink_operator = std::make_shared<PartitionedHashJoinSinkOperatorX>(
-            obj_pool.get(), 0, 0, tnode, desc_tbl, TEST_PARTITION_COUNT);
+    auto probe_operator =
+            std::make_shared<PartitionedHashJoinProbeOperatorX>(obj_pool.get(), tnode, 0, desc_tbl);
+    probe_operator->_partition_count = TEST_PARTITION_COUNT;
+    auto sink_operator = std::make_shared<PartitionedHashJoinSinkOperatorX>(obj_pool.get(), 0, 0,
+                                                                            tnode, desc_tbl);
+    sink_operator->_partition_count = TEST_PARTITION_COUNT;
 
     auto child_operator = std::make_shared<MockChildOperator>();
     auto probe_side_source_operator = std::make_shared<MockChildOperator>();
@@ -176,13 +178,12 @@ PartitionedHashJoinProbeLocalState* PartitionedHashJoinTestHelper::create_probe_
     local_state->init_spill_read_counters();
     local_state->init_spill_write_counters();
     local_state->init_counters();
-    local_state->_copy_shared_spill_profile = false;
     local_state->_internal_runtime_profile = std::make_unique<RuntimeProfile>("inner_test");
 
     local_state->_partitioned_blocks.resize(probe_operator->_partition_count);
-    local_state->_probe_spilling_files.resize(probe_operator->_partition_count);
+    local_state->_probe_spilling_groups.resize(probe_operator->_partition_count);
 
-    shared_state->_spilled_files.resize(probe_operator->_partition_count);
+    shared_state->_spilled_build_groups.resize(probe_operator->_partition_count);
     shared_state->_partitioned_build_blocks.resize(probe_operator->_partition_count);
 
     shared_state->_inner_runtime_state = std::make_unique<MockRuntimeState>();
@@ -211,12 +212,11 @@ PartitionedHashJoinSinkLocalState* PartitionedHashJoinTestHelper::create_sink_lo
             sink_operator->dests_id().front(), sink_operator->operator_id(),
             "PartitionedHashJoinTestDep");
 
-    shared_state->_spilled_files.resize(sink_operator->_partition_count);
+    shared_state->_spilled_build_groups.resize(sink_operator->_partition_count);
     shared_state->_partitioned_build_blocks.resize(sink_operator->_partition_count);
 
     shared_state->_inner_runtime_state = std::make_unique<MockRuntimeState>();
     shared_state->_inner_shared_state = std::make_shared<MockHashJoinSharedState>();
-    shared_state->setup_shared_profile(local_state->custom_profile());
 
     state->emplace_sink_local_state(sink_operator->operator_id(), std::move(local_state_uptr));
     return local_state;
