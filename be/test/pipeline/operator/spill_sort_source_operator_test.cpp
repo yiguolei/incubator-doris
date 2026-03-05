@@ -332,12 +332,12 @@ TEST_F(SpillSortSourceOperatorTest, RevokeMemoryKeepsSharedStateOpen) {
     shared_state->is_closed = false;
 
     // call revoke_memory with no data; should succeed and leave shared_state open
-    st = sink_local_state->revoke_memory(_helper.runtime_state.get());
+    st = sink_operator->revoke_memory(_helper.runtime_state.get());
     ASSERT_TRUE(st.ok()) << "revoke_memory failed: " << st.to_string();
     ASSERT_FALSE(shared_state->is_closed) << "shared state was closed by a successful revoke";
 
     // cleanup
-    st = sink_local_state->close(_helper.runtime_state.get());
+    st = sink_local_state->close(_helper.runtime_state.get(), Status::OK());
     ASSERT_TRUE(st.ok()) << "close failed: " << st.to_string();
     st = sink_operator->close(_helper.runtime_state.get());
     ASSERT_TRUE(st.ok()) << "close failed: " << st.to_string();

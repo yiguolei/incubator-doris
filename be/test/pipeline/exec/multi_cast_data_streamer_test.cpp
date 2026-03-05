@@ -76,7 +76,6 @@ public:
         shared_state = std::make_shared<MultiCastSharedState>(&pool, cast_sender_count, 0);
         multi_cast_data_streamer =
                 std::make_unique<MultiCastDataStreamer>(&pool, cast_sender_count, 0);
-        shared_state->setup_shared_profile(profile.get());
         multi_cast_data_streamer->set_sink_profile(profile.get());
 
         source_profiles.resize(cast_sender_count);
