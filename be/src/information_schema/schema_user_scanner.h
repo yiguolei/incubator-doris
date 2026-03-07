@@ -29,7 +29,6 @@ namespace doris {
 
 class RuntimeState;
 
-namespace vectorized {
 class Block;
 }
 
@@ -41,12 +40,12 @@ public:
     ~SchemaUserScanner() override;
 
     Status start(RuntimeState* state) override;
-    Status get_next_block_internal(vectorized::Block* block, bool* eos) override;
+    Status get_next_block_internal(Block* block, bool* eos) override;
 
     static std::vector<SchemaScanner::ColumnDesc> _s_user_columns;
 
 private:
-    Status _fill_block_impl(vectorized::Block* block);
+    Status _fill_block_impl(Block* block);
 
     TShowUserResult _user_result;
 };

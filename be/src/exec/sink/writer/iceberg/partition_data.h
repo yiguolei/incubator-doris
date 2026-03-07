@@ -20,7 +20,6 @@
 #include "format/table/iceberg/struct_like.h"
 
 namespace doris {
-namespace vectorized {
 #include "common/compile_check_begin.h"
 
 class PartitionData : public iceberg::StructLike {
@@ -39,6 +38,5 @@ private:
     std::vector<std::any> _partition_values;
 };
 
-} // namespace vectorized
 } // namespace doris
 #include "common/compile_check_end.h"
