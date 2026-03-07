@@ -22,9 +22,9 @@
 namespace doris {
 #include "common/compile_check_begin.h"
 
-class PartitionData : public iceberg::StructLike {
+class IcebergPartitionData : public iceberg::StructLike {
 public:
-    explicit PartitionData(std::vector<std::any> partition_values)
+    explicit IcebergPartitionData(std::vector<std::any> partition_values)
             : _partition_values(std::move(partition_values)) {}
 
     std::any get(size_t pos) const override {

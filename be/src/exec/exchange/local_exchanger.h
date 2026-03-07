@@ -180,11 +180,11 @@ struct PartitionedRowIdxs {
 using PartitionedBlock =
         std::pair<std::shared_ptr<ExchangerBase::BlockWrapper>, PartitionedRowIdxs>;
 
-struct RowRange {
+struct BroadcastRowRange {
     uint32_t offset_start;
     size_t length;
 };
-using BroadcastBlock = std::pair<std::shared_ptr<ExchangerBase::BlockWrapper>, RowRange>;
+using BroadcastBlock = std::pair<std::shared_ptr<ExchangerBase::BlockWrapper>, BroadcastRowRange>;
 
 template <typename BlockType>
 struct BlockQueue {

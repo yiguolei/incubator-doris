@@ -303,7 +303,7 @@ Status VIcebergTableWriter::write(RuntimeState* state, Block& block) {
             }
         }
         for (int i = 0; i < output_block.rows(); ++i) {
-            std::optional<PartitionData> partition_data;
+            std::optional<IcebergPartitionData> partition_data;
             try {
                 partition_data = _get_partition_data(&transformed_block, i);
             } catch (doris::Exception& e) {
@@ -517,7 +517,7 @@ std::shared_ptr<IPartitionWriterBase> VIcebergTableWriter::_create_partition_wri
     } else if (transformed_block != nullptr) {
         // Case 2: Dynamic partition or Hybrid mode (partial static + partial dynamic)
         // _partition_to_path and _partition_values already handle hybrid mode internally
-        PartitionData partition_data = _get_partition_data(transformed_block, position);
+        IcebergPartitionData partition_data = _get_partition_data(transformed_block, position);
         std::string partition_path = _partition_to_path(partition_data);
         partition_values = _partition_values(partition_data);
         original_write_path =
@@ -571,8 +571,8 @@ std::shared_ptr<IPartitionWriterBase> VIcebergTableWriter::_create_partition_wri
     return partition_write;
 }
 
-PartitionData VIcebergTableWriter::_get_partition_data(Block* transformed_block,
-                                                       int position) {
+IcebergPartitionData VIcebergTableWriter::_get_partition_data(Block* transformed_block,
+                                                              int position) {
     DCHECK(!_iceberg_partition_columns.empty());
     std::vector<std::any> values;
     values.reserve(_iceberg_partition_columns.size());
@@ -592,7 +592,7 @@ PartitionData VIcebergTableWriter::_get_partition_data(Block* transformed_block,
         }
         ++column_idx;
     }
-    return PartitionData(std::move(values));
+    return IcebergPartitionData(std::move(values));
 }
 
 std::any VIcebergTableWriter::_get_iceberg_partition_value(

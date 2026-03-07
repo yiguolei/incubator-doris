@@ -114,7 +114,7 @@ private:
             Block* transformed_block, int position,
             const std::string* file_name = nullptr, int file_name_index = 0);
 
-    PartitionData _get_partition_data(Block* block, int position);
+    IcebergPartitionData _get_partition_data(Block* block, int position);
 
     std::any _get_iceberg_partition_value(const PrimitiveType& type_desc,
                                           const ColumnWithTypeAndName& partition_column,
