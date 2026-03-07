@@ -44,7 +44,6 @@ class GetResultBatchCtx;
 using MySQLResultBlockBuffer = ResultBlockBuffer<GetResultBatchCtx>;
 class VExprContext;
 struct ResultFileOptions;
-}
 } // namespace doris
 
 namespace doris {

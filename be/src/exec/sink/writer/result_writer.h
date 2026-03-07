@@ -26,7 +26,6 @@
 namespace doris {
 
 class Block;
-}
 class RuntimeState;
 
 // abstract class of the result writer

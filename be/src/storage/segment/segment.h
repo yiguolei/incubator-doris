@@ -46,7 +46,6 @@
 #include "util/slice.h"
 namespace doris {
 class IDataType;
-}
 
 class ShortKeyIndexDecoder;
 class Schema;

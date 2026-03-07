@@ -28,7 +28,6 @@ namespace doris {
 class RuntimeState;
 
 class Block;
-}
 
 class SchemaViewDependencyScanner : public SchemaScanner {
     ENABLE_FACTORY_CREATOR(SchemaViewDependencyScanner);

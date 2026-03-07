@@ -927,7 +927,6 @@ TEST(BlockTest, merge_with_shared_columns) {
 template <typename T>
 void clear_blocks(moodycamel::ConcurrentQueue<T>& blocks,
                   RuntimeProfile::Counter* memory_used_counter = nullptr);
-}
 
 TEST(BlockTest, clear_blocks) {
     {

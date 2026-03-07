@@ -26,7 +26,6 @@
 namespace doris {
 class RuntimeState;
 class Block;
-}
 
 class SchemaDatabasePropertiesScanner : public SchemaScanner {
     ENABLE_FACTORY_CREATOR(SchemaDatabasePropertiesScanner);

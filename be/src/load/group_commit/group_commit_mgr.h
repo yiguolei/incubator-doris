@@ -42,7 +42,6 @@ class TUniqueId;
 class RuntimeState;
 
 class Dependency;
-}
 
 struct BlockData {
     BlockData(const std::shared_ptr<Block>& block)

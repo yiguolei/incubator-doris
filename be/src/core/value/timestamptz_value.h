@@ -32,7 +32,6 @@ namespace doris {
 struct StringRef;
 
 struct CastParameters;
-}
 
 // TIMESTAMPTZ can be understood as a DATETIME type with timezone conversion functionality.
 // Doris automatically handles timezone conversions internally.

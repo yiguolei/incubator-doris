@@ -47,7 +47,6 @@ namespace fs = std::filesystem;
 namespace doris {
 
 using ZoneList = std::unordered_map<std::string, cctz::time_zone>;
-}
 
 RE2 time_zone_offset_format_reg(R"(^[+-]{1}\d{2}\:\d{2}$)"); // visiting is thread-safe
 

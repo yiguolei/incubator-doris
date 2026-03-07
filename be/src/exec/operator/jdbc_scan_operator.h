@@ -29,7 +29,6 @@ namespace doris {
 #include "common/compile_check_begin.h"
 
 class JdbcScanner;
-}
 } // namespace doris
 
 namespace doris {

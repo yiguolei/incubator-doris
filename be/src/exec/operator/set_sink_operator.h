@@ -25,7 +25,6 @@ namespace doris {
 
 template <class HashTableContext, bool is_intersected>
 struct HashTableBuild;
-}
 
 
 template <bool is_intersect>

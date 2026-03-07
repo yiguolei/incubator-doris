@@ -29,7 +29,6 @@ namespace doris {
 #include "common/compile_check_begin.h"
 
 class OlapScanner;
-}
 } // namespace doris
 
 namespace doris {

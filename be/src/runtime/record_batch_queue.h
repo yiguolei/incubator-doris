@@ -33,7 +33,6 @@ class RecordBatch;
 namespace doris {
 
 class Dependency;
-}
 
 // The RecordBatchQueue is created and managed by the ResultQueueMgr to
 // cache external query results, as well as query status. Where both

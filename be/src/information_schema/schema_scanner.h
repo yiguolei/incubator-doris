@@ -42,10 +42,8 @@ class ObjectPool;
 class TUserIdentity;
 
 class Block;
-}
 
 class Dependency;
-}
 
 struct SchemaScannerCommonParam {
     SchemaScannerCommonParam()

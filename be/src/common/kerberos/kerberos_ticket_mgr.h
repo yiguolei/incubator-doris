@@ -34,7 +34,6 @@
 namespace doris {
 
 class Block;
-}
 
 namespace kerberos {
 

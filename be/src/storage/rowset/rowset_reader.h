@@ -31,7 +31,6 @@
 namespace doris {
 
 class Block;
-}
 
 struct RowSetSplits {
     RowsetReaderSharedPtr rs_reader;

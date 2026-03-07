@@ -40,7 +40,6 @@ class Schema;
 class ColumnPredicate;
 
 struct IteratorRowRef;
-};
 
 namespace segment_v2 {
 struct SubstreamIterator;

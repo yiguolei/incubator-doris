@@ -30,7 +30,6 @@ namespace doris {
 class RuntimeState;
 
 class Block;
-}
 
 class SchemaProcessListScanner : public SchemaScanner {
     ENABLE_FACTORY_CREATOR(SchemaProcessListScanner);

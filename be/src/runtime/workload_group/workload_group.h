@@ -45,7 +45,6 @@ class IOThrottle;
 class ResourceContext;
 
 class ScannerScheduler;
-}
 
 class TaskScheduler;
 

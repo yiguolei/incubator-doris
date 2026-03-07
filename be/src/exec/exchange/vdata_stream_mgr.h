@@ -44,7 +44,6 @@ class RuntimeState;
 class RowDescriptor;
 class PTransmitDataParams;
 class ExchangeLocalState;
-}
 
 class VDataStreamRecvr;
 

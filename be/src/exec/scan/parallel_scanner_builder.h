@@ -32,10 +32,8 @@
 namespace doris {
 
 class OlapScanLocalState;
-}
 
 class Scanner;
-}
 
 using ScannerSPtr = std::shared_ptr<Scanner>;
 

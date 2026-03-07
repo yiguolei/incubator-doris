@@ -31,7 +31,6 @@ namespace doris {
 class TDataSink;
 
 class Block;
-}
 
 
 // Forward declaration

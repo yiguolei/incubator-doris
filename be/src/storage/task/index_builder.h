@@ -34,7 +34,6 @@ class IndexColumnWriter;
 class IndexFileWriter;
 } // namespace segment_v2
 class OlapBlockDataConvertor;
-}
 
 class StorageEngine;
 class RowsetWriter;
