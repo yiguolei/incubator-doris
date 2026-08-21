@@ -56,9 +56,9 @@ AdaptiveResourceArbitratorBenchmarkTree create_adaptive_resource_arbitrator_benc
     return tree;
 }
 
-void BM_AdaptiveResourceArbitratorTryAcquire128Children(benchmark::State& state) {
+void BM_AdaptiveResourceArbitratorTryAcquireAndRelease128Children(benchmark::State& state) {
     // 建树会触发多次重平衡。
-    // 这里暂停计时，只测稳定运行时一次 try_acquire(1) 的成本。
+    // 这里暂停计时，避免把一次性的建树成本计入结果。
     state.PauseTiming();
     auto tree = create_adaptive_resource_arbitrator_benchmark_tree();
     state.ResumeTiming();
@@ -69,19 +69,17 @@ void BM_AdaptiveResourceArbitratorTryAcquire128Children(benchmark::State& state)
         benchmark::DoNotOptimize(token);
         child_index = (child_index + 1) % tree.children.size();
 
-        // 本 benchmark 只统计申请。
-        // token 析构会触发 release 和下一轮重平衡，因此在暂停计时后释放。
-        // 这样下一次迭代仍从无在用资源的稳定状态开始。
-        state.PauseTiming();
+        // Google Benchmark 的计时器在整个循环内保持运行。
+        // 本用例统计 try_acquire、token 创建、release 和 release 后重平衡的总成本。
+        // token 释放后，下一次迭代仍从无在用资源的稳定状态开始。
         DORIS_CHECK(token != nullptr);
         token.reset();
-        state.ResumeTiming();
     }
 }
 
-void BM_AdaptiveResourceArbitratorAcquire128Children(benchmark::State& state) {
+void BM_AdaptiveResourceArbitratorAcquireAndRelease128Children(benchmark::State& state) {
     // 与 try_acquire 基准使用完全相同的树。
-    // 两者的差值主要反映 limit、target 和 available quota 检查的成本。
+    // 两者的差值主要反映申请阶段 limit、target 和 available quota 检查的成本。
     state.PauseTiming();
     auto tree = create_adaptive_resource_arbitrator_benchmark_tree();
     state.ResumeTiming();
@@ -92,22 +90,20 @@ void BM_AdaptiveResourceArbitratorAcquire128Children(benchmark::State& state) {
         benchmark::DoNotOptimize(token);
         child_index = (child_index + 1) % tree.children.size();
 
-        // 强制申请同样需要释放 token 以恢复下一次迭代的初始状态。
-        // release 不属于本用例要统计的 acquire 成本。
-        state.PauseTiming();
+        // 强制申请和 token release 都处于计时区间。
+        // 这样不需要在循环内反复暂停计时器。
         DORIS_CHECK(token != nullptr);
         token.reset();
-        state.ResumeTiming();
     }
 }
 
-BENCHMARK(BM_AdaptiveResourceArbitratorTryAcquire128Children)
+BENCHMARK(BM_AdaptiveResourceArbitratorTryAcquireAndRelease128Children)
         ->Unit(benchmark::kNanosecond)
         ->Threads(1)
         ->Repetitions(5)
         ->DisplayAggregatesOnly();
 
-BENCHMARK(BM_AdaptiveResourceArbitratorAcquire128Children)
+BENCHMARK(BM_AdaptiveResourceArbitratorAcquireAndRelease128Children)
         ->Unit(benchmark::kNanosecond)
         ->Threads(1)
         ->Repetitions(5)
