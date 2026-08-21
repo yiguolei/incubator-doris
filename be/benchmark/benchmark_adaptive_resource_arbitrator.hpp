@@ -58,10 +58,8 @@ AdaptiveResourceArbitratorBenchmarkTree create_adaptive_resource_arbitrator_benc
 
 void BM_AdaptiveResourceArbitratorTryAcquireAndRelease128Children(benchmark::State& state) {
     // 建树会触发多次重平衡。
-    // 这里暂停计时，避免把一次性的建树成本计入结果。
-    state.PauseTiming();
+    // 建树发生在 benchmark 循环外，不会计入每次迭代的耗时。
     auto tree = create_adaptive_resource_arbitrator_benchmark_tree();
-    state.ResumeTiming();
 
     size_t child_index = 0;
     for (auto _ : state) {
@@ -80,9 +78,7 @@ void BM_AdaptiveResourceArbitratorTryAcquireAndRelease128Children(benchmark::Sta
 void BM_AdaptiveResourceArbitratorAcquireAndRelease128Children(benchmark::State& state) {
     // 与 try_acquire 基准使用完全相同的树。
     // 两者的差值主要反映申请阶段 limit、target 和 available quota 检查的成本。
-    state.PauseTiming();
     auto tree = create_adaptive_resource_arbitrator_benchmark_tree();
-    state.ResumeTiming();
 
     size_t child_index = 0;
     for (auto _ : state) {
