@@ -77,7 +77,6 @@ void BM_AdaptiveResourceArbitratorTryAcquire128Children(benchmark::State& state)
         token.reset();
         state.ResumeTiming();
     }
-    state.PauseTiming();
 }
 
 void BM_AdaptiveResourceArbitratorAcquire128Children(benchmark::State& state) {
@@ -100,7 +99,6 @@ void BM_AdaptiveResourceArbitratorAcquire128Children(benchmark::State& state) {
         token.reset();
         state.ResumeTiming();
     }
-    state.PauseTiming();
 }
 
 BENCHMARK(BM_AdaptiveResourceArbitratorTryAcquire128Children)
