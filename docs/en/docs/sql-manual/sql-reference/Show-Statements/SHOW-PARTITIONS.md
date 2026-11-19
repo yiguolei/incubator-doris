@@ -46,6 +46,14 @@ When used in Internal catalog:
 1. Support the filtering of PartitionId, PartitionName, State, Buckets, ReplicationNum, LastConsistencyCheckTime and other columns
 2. TEMPORARY specifies to list temporary partitions
 
+For internal tables, the result includes these partition-level versions:
+
+- `VisibleVersion`: the version used by normal queries.
+- `NextVersion`: the version to allocate to the next committed transaction.
+- `CommittedVersion`: the latest committed version, equal to `NextVersion - 1`. It can be greater than `VisibleVersion` while publication is pending.
+
+`NextVersion` and `CommittedVersion` are appended after the existing columns. They are also shown by `SHOW PROC '/dbs/<db_id>/<table_id>/partitions'` and the corresponding `temp_partitions` path. These commands only display metadata; they do not modify versions.
+
 <version since="dev">
 
 when used in Hive Catalog:

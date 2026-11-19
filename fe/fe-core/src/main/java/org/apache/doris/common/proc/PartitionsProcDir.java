@@ -68,7 +68,7 @@ public class PartitionsProcDir implements ProcDirInterface {
             .add("State").add("PartitionKey").add("Range").add("DistributionKey")
             .add("Buckets").add("ReplicationNum").add("StorageMedium").add("CooldownTime").add("RemoteStoragePolicy")
             .add("LastConsistencyCheckTime").add("DataSize").add("IsInMemory").add("ReplicaAllocation")
-            .add("IsMutable")
+            .add("IsMutable").add("NextVersion").add("CommittedVersion")
             .build();
 
     private Database db;
@@ -302,6 +302,8 @@ public class PartitionsProcDir implements ProcDirInterface {
                 partitionInfo.add(tblPartitionInfo.getReplicaAllocation(partitionId).toCreateStmt());
 
                 partitionInfo.add(tblPartitionInfo.getIsMutable(partitionId));
+                partitionInfo.add(partition.getNextVersion());
+                partitionInfo.add(partition.getCommittedVersion());
 
                 partitionInfos.add(partitionInfo);
             }
