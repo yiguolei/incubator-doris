@@ -46,6 +46,14 @@ SHOW PARTITIONS
 1. 支持PartitionId,PartitionName,State,Buckets,ReplicationNum,LastConsistencyCheckTime等列的过滤
 2. TEMPORARY指定列出临时分区
 
+对于内部表，结果包含以下分区级别的版本信息：
+
+- `VisibleVersion`：正常查询使用的可见版本。
+- `NextVersion`：下一次事务提交时将分配的版本。
+- `CommittedVersion`：最新已提交版本，等于 `NextVersion - 1`。存在等待发布的事务时，它可能大于 `VisibleVersion`。
+
+`NextVersion` 和 `CommittedVersion` 追加在原有列之后。`SHOW PROC '/dbs/<db_id>/<table_id>/partitions'` 及对应的 `temp_partitions` 路径也展示这两列。这些命令只展示元数据，不修改版本。
+
 <version since="dev">
 
 对于 Hive Catalog：
